@@ -176,3 +176,9 @@ def test_ai_prompt_contains_findings(match, od):
 
     prompt = coach_ai.build_prompt(run(match, match["players"][0], od))
     assert "Tusk" in prompt and "Tiny" in prompt and "Выживание" in prompt
+
+
+def test_turbo_matches_get_a_warning(match, od):
+    turbo = dict(match, game_mode=23)
+    assert "Турбо" in report.caption(run(turbo, turbo["players"][0], od))
+    assert "Турбо" not in report.caption(run(match, match["players"][0], od))

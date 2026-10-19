@@ -2,10 +2,11 @@
 from functools import partial
 from html import escape as _escape
 
-from analysis import BAD, CATEGORIES, DAMAGE_TYPE_NAMES, GOOD, WARN, Analysis, mmss, num, plural
+from analysis import BAD, CATEGORIES, DAMAGE_TYPE_NAMES, GOOD, TURBO_MODE, WARN, Analysis, mmss, num, plural
 
 MAX_MAIN_PROBLEMS = 4
 MAX_MOMENTS = 16
+TURBO_NOTE = "⚠ Это Турбо: золото и опыт идут быстрее, а нормы разбора рассчитаны на обычную игру. Оценки могут быть неточными."
 
 escape = partial(_escape, quote=False)
 
@@ -30,7 +31,10 @@ def header(a: Analysis) -> str:
 
 def caption(a: Analysis) -> str:
     """Короткая подпись к графику."""
-    return f"{header(a)}\n\n<b>Оценка: {a.overall}/10</b>\n<i>{escape(a.verdict)}</i>"
+    text = f"{header(a)}\n\n<b>Оценка: {a.overall}/10</b>\n<i>{escape(a.verdict)}</i>"
+    if a.facts.get("game_mode") == TURBO_MODE:
+        text += f"\n\n{TURBO_NOTE}"
+    return text
 
 
 def scores_block(a: Analysis) -> str:

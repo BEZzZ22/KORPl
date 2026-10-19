@@ -19,6 +19,7 @@ TEXTS = json.loads((DOCS / "texts.json").read_text(encoding="utf-8"))
 LANE, FARM, FIGHTS, SURVIVAL, ITEMS, VISION = "Линия", "Фарм", "Драки", "Выживание", "Предметы", "Видение"
 CATEGORIES = [LANE, FARM, FIGHTS, SURVIVAL, ITEMS, VISION]
 BAD, WARN, GOOD = "bad", "warn", "good"
+TURBO_MODE = 23
 
 DAMAGE_TYPE_NAMES = {k: v["name"] for k, v in KNOWLEDGE["damage_types"].items()}
 DAMAGE_TYPE_ADJ = {"Physical": "физическим", "Magical": "магическим", "Pure": "чистым"}
@@ -824,6 +825,7 @@ class MatchAnalyzer:
         p = self.p
         return {
             "match_id": self.match["match_id"],
+            "game_mode": self.match.get("game_mode"),
             "hero": self.hero,
             "hero_id": p["hero_id"],
             "position": self.pos,

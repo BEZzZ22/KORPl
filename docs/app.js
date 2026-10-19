@@ -12,6 +12,7 @@ const BG_COLOR = "#070404";
 const DAMAGE_TYPES = { Physical: "физический", Magical: "магический", Pure: "чистый" };
 const SEVERITY_LABEL = { [BAD]: "Проблема", [WARN]: "Ошибка", [GOOD]: "Хорошо" };
 const PHASE_LABEL = { good: "выиграна", even: "ровно", bad: "проиграна" };
+const TURBO_MODE = 23;
 
 const tg = window.Telegram && window.Telegram.WebApp;
 const app = document.getElementById("app");
@@ -329,6 +330,8 @@ function analysisScreen(a) {
       ),
       h("div", { class: "hero-body" },
         h("div", { class: "verdict" }, a.verdict),
+        f.game_mode === TURBO_MODE && h("div", { class: "advice" },
+          "Это Турбо: золото и опыт идут быстрее, а нормы разбора рассчитаны на обычную игру. Оценки могут быть неточными."),
         f.lane_opponent && h("div", { class: "small muted" }, `Линия против ${f.lane_opponent}`),
         h("div", { class: "stats" }, stat(f.kda, "KDA"), stat(f.gpm, "GPM"), stat(f.xpm, "XPM"), stat(`${f.last_hits}/${f.denies}`, "LH/DN")),
       ),
