@@ -40,6 +40,11 @@ class OpenDota:
         async with self.session.post(f"{API}/request/{match_id}") as resp:
             resp.raise_for_status()
 
+    async def refresh_player(self, account_id: int):
+        """Просит OpenDota заново подтянуть историю матчей игрока."""
+        async with self.session.post(f"{API}/players/{account_id}/refresh") as resp:
+            resp.raise_for_status()
+
     async def last_match_id(self, account_id: int) -> int | None:
         matches = await self._get(f"/players/{account_id}/recentMatches")
         return matches[0]["match_id"] if matches else None

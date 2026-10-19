@@ -71,7 +71,12 @@ async def cmd_last(message: Message):
         return
     match_id = await od.last_match_id(account_id)
     if not match_id:
-        await message.answer("Не нашёл матчей. Проверь, что в Доте открыта публичная статистика.")
+        await od.refresh_player(account_id)
+        await message.answer(
+            "Не нашёл матчей. Проверь, что в Доте включено: Настройки → Социальное → "
+            "«Открыть доступ к данным матчей». Я попросил OpenDota обновить твой профиль, "
+            "попробуй /last через пару минут."
+        )
         return
     await analyze_match(message, match_id, account_id)
 
@@ -80,6 +85,11 @@ async def cmd_last(message: Message):
 async def on_match_id(message: Message):
     match_id = int(MATCH_ID_RE.search(message.text).group(1))
     await analyze_match(message, match_id, load_users().get(str(message.from_user.id)))
+
+
+@router.message()
+async def on_unknown(message: Message):
+    await message.answer("Не понял. Кинь ID матча, напиши /last или /help.")
 
 
 @router.callback_query(F.data.startswith("slot:"))
