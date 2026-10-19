@@ -116,3 +116,27 @@ def test_storage_and_ai_quota(tmp_path):
     assert db.take_ai_quota(1, 2)
     assert not db.take_ai_quota(1, 2)
     db.close()
+
+
+def test_blocklist_answers_blocked_users_only(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    import bot
+
+    monkeypatch.setattr(bot, "BLOCKED_USERNAMES", {"blocked"})
+    monkeypatch.setattr(bot, "BLOCKED_MESSAGE", "нельзя")
+    mw = bot.BlocklistMiddleware()
+
+    async def run(username):
+        handler, event = AsyncMock(return_value="ok"), SimpleNamespace(answer=AsyncMock())
+        result = await mw(handler, event, {"event_from_user": SimpleNamespace(username=username)})
+        return result, handler, event
+
+    result, handler, event = asyncio.run(run("Blocked"))
+    assert result is None and not handler.called
+    event.answer.assert_awaited_once_with("нельзя")
+
+    result, handler, event = asyncio.run(run("someone"))
+    assert result == "ok" and handler.called and not event.answer.called

@@ -36,6 +36,9 @@ log = logging.getLogger("bot")
 
 DB_PATH = os.getenv("DB_PATH", "bot.db")
 AI_DAILY_LIMIT = int(os.getenv("AI_DAILY_LIMIT", "10"))
+# Ники через запятую, которым бот не отвечает по делу, и что им писать вместо этого
+BLOCKED_USERNAMES = {u.strip().lstrip("@").lower() for u in os.getenv("BLOCKED_USERNAMES", "").split(",") if u.strip()}
+BLOCKED_MESSAGE = os.getenv("BLOCKED_MESSAGE", "Тебе сюда нельзя.")
 # Адрес Telegram Mini App (папка docs на GitHub Pages). Без него бот работает только текстом
 WEBAPP_URL = os.getenv("WEBAPP_URL", "").rstrip("/")
 MESSAGE_INTERVAL = 1.0  # не чаще одного сообщения в секунду от одного человека
@@ -51,6 +54,20 @@ router.callback_query.filter(F.message.chat.type == ChatType.PRIVATE)
 
 od = OpenDota()
 db: Storage | None = None
+
+
+class BlocklistMiddleware(BaseMiddleware):
+    """Пользователям из BLOCKED_USERNAMES отвечает BLOCKED_MESSAGE и дальше не пускает."""
+
+    async def __call__(self, handler, event, data):
+        user = data.get("event_from_user")
+        if user and user.username and user.username.lower() in BLOCKED_USERNAMES:
+            if isinstance(event, CallbackQuery):
+                await event.answer(BLOCKED_MESSAGE[:200], show_alert=True)
+            else:
+                await event.answer(escape(BLOCKED_MESSAGE))
+            return None
+        return await handler(event, data)
 
 
 class ThrottleMiddleware(BaseMiddleware):
@@ -363,6 +380,9 @@ async def main():
             menu_button=MenuButtonWebApp(text="Приложение", web_app=WebAppInfo(url=f"{WEBAPP_URL}/"))
         )
     dp = Dispatcher()
+    blocklist = BlocklistMiddleware()
+    dp.message.outer_middleware(blocklist)
+    dp.callback_query.outer_middleware(blocklist)
     throttle = ThrottleMiddleware()
     dp.message.outer_middleware(throttle)
     dp.callback_query.outer_middleware(throttle)
