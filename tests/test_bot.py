@@ -12,7 +12,7 @@ import analysis  # noqa: E402
 import chart  # noqa: E402
 import report  # noqa: E402
 from bot import parse_match_id  # noqa: E402
-from opendota import OpenDota, to_account_id  # noqa: E402
+from opendota import OpenDota, damage_type, to_account_id  # noqa: E402
 from storage import Storage  # noqa: E402
 
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -23,8 +23,7 @@ def load(name):
         return json.load(f)
 
 
-@pytest.fixture(scope="module")
-def od():
+def offline_od() -> OpenDota:
     """OpenDota со справочниками из фикстуры, без сети."""
     c = load("constants.json.gz")
     client = OpenDota()
@@ -32,7 +31,13 @@ def od():
     client.heroes_by_key = {h["name"]: h["localized_name"] for h in c["heroes"].values()}
     client.hero_keys = {int(h["id"]): h["name"] for h in c["heroes"].values()}
     client.items = c["items"]
+    client.abilities = {k: {"dname": a["dname"], "dmg_type": damage_type(a["dmg_type"])} for k, a in c["abilities"].items()}
     return client
+
+
+@pytest.fixture(scope="module")
+def od():
+    return offline_od()
 
 
 @pytest.fixture(scope="module")

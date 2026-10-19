@@ -28,6 +28,7 @@ class OpenDota:
         self.heroes_by_key: dict[str, str] = {}
         self.hero_keys: dict[int, str] = {}
         self.items: dict[str, dict] = {}
+        self.abilities: dict[str, dict] = {}
         self._limit = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
         self._cache: OrderedDict[int, tuple[float, dict]] = OrderedDict()
 
@@ -38,6 +39,13 @@ class OpenDota:
         self.heroes_by_key = {h["name"]: h["localized_name"] for h in heroes.values()}
         self.hero_keys = {int(h["id"]): h["name"] for h in heroes.values()}
         self.items = await self._request("GET", "/constants/items")
+        abilities = await self._request("GET", "/constants/abilities")
+        # Храним только то, что нужно для разбора: справочник большой
+        self.abilities = {
+            key: {"dname": a.get("dname"), "dmg_type": damage_type(a.get("dmg_type"))}
+            for key, a in abilities.items()
+            if a.get("dname")
+        }
 
     async def close(self):
         if self.session:
@@ -106,11 +114,33 @@ class OpenDota:
             return "крипы"
         return key.replace("npc_dota_", "")
 
+    def source_name(self, key: str) -> str:
+        """Название источника урона: скилл, предмет или автоатака."""
+        if key in ("null", ""):
+            return "Автоатаки"
+        if key in self.abilities:
+            return self.abilities[key]["dname"]
+        if key in self.items:
+            return self.item_name(key)
+        return key
+
+    def source_type(self, key: str) -> str | None:
+        if key in ("null", ""):
+            return "Physical"
+        return self.abilities.get(key, {}).get("dmg_type")
+
     def item_name(self, key: str) -> str:
         return self.items.get(key, {}).get("dname") or key
 
     def item_cost(self, key: str) -> int:
         return self.items.get(key, {}).get("cost") or 0
+
+
+def damage_type(value) -> str | None:
+    """В справочнике тип урона бывает строкой или списком."""
+    if isinstance(value, list):
+        value = value[0] if value else None
+    return value if value in ("Physical", "Magical", "Pure") else None
 
 
 def to_account_id(steam_id: int) -> int:

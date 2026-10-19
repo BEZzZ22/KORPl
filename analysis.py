@@ -1,7 +1,26 @@
 """Разбор игрока в матче: собирает факты, ищет ошибки и ставит оценки по разделам."""
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from opendota import OpenDota
+
+# База механик героев и контр-предметов. Её же читает веб-приложение из docs/
+KNOWLEDGE = json.loads((Path(__file__).parent / "docs" / "knowledge.json").read_text(encoding="utf-8"))
+DAMAGE_TYPE_NAMES = {k: v["name"] for k, v in KNOWLEDGE["damage_types"].items()}
+DAMAGE_TYPE_INSTR = {"Physical": "физическим", "Magical": "магическим", "Pure": "чистым"}
+# Улучшенная версия предмета тоже считается: Wind Waker закрывает Eul's и т.д.
+ITEM_UPGRADES = {
+    "cyclone": ["wind_waker"],
+    "force_staff": ["hurricane_pike"],
+    "ghost": ["ethereal_blade"],
+    "maelstrom": ["mjollnir", "gleipnir"],
+    "ward_sentry": ["ward_dispenser"],
+    "orchid": ["bloodthorn"],
+}
+MAX_COUNTER_ITEMS = 3
+# Эти предметы не прожимаются, а ставятся или носятся
+DETECTION_ITEMS = {"dust", "ward_sentry", "gem"}
 
 # Разделы разбора в порядке вывода
 LANE, FARM, FIGHTS, SURVIVAL, ITEMS, VISION = "Линия", "Фарм", "Драки", "Выживание", "Предметы", "Видение"
@@ -25,6 +44,7 @@ class Finding:
     severity: str
     text: str
     tip: str = ""
+    kind: str = ""
 
 
 @dataclass
@@ -33,6 +53,7 @@ class Analysis:
     findings: list[Finding] = field(default_factory=list)
     scores: dict[str, int] = field(default_factory=dict)
     timeline: dict = field(default_factory=dict)
+    killers: list[dict] = field(default_factory=list)
 
     @property
     def overall(self) -> float:
@@ -83,8 +104,8 @@ class MatchAnalyzer:
         self.findings: list[Finding] = []
         self.penalty: dict[str, float] = {c: 0.0 for c in CATEGORIES}
 
-    def add(self, category: str, severity: str, text: str, tip: str = ""):
-        self.findings.append(Finding(category, severity, text, tip))
+    def add(self, category: str, severity: str, text: str, tip: str = "", kind: str = ""):
+        self.findings.append(Finding(category, severity, text, tip, kind))
         self.penalty[category] += {BAD: 1.0, WARN: 0.5, GOOD: -0.5}[severity]
 
     def run(self) -> Analysis:
@@ -95,11 +116,14 @@ class MatchAnalyzer:
         self.check_items()
         self.check_vision()
         self.check_game()
+        killers = self.check_killers()
+        self.check_itemization()
         return Analysis(
-            facts=self.collect_facts(),
+            facts=self.collect_facts(killers),
             findings=self.findings,
             scores=self.compute_scores(),
             timeline=self.collect_timeline(),
+            killers=killers,
         )
 
     # ---------- линия (0-10 минута) ----------
@@ -255,16 +279,6 @@ class MatchAnalyzer:
             self.add(SURVIVAL, BAD, f"Пойман в одиночку {len(solo)} {plural(len(solo), 'раз', 'раза', 'раз')} вне драк: {times}",
                      "Перед фармом опасной зоны глянь миникарту: кого из врагов не видно. Нет 3+ врагов — отходи ближе к своим")
 
-        killers: dict[str, int] = {}
-        for d in deaths:
-            name = self.od.hero_name_by_key(d["key"])
-            killers[name] = killers.get(name, 0) + 1
-        if killers:
-            top, cnt = max(killers.items(), key=lambda kv: kv[1])
-            if cnt >= 3 and top not in ("башня", "крипы"):
-                self.add(SURVIVAL, WARN, f"{cnt} {plural(cnt, 'раз', 'раза', 'раз')} умер от {top}",
-                         f"Разберись, чем {top} тебя ловит, и купи контр-предмет или держи дистанцию")
-
         dead_share = (p.get("life_state_dead") or 0) / max(self.duration, 1)
         if dead_share >= 0.15:
             self.add(SURVIVAL, BAD, f"Провёл мёртвым {mmss(p['life_state_dead'])}, это {round(dead_share * 100)}% игры",
@@ -369,6 +383,180 @@ class MatchAnalyzer:
                 short += 1
         return short, len(placed)
 
+    # ---------- кто убивал и чем ----------
+
+    def owned_items(self) -> set[str]:
+        owned = {x["key"] for x in self.p.get("purchase_log") or []}
+        for base, upgrades in ITEM_UPGRADES.items():
+            if owned & set(upgrades):
+                owned.add(base)
+        return owned
+
+    def role(self) -> str:
+        return "core" if self.core else "support"
+
+    def damage_from(self, enemy: dict) -> tuple[int, list[dict]]:
+        """Сколько урона враг нанёс игроку и какими скиллами/предметами."""
+        my_key = self.od.hero_key(self.p["hero_id"])
+        sources = []
+        for inflictor, targets in (enemy.get("damage_targets") or {}).items():
+            dmg = (targets or {}).get(my_key, 0)
+            if dmg > 0:
+                sources.append({
+                    "key": inflictor,
+                    "name": self.od.source_name(inflictor),
+                    "damage": dmg,
+                    "type": self.od.source_type(inflictor),
+                })
+        sources.sort(key=lambda s: -s["damage"])
+        return sum(s["damage"] for s in sources), sources
+
+    def disables_from(self, enemy: dict) -> list[dict]:
+        """Сколько раз враг кастовал в игрока точечные скиллы."""
+        my_key = self.od.hero_key(self.p["hero_id"])
+        result = []
+        for ability, targets in (enemy.get("ability_targets") or {}).items():
+            count = (targets or {}).get(my_key, 0)
+            if count > 0:
+                result.append({"name": self.od.source_name(ability), "count": count})
+        return sorted(result, key=lambda d: -d["count"])
+
+    def pick_counters(self, mechanics: list[str], main_type: str | None, owned: set[str]) -> tuple[list[str], list[str]]:
+        """Контр-предметы под роль игрока: каких не хватало и какие уже были."""
+        candidates: list[str] = []
+        for m in mechanics:
+            candidates += KNOWLEDGE["mechanics"][m][self.role()]
+        if main_type in KNOWLEDGE["damage_types"]:
+            candidates += KNOWLEDGE["damage_types"][main_type][self.role()]
+        seen, missing, had = set(), [], []
+        for key in candidates:
+            if key in seen:
+                continue
+            seen.add(key)
+            (had if key in owned else missing).append(key)
+        return missing[:MAX_COUNTER_ITEMS], had
+
+    def check_killers(self) -> list[dict]:
+        deaths = self.p.get("deaths_log") or []
+        counts: dict[str, int] = {}
+        for d in deaths:
+            counts[d["key"]] = counts.get(d["key"], 0) + 1
+
+        owned = self.owned_items()
+        enemies_by_key = {self.od.hero_key(e["hero_id"]): e for e in self.enemies}
+        killers = []
+        for key, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+            enemy = enemies_by_key.get(key)
+            if not enemy or n < 2:
+                continue
+            total, sources = self.damage_from(enemy)
+            by_type: dict[str, int] = {}
+            for s in sources:
+                if s["type"]:
+                    by_type[s["type"]] = by_type.get(s["type"], 0) + s["damage"]
+            main_type = max(by_type, key=by_type.get) if by_type else None
+            share = round(by_type[main_type] / total * 100) if main_type and total else 0
+            mechanics = self.relevant_mechanics(KNOWLEDGE["heroes"].get(key, []), main_type)
+            missing, had = self.pick_counters(mechanics, main_type, owned)
+            name = self.od.hero_name(enemy["hero_id"])
+            killer = {
+                "hero": name,
+                "key": key,
+                "deaths": n,
+                "damage": total,
+                "main_type": main_type,
+                "main_type_share": share,
+                "sources": sources[:4],
+                "disables": self.disables_from(enemy)[:3],
+                "mechanics": [KNOWLEDGE["mechanics"][m]["name"] for m in mechanics],
+                "tips": [KNOWLEDGE["mechanics"][m]["tip"].replace("{hero}", name) for m in mechanics],
+                "counters": [self.od.item_name(k) for k in missing],
+                "had_counters": [self.od.item_name(k) for k in had],
+                "had_counter_keys": had,
+            }
+            killers.append(killer)
+            self.add_killer_finding(killer)
+        return killers[:3]
+
+    def relevant_mechanics(self, mechanics: list[str], main_type: str | None) -> list[str]:
+        """Оставляет механики, которые подтверждаются цифрами матча и важны для роли игрока."""
+        result = []
+        for m in mechanics:
+            if m == "burst_physical" and main_type != "Physical":
+                continue
+            if m == "burst_magic" and main_type not in ("Magical", "Pure"):
+                continue
+            if self.role() not in KNOWLEDGE["mechanics"][m]["roles"]:
+                continue
+            result.append(m)
+        return result
+
+    def add_killer_finding(self, k: dict):
+        how = ", ".join(f"{s['name']} {s['damage']}" for s in k["sources"][:3])
+        text = f"{k['hero']} убил тебя {k['deaths']} {plural(k['deaths'], 'раз', 'раза', 'раз')}"
+        if k["damage"]:
+            text += f": {k['damage']} урона"
+            if k["main_type"]:
+                text += f", {k['main_type_share']}% {DAMAGE_TYPE_NAMES[k['main_type']]}"
+            text += f" ({how})"
+        if k["disables"]:
+            text += ". Контроль: " + ", ".join(f"{d['name']} ×{d['count']}" for d in k["disables"])
+
+        tip_parts = k["tips"][:2]
+        if k["counters"]:
+            tip_parts.append("Возьми: " + ", ".join(k["counters"]))
+        if k["deaths"] >= 3:
+            had = set(k["had_counter_keys"])
+            if had & DETECTION_ITEMS:
+                tip_parts.append("Детект у тебя был, но не там: ставь сентри и кидай Dust в местах, где умирал")
+            active = [self.od.item_name(x) for x in k["had_counter_keys"] if x not in DETECTION_ITEMS]
+            if active:
+                verb = "были" if len(active) > 1 else "был"
+                tip_parts.append(f"{', '.join(active[:2])} у тебя {verb} — используй заранее, а не когда уже в контроле")
+        self.add(SURVIVAL, BAD if k["deaths"] >= 4 else WARN, text, ". ".join(tip_parts), kind="killer")
+
+    # ---------- сборка против вражеского пика ----------
+
+    def check_itemization(self):
+        if self.minutes < 20:
+            return
+        owned = self.owned_items()
+        role = self.role()
+
+        received = self.p.get("damage_inflictor_received") or {}
+        total = sum(received.values())
+        if total >= 5000:
+            by_type: dict[str, int] = {}
+            for key, dmg in received.items():
+                t = self.od.source_type(key)
+                if t:
+                    by_type[t] = by_type.get(t, 0) + dmg
+            for dmg_type, threshold in (("Magical", 0.5), ("Physical", 0.65)):
+                share = by_type.get(dmg_type, 0) / total
+                counters = KNOWLEDGE["damage_types"][dmg_type][role]
+                if share >= threshold and not owned & set(counters):
+                    names = ", ".join(self.od.item_name(k) for k in counters[:3])
+                    self.add(ITEMS, WARN,
+                             f"{round(share * 100)}% урона по тебе было {DAMAGE_TYPE_INSTR[dmg_type]}, а защиты от него не было",
+                             f"Против такого урона на твоей роли работают: {names}")
+
+        enemy_tags: dict[str, list[str]] = {}
+        for e in self.enemies:
+            for tag in KNOWLEDGE["heroes"].get(self.od.hero_key(e["hero_id"]), []):
+                enemy_tags.setdefault(tag, []).append(self.od.hero_name(e["hero_id"]))
+
+        if "invis" in enemy_tags and self.pos >= 4 and not owned & {"dust", "ward_sentry", "gem"}:
+            self.add(VISION, BAD, f"Против {', '.join(enemy_tags['invis'])} не купил ни Dust, ни сентри",
+                     "Против невидимых героев саппорт всегда носит Dust и ставит сентри в ключевых местах")
+
+        if "evasion" in enemy_tags and self.pos == 1 and self.minutes >= 30 and not owned & {"monkey_king_bar", "bloodthorn"}:
+            self.add(ITEMS, WARN, f"Против уклонения {', '.join(enemy_tags['evasion'])} не было MKB или Bloodthorn",
+                     "Без точности часть твоих атак просто промахивается")
+
+        if len(enemy_tags.get("heal", [])) >= 2 and self.pos in (3, 4) and not owned & {"spirit_vessel", "shivas_guard", "skadi"}:
+            self.add(ITEMS, WARN, f"У врагов много хила ({', '.join(enemy_tags['heal'])}), а антихила у тебя не было",
+                     "Spirit Vessel на оффлейне или четвёрке режет лечение и добивает тех, кто убегает")
+
     # ---------- игра в целом ----------
 
     def check_game(self):
@@ -398,7 +586,7 @@ class MatchAnalyzer:
         }
         return {c: max(1, min(10, round(base[c] + 1 - self.penalty[c]))) for c in CATEGORIES}
 
-    def collect_facts(self) -> dict:
+    def collect_facts(self, killers: list[dict]) -> dict:
         p = self.p
         return {
             "match_id": self.match["match_id"],
@@ -423,6 +611,11 @@ class MatchAnalyzer:
             "benchmarks_percentile": self.bench,
             "deaths": [
                 f"{mmss(d['time'])} от {self.od.hero_name_by_key(d['key'])}" for d in p.get("deaths_log") or []
+            ],
+            "killers": [
+                {k: v for k, v in killer.items() if k in ("hero", "deaths", "damage", "main_type", "sources",
+                                                          "disables", "mechanics", "counters", "had_counters")}
+                for killer in killers
             ],
         }
 

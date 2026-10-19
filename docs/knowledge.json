@@ -1,0 +1,476 @@
+{
+  "mechanics": {
+    "invis": {
+      "name": "невидимость",
+      "core": [
+        "dust",
+        "ward_sentry",
+        "gem"
+      ],
+      "support": [
+        "dust",
+        "ward_sentry",
+        "gem"
+      ],
+      "tip": "Когда {hero} пропал с карты, держи Dust под рукой и ставь сентри там, где фармишь и стоишь в драке",
+      "roles": [
+        "core",
+        "support"
+      ]
+    },
+    "blink_init": {
+      "name": "внезапная инициация",
+      "core": [
+        "black_king_bar"
+      ],
+      "support": [
+        "force_staff",
+        "glimmer_cape",
+        "aeon_disk"
+      ],
+      "tip": "Не стой в одной точке с командой и держи дистанцию: {hero} ищет момент, чтобы прыгнуть сразу на нескольких",
+      "roles": [
+        "core",
+        "support"
+      ]
+    },
+    "global": {
+      "name": "глобальные скиллы",
+      "core": [],
+      "support": [],
+      "tip": "Когда у {hero} готов глобальный скилл, не фарми с низким ХП и не стой один далеко от своих",
+      "roles": [
+        "core",
+        "support"
+      ]
+    },
+    "silence": {
+      "name": "сайленс",
+      "core": [
+        "manta",
+        "black_king_bar",
+        "lotus_orb"
+      ],
+      "support": [
+        "cyclone",
+        "lotus_orb",
+        "glimmer_cape"
+      ],
+      "tip": "{hero} выключает тебе скиллы. Нужен развеиватель (Manta, Eul's, Lotus) или BKB, чтобы успеть ответить",
+      "roles": [
+        "core",
+        "support"
+      ]
+    },
+    "hex": {
+      "name": "хекс",
+      "core": [
+        "sphere",
+        "black_king_bar",
+        "lotus_orb"
+      ],
+      "support": [
+        "lotus_orb",
+        "glimmer_cape",
+        "force_staff"
+      ],
+      "tip": "{hero} хексит с дистанции. Linken's или Lotus блокируют, а против саппорта-хексера держись за союзниками",
+      "roles": [
+        "core",
+        "support"
+      ]
+    },
+    "hook": {
+      "name": "притягивание",
+      "core": [
+        "sphere",
+        "black_king_bar"
+      ],
+      "support": [
+        "force_staff",
+        "glimmer_cape"
+      ],
+      "tip": "Не стой на открытом месте и в линию с {hero}: держись за крипами и деревьями, двигайся не по прямой",
+      "roles": [
+        "core",
+        "support"
+      ]
+    },
+    "illusions": {
+      "name": "иллюзии",
+      "core": [
+        "mjollnir",
+        "maelstrom",
+        "shivas_guard"
+      ],
+      "support": [],
+      "tip": "Ищи оригинал {hero} и бей по площади: иллюзии получают больше урона и быстро тают от AoE",
+      "roles": [
+        "core"
+      ]
+    },
+    "evasion": {
+      "name": "уклонение",
+      "core": [
+        "monkey_king_bar",
+        "bloodthorn"
+      ],
+      "support": [],
+      "tip": "{hero} уклоняется от атак. Без Monkey King Bar или Bloodthorn часть твоих ударов просто промахивается",
+      "roles": [
+        "core"
+      ]
+    },
+    "heal": {
+      "name": "лечение и регенерация",
+      "core": [
+        "spirit_vessel",
+        "shivas_guard",
+        "skadi"
+      ],
+      "support": [
+        "spirit_vessel"
+      ],
+      "tip": "{hero} много лечится. Spirit Vessel, Shiva's или Skadi режут хил, без них его не добить",
+      "roles": [
+        "core",
+        "support"
+      ]
+    },
+    "burst_magic": {
+      "name": "магический прокаст",
+      "core": [
+        "black_king_bar",
+        "eternal_shroud",
+        "mage_slayer"
+      ],
+      "support": [
+        "glimmer_cape",
+        "pipe",
+        "cyclone"
+      ],
+      "tip": "{hero} убивает за один прокаст магии. Резист к магии или BKB, а саппорту Glimmer или Eul's, чтобы пережить комбо",
+      "roles": [
+        "core",
+        "support"
+      ]
+    },
+    "burst_physical": {
+      "name": "физический урон",
+      "core": [
+        "blade_mail",
+        "heavens_halberd",
+        "ghost"
+      ],
+      "support": [
+        "ghost",
+        "force_staff",
+        "solar_crest"
+      ],
+      "tip": "{hero} убивает физическим уроном. Ghost Scepter, Force Staff или броня спасают, а Halberd и Blade Mail наказывают",
+      "roles": [
+        "core",
+        "support"
+      ]
+    }
+  },
+  "damage_types": {
+    "Physical": {
+      "name": "физический",
+      "core": [
+        "blade_mail",
+        "heavens_halberd",
+        "assault",
+        "shivas_guard"
+      ],
+      "support": [
+        "ghost",
+        "force_staff",
+        "solar_crest"
+      ]
+    },
+    "Magical": {
+      "name": "магический",
+      "core": [
+        "black_king_bar",
+        "eternal_shroud",
+        "mage_slayer"
+      ],
+      "support": [
+        "glimmer_cape",
+        "pipe",
+        "cyclone"
+      ]
+    },
+    "Pure": {
+      "name": "чистый",
+      "core": [
+        "black_king_bar",
+        "sphere",
+        "aeon_disk"
+      ],
+      "support": [
+        "force_staff",
+        "cyclone",
+        "lotus_orb"
+      ]
+    }
+  },
+  "heroes": {
+    "npc_dota_hero_clinkz": [
+      "invis",
+      "burst_physical"
+    ],
+    "npc_dota_hero_riki": [
+      "invis",
+      "silence",
+      "burst_physical"
+    ],
+    "npc_dota_hero_bounty_hunter": [
+      "invis",
+      "burst_physical"
+    ],
+    "npc_dota_hero_weaver": [
+      "invis",
+      "burst_physical"
+    ],
+    "npc_dota_hero_nyx_assassin": [
+      "invis",
+      "burst_magic"
+    ],
+    "npc_dota_hero_mirana": [
+      "invis"
+    ],
+    "npc_dota_hero_sand_king": [
+      "invis",
+      "blink_init"
+    ],
+    "npc_dota_hero_invoker": [
+      "invis",
+      "burst_magic",
+      "global"
+    ],
+    "npc_dota_hero_treant": [
+      "invis",
+      "global"
+    ],
+    "npc_dota_hero_faceless_void": [
+      "blink_init",
+      "burst_physical"
+    ],
+    "npc_dota_hero_enigma": [
+      "blink_init"
+    ],
+    "npc_dota_hero_magnataur": [
+      "blink_init"
+    ],
+    "npc_dota_hero_axe": [
+      "blink_init"
+    ],
+    "npc_dota_hero_earthshaker": [
+      "blink_init",
+      "burst_magic"
+    ],
+    "npc_dota_hero_tidehunter": [
+      "blink_init"
+    ],
+    "npc_dota_hero_slardar": [
+      "blink_init",
+      "burst_physical"
+    ],
+    "npc_dota_hero_centaur": [
+      "blink_init"
+    ],
+    "npc_dota_hero_mars": [
+      "blink_init"
+    ],
+    "npc_dota_hero_puck": [
+      "blink_init",
+      "silence",
+      "burst_magic"
+    ],
+    "npc_dota_hero_legion_commander": [
+      "blink_init",
+      "burst_physical"
+    ],
+    "npc_dota_hero_batrider": [
+      "blink_init",
+      "hook"
+    ],
+    "npc_dota_hero_dark_seer": [
+      "blink_init"
+    ],
+    "npc_dota_hero_primal_beast": [
+      "blink_init"
+    ],
+    "npc_dota_hero_tiny": [
+      "blink_init",
+      "burst_magic",
+      "burst_physical"
+    ],
+    "npc_dota_hero_spectre": [
+      "global",
+      "burst_physical"
+    ],
+    "npc_dota_hero_zuus": [
+      "global",
+      "burst_magic"
+    ],
+    "npc_dota_hero_furion": [
+      "global"
+    ],
+    "npc_dota_hero_silencer": [
+      "global",
+      "silence"
+    ],
+    "npc_dota_hero_ancient_apparition": [
+      "global",
+      "heal"
+    ],
+    "npc_dota_hero_skywrath_mage": [
+      "silence",
+      "burst_magic"
+    ],
+    "npc_dota_hero_night_stalker": [
+      "silence",
+      "burst_physical"
+    ],
+    "npc_dota_hero_death_prophet": [
+      "silence",
+      "burst_magic"
+    ],
+    "npc_dota_hero_drow_ranger": [
+      "silence",
+      "burst_physical"
+    ],
+    "npc_dota_hero_doom_bringer": [
+      "silence"
+    ],
+    "npc_dota_hero_bloodseeker": [
+      "silence",
+      "global"
+    ],
+    "npc_dota_hero_earth_spirit": [
+      "silence"
+    ],
+    "npc_dota_hero_lion": [
+      "hex",
+      "burst_magic"
+    ],
+    "npc_dota_hero_shadow_shaman": [
+      "hex"
+    ],
+    "npc_dota_hero_pudge": [
+      "hook"
+    ],
+    "npc_dota_hero_rattletrap": [
+      "hook"
+    ],
+    "npc_dota_hero_vengefulspirit": [
+      "hook"
+    ],
+    "npc_dota_hero_phantom_lancer": [
+      "illusions",
+      "evasion"
+    ],
+    "npc_dota_hero_naga_siren": [
+      "illusions"
+    ],
+    "npc_dota_hero_terrorblade": [
+      "illusions",
+      "burst_physical"
+    ],
+    "npc_dota_hero_chaos_knight": [
+      "illusions",
+      "burst_physical"
+    ],
+    "npc_dota_hero_phantom_assassin": [
+      "evasion",
+      "burst_physical"
+    ],
+    "npc_dota_hero_windrunner": [
+      "evasion"
+    ],
+    "npc_dota_hero_necrolyte": [
+      "heal",
+      "burst_magic"
+    ],
+    "npc_dota_hero_alchemist": [
+      "heal"
+    ],
+    "npc_dota_hero_huskar": [
+      "heal",
+      "burst_magic"
+    ],
+    "npc_dota_hero_dazzle": [
+      "heal"
+    ],
+    "npc_dota_hero_oracle": [
+      "heal"
+    ],
+    "npc_dota_hero_omniknight": [
+      "heal"
+    ],
+    "npc_dota_hero_abaddon": [
+      "heal"
+    ],
+    "npc_dota_hero_life_stealer": [
+      "heal",
+      "burst_physical"
+    ],
+    "npc_dota_hero_juggernaut": [
+      "heal",
+      "burst_physical"
+    ],
+    "npc_dota_hero_undying": [
+      "heal"
+    ],
+    "npc_dota_hero_lina": [
+      "burst_magic"
+    ],
+    "npc_dota_hero_tinker": [
+      "burst_magic",
+      "global"
+    ],
+    "npc_dota_hero_leshrac": [
+      "burst_magic"
+    ],
+    "npc_dota_hero_queenofpain": [
+      "burst_magic",
+      "blink_init"
+    ],
+    "npc_dota_hero_storm_spirit": [
+      "burst_magic",
+      "blink_init"
+    ],
+    "npc_dota_hero_pugna": [
+      "burst_magic"
+    ],
+    "npc_dota_hero_sven": [
+      "burst_physical"
+    ],
+    "npc_dota_hero_templar_assassin": [
+      "burst_physical"
+    ],
+    "npc_dota_hero_slark": [
+      "burst_physical"
+    ],
+    "npc_dota_hero_ursa": [
+      "burst_physical"
+    ],
+    "npc_dota_hero_troll_warlord": [
+      "burst_physical"
+    ],
+    "npc_dota_hero_beastmaster": [
+      "burst_physical"
+    ],
+    "npc_dota_hero_void_spirit": [
+      "burst_magic",
+      "blink_init"
+    ],
+    "npc_dota_hero_ember_spirit": [
+      "burst_physical",
+      "blink_init"
+    ]
+  }
+}
