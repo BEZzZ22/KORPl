@@ -596,6 +596,12 @@ class MatchAnalyzer {
       problems.push(i);
       if (problems.length === 3) break;
     }
+    // Серьёзного нет — подсказываем, что подтянуть, по главным мелким замечаниям
+    if (!problems.length) {
+      for (const f of this.findings.filter((x) => x.severity === WARN && x.tip && x.kind !== "killer").slice(0, 2)) {
+        problems.push({ group: `minor_${problems.length}`, impact: 1, title: `Подтянуть: ${f.category.toLowerCase()}`, fact: f.text, action: f.tip, minor: true });
+      }
+    }
     // Сильные стороны: по одной из каждой группы, чтобы не хвалить дважды за одно и то же
     const family = { deaths10: "surv", dead_share: "surv", gpm: "farm", xpm: "farm", lh10: "farm" };
     const usedFamilies = new Set();
@@ -625,7 +631,7 @@ class MatchAnalyzer {
       role_sure: this.roleSure,
       problems,
       strengths,
-      goal: problems.length ? this.goalFor(problems[0]) : "Повтори такую же игру — и ранг пойдёт вверх",
+      goal: problems.length && !problems[0].minor ? this.goalFor(problems[0]) : "Цель на следующую игру: повторить такой же матч — и ранг пойдёт вверх",
     };
   }
 
