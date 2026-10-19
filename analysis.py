@@ -43,6 +43,9 @@ DETECTION_ITEMS = {"dust", "ward_sentry", "gem"}
 # Сколько раз предмет должен встретиться в про-матчах на герое, чтобы его советовать
 PRO_MIN_COUNT = 3
 PRO_BUILD_SIZE = 6
+# Дешёвые собранные предметы (Bracer, Wand) в про-сборку не берём, кроме сапог
+PRO_BUILD_MIN_COST = 1200
+UPGRADED_BOOTS = ("tranquil_boots", "arcane_boots", "phase_boots", "power_treads", "boots_of_bearing", "guardian_greaves", "travel_boots")
 # Отрезки игры в минутах: линия, мидгейм, лейт
 PHASES = [("lane", "Линия", 0, 10), ("mid", "Мидгейм", 10, 25), ("late", "Лейт", 25, None)]
 SWING_WINDOW = 5
@@ -223,7 +226,11 @@ class MatchAnalyzer:
         return sorted(kept, key=lambda k: -self.pro_count(k))
 
     def pro_build(self) -> list[dict]:
-        finals = [(k, c) for k, c in self.pro.items() if self.is_final_item(k) and c >= PRO_MIN_COUNT]
+        finals = [
+            (k, c) for k, c in self.pro.items()
+            if self.is_final_item(k) and c >= PRO_MIN_COUNT
+            and (self.od.item_cost(k) >= PRO_BUILD_MIN_COST or k in UPGRADED_BOOTS)
+        ]
         finals.sort(key=lambda kc: (-kc[1], kc[0]))
         if not finals:
             return []

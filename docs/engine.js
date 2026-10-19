@@ -24,6 +24,8 @@ const MAX_COUNTER_ITEMS = 3;
 const DETECTION_ITEMS = new Set(["dust", "ward_sentry", "gem"]);
 const PRO_MIN_COUNT = 3;
 const PRO_BUILD_SIZE = 6;
+const PRO_BUILD_MIN_COST = 1200;
+const UPGRADED_BOOTS = new Set(["tranquil_boots", "arcane_boots", "phase_boots", "power_treads", "boots_of_bearing", "guardian_greaves", "travel_boots"]);
 const PHASES = [["lane", "Линия", 0, 10], ["mid", "Мидгейм", 10, 25], ["late", "Лейт", 25, null]];
 const SWING_WINDOW = 5;
 const SWING_MIN_GOLD = 3000;
@@ -250,7 +252,8 @@ class MatchAnalyzer {
 
   proBuild() {
     const finals = Object.entries(this.pro)
-      .filter(([k, c]) => this.isFinalItem(k) && c >= PRO_MIN_COUNT)
+      .filter(([k, c]) => this.isFinalItem(k) && c >= PRO_MIN_COUNT &&
+        (this.od.itemCost(k) >= PRO_BUILD_MIN_COST || UPGRADED_BOOTS.has(k)))
       .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
     if (!finals.length) return [];
     const top = finals[0][1];
