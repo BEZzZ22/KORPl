@@ -120,8 +120,20 @@ def hero_keyboard(match: dict) -> InlineKeyboardMarkup:
 
 # ---------- команды ----------
 
+async def set_app_button(message: Message, account_id: int | None):
+    """Кнопка «Приложение» у поля ввода. Ставим на каждый чат: общая по умолчанию применяется не всегда."""
+    if not WEBAPP_URL:
+        return
+    url = f"{WEBAPP_URL}/?account={account_id}" if account_id else f"{WEBAPP_URL}/"
+    await message.bot.set_chat_menu_button(
+        chat_id=message.chat.id,
+        menu_button=MenuButtonWebApp(text="Приложение", web_app=WebAppInfo(url=url)),
+    )
+
+
 @router.message(Command("start", "help"))
 async def cmd_start(message: Message):
+    await set_app_button(message, db.get_account(message.from_user.id))
     await message.answer(
         "<b>Dota-тренер</b>\n"
         "Разбираю твои катки: где ошибся, что получилось и над чем работать.\n\n"
@@ -151,11 +163,7 @@ async def cmd_me(message: Message, command: CommandObject):
         await message.answer("OpenDota не знает такой аккаунт. Проверь ID.")
         return
     db.set_account(message.from_user.id, account_id)
-    if WEBAPP_URL:
-        await message.bot.set_chat_menu_button(
-            chat_id=message.chat.id,
-            menu_button=MenuButtonWebApp(text="Приложение", web_app=WebAppInfo(url=f"{WEBAPP_URL}/?account={account_id}")),
-        )
+    await set_app_button(message, account_id)
     name = escape(player["profile"].get("personaname") or str(account_id))
     text = f"Привязал аккаунт <b>{name}</b>.\nТеперь пиши /last или /recent."
     if player["profile"].get("fh_unavailable"):
