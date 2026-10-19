@@ -17,7 +17,9 @@ from aiogram.types import (
     ErrorEvent,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    MenuButtonWebApp,
     Message,
+    WebAppInfo,
 )
 from dotenv import load_dotenv
 
@@ -34,6 +36,8 @@ log = logging.getLogger("bot")
 
 DB_PATH = os.getenv("DB_PATH", "bot.db")
 AI_DAILY_LIMIT = int(os.getenv("AI_DAILY_LIMIT", "10"))
+# Адрес Telegram Mini App (папка docs на GitHub Pages). Без него бот работает только текстом
+WEBAPP_URL = os.getenv("WEBAPP_URL", "").rstrip("/")
 MESSAGE_INTERVAL = 1.0  # не чаще одного сообщения в секунду от одного человека
 ANALYSIS_COOLDOWN = 10.0  # и не чаще одного разбора в 10 секунд
 
@@ -91,6 +95,11 @@ class AnalysisGuard:
 guard = AnalysisGuard()
 
 
+def webapp_button(text: str, **params) -> InlineKeyboardButton:
+    query = "&".join(f"{k}={v}" for k, v in params.items())
+    return InlineKeyboardButton(text=text, web_app=WebAppInfo(url=f"{WEBAPP_URL}/?{query}"))
+
+
 def parse_match_id(text: str) -> int | None:
     m = MATCH_ID_RE.search(text or "")
     return int(m.group(1)) if m else None
@@ -142,6 +151,11 @@ async def cmd_me(message: Message, command: CommandObject):
         await message.answer("OpenDota не знает такой аккаунт. Проверь ID.")
         return
     db.set_account(message.from_user.id, account_id)
+    if WEBAPP_URL:
+        await message.bot.set_chat_menu_button(
+            chat_id=message.chat.id,
+            menu_button=MenuButtonWebApp(text="Приложение", web_app=WebAppInfo(url=f"{WEBAPP_URL}/?account={account_id}")),
+        )
     name = escape(player["profile"].get("personaname") or str(account_id))
     text = f"Привязал аккаунт <b>{name}</b>.\nТеперь пиши /last или /recent."
     if player["profile"].get("fh_unavailable"):
@@ -279,7 +293,12 @@ async def analyze_match(message: Message, user_id: int, match_id: int, account_i
     result = analysis.analyze(match, player, od)
     await message.bot.send_chat_action(message.chat.id, ChatAction.UPLOAD_PHOTO)
     png = await asyncio.to_thread(chart.networth_chart, result.timeline)
-    await message.answer_photo(BufferedInputFile(png, f"{match_id}.png"), caption=report.caption(result))
+    markup = None
+    if WEBAPP_URL:
+        button = webapp_button("Открыть в приложении", match=match_id, slot=player["player_slot"])
+        markup = InlineKeyboardMarkup(inline_keyboard=[[button]])
+    await message.answer_photo(BufferedInputFile(png, f"{match_id}.png"), caption=report.caption(result),
+                               reply_markup=markup)
 
     for chunk in report.split_message(report.full_report(result)):
         await message.answer(chunk)
@@ -331,6 +350,10 @@ async def main():
         BotCommand(command="me", description="Привязать аккаунт"),
         BotCommand(command="help", description="Как пользоваться"),
     ])
+    if WEBAPP_URL:
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(text="Приложение", web_app=WebAppInfo(url=f"{WEBAPP_URL}/"))
+        )
     dp = Dispatcher()
     throttle = ThrottleMiddleware()
     dp.message.outer_middleware(throttle)
