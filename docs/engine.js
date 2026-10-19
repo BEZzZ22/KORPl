@@ -30,6 +30,21 @@ const PHASES = [["lane", "Линия", 0, 10], ["mid", "Мидгейм", 10, 25]
 const SWING_WINDOW = 5;
 const SWING_MIN_GOLD = 3000;
 const PRO_ITEM_PHASES = ["early_game_items", "mid_game_items", "late_game_items"];
+const COMPARE_METRICS = [
+  ["gold_per_min", "GPM", 1, "Фарм"],
+  ["xp_per_min", "XPM", 1, "Фарм"],
+  ["last_hits_per_min", "Ластхиты за 10 мин", 10, "Фарм"],
+  ["hero_damage_per_min", "Урон по героям в минуту", 1, "Драки"],
+  ["kills_per_min", "Убийства за 10 мин", 10, "Драки"],
+  ["assists_per_min", "Ассисты за 10 мин", 10, "Драки"],
+  ["deaths_per_min", "Смерти за 10 мин", 10, "Выживание"],
+  ["tower_damage", "Урон по вышкам", 1, "Фарм"],
+];
+const SUPPORT_SKIP_METRICS = new Set(["gold_per_min", "last_hits_per_min", "tower_damage"]);
+const MAP_CENTER_SUM = 256;
+const RIVER_MARGIN = 12;
+const EARLY_DEATH_TIME = 180;
+const LATE_GAME_TIME = 35 * 60;
 
 // ---------- общие утилиты (как в analysis.py) ----------
 
@@ -73,6 +88,18 @@ function textHash(s) {
 
 function fill(template, params) {
   return template.replace(/\{(\w+)\}/g, (_, name) => String(params[name]));
+}
+
+export function tenths(x) {
+  let n = pyRound(x * 10);
+  const sign = n < 0 ? "-" : "";
+  n = Math.abs(n);
+  return `${sign}${Math.floor(n / 10)},${n % 10}`;
+}
+
+function enemyHalf(x, y, radiant) {
+  const s = x + y;
+  return radiant ? s > MAP_CENTER_SUM + RIVER_MARGIN : s < MAP_CENTER_SUM - RIVER_MARGIN;
 }
 
 export function position(player) {
@@ -151,8 +178,10 @@ export function isParsed(match) {
 }
 
 class MatchAnalyzer {
-  constructor(match, player, od, knowledge, texts, proItems) {
+  constructor(match, player, od, knowledge, texts, proItems, heroBench) {
     this.match = match;
+    this.heroBench = heroBench || {};
+    this.flagged = new Set();
     this.p = player;
     this.od = od;
     this.k = knowledge;
@@ -197,11 +226,13 @@ class MatchAnalyzer {
   add(category, severity, key, tipKey = null, params = {}, kind = "") {
     const text = this.say(key, params);
     const tip = tipKey ? this.say(tipKey, params) : "";
-    this.addRaw(category, severity, text, tip, kind);
+    const roastKey = `${key}_roast`;
+    const roast = severity !== GOOD && roastKey in this.texts ? this.say(roastKey, params) : "";
+    this.addRaw(category, severity, text, tip, kind, roast);
   }
 
-  addRaw(category, severity, text, tip = "", kind = "") {
-    this.findings.push({ category, severity, text, tip, kind });
+  addRaw(category, severity, text, tip = "", kind = "", roast = "") {
+    this.findings.push({ category, severity, text, tip, kind, roast });
     this.penalty[category] += { [BAD]: 1.0, [WARN]: 0.5, [GOOD]: -0.5 }[severity];
   }
 
@@ -217,6 +248,12 @@ class MatchAnalyzer {
     this.checkItemization();
     const proBuild = this.proBuild();
     this.checkProBuild(proBuild);
+    this.checkRoshan();
+    this.checkDeathZones();
+    this.checkWardZones();
+    this.checkLateGame();
+    const compare = this.compare();
+    this.checkCompareGap(compare);
     const scores = this.computeScores();
     const values = Object.values(scores);
     return {
@@ -229,6 +266,7 @@ class MatchAnalyzer {
       phases: this.phases(),
       moments: this.moments(),
       pro_build: proBuild,
+      compare,
       verdict: this.verdict(scores),
       items: this.coreItems(),
     };
@@ -297,6 +335,10 @@ class MatchAnalyzer {
       if (diff <= -1000) this.add(LANE, BAD, "lane_lost", "lane_lost_tip", { opp: this.oppName, gold: num(-diff) });
       else if (diff >= 1000) this.add(LANE, GOOD, "lane_won", null, { opp: this.oppName, gold: num(diff) });
     }
+    const firstDeath = (p.deaths_log || [])[0];
+    if (firstDeath && firstDeath.time < EARLY_DEATH_TIME) {
+      this.add(LANE, WARN, "surv_early_death", "surv_early_death_tip", { time: mmss(firstDeath.time) });
+    }
     const early = (p.deaths_log || []).filter((d) => d.time < 600);
     if (early.length >= 2) {
       const n = early.length;
@@ -314,7 +356,10 @@ class MatchAnalyzer {
       for (const [key, name] of [["gold_per_min", "GPM"], ["last_hits_per_min", "Ластхиты в минуту"]]) {
         const pct = this.bench[key];
         if (pct == null) continue;
-        if (pct < 25) this.add(FARM, BAD, "farm_bench_bad", null, { name, pct: 100 - pct });
+        if (pct < 25) {
+          this.flagged.add(key);
+          this.add(FARM, BAD, "farm_bench_bad", null, { name, pct: 100 - pct });
+        }
         else if (pct >= 80) this.add(FARM, GOOD, "farm_bench_good", null, { name, pct });
       }
       for (const [start, end, lh] of this.idleWindows()) {
@@ -326,7 +371,13 @@ class MatchAnalyzer {
       }
       const towers = this.bench.tower_damage;
       if ((this.pos === 1 || this.pos === 3) && this.minutes >= 25 && towers != null && towers < 20) {
+        this.flagged.add("tower_damage");
         this.add(FARM, WARN, "farm_towers", "farm_towers_tip", { pct: 100 - towers });
+      }
+      const xp = this.bench.xp_per_min;
+      if (xp != null && xp < 25) {
+        this.flagged.add("xp_per_min");
+        this.add(FARM, WARN, "farm_xp_bad", "farm_xp_bad_tip", { pct: 100 - xp });
       }
     }
     if (this.opponent && this.minutes >= 20 && this.core) {
@@ -377,8 +428,16 @@ class MatchAnalyzer {
     }
     if (this.core) {
       const pct = this.bench.hero_damage_per_min;
-      if (pct != null && pct < 25) this.add(FIGHTS, WARN, "fights_dmg_bad", "fights_dmg_bad_tip", { pct: 100 - pct });
-      else if (pct != null && pct >= 80) this.add(FIGHTS, GOOD, "fights_dmg_good", null, { pct });
+      if (pct != null && pct < 25) {
+        this.flagged.add("hero_damage_per_min");
+        this.add(FIGHTS, WARN, "fights_dmg_bad", "fights_dmg_bad_tip", { pct: 100 - pct });
+      } else if (pct != null && pct >= 80) this.add(FIGHTS, GOOD, "fights_dmg_good", null, { pct });
+    } else {
+      const assists = this.bench.assists_per_min;
+      if (assists != null && assists < 25) {
+        this.flagged.add("assists_per_min");
+        this.add(FIGHTS, WARN, "fights_assists_bad", "fights_assists_bad_tip", { pct: 100 - assists });
+      }
     }
   }
 
@@ -410,7 +469,10 @@ class MatchAnalyzer {
     const deaths = p.deaths_log || [];
     const pct = this.bench.deaths_per_min;
     const n = p.deaths;
-    if (pct != null && pct < 25) this.add(SURVIVAL, BAD, "surv_deaths_bad", null, { n, deaths_word: deathsWord(n), pct: 100 - pct });
+    if (pct != null && pct < 25) {
+      this.flagged.add("deaths_per_min");
+      this.add(SURVIVAL, BAD, "surv_deaths_bad", null, { n, deaths_word: deathsWord(n), pct: 100 - pct });
+    }
     else if (pct != null && pct >= 80 && this.minutes >= 20) this.add(SURVIVAL, GOOD, "surv_deaths_good", null, { n, deaths_word: deathsWord(n) });
 
     const solo = deaths.filter((d) => d.time >= 600 && !this.inFight(d.time));
@@ -621,7 +683,18 @@ class MatchAnalyzer {
         tipParts.push(this.say("killer_had_active", { items: active.slice(0, 2).join(", "), verb: active.length > 1 ? "были" : "был" }, k.key));
       }
     }
-    this.addRaw(SURVIVAL, n >= 4 ? BAD : WARN, text, tipParts.join(". "), "killer");
+    let roast = "";
+    if (n >= 3) {
+      const params = { hero: k.hero, n, times_word: timesWord(n), deaths_word: deathsWord(n) };
+      if (k.mechanics.includes("невидимость") && !k.had_counter_keys.some((x) => DETECTION_ITEMS.has(x))) {
+        roast = this.say("killer_roast_detect", params, k.key);
+      } else if (k.counters.length) {
+        roast = this.say("killer_roast_item", { ...params, item: k.counters[0] }, k.key);
+      } else {
+        roast = this.say("killer_roast_generic", params, k.key);
+      }
+    }
+    this.addRaw(SURVIVAL, n >= 4 ? BAD : WARN, text, tipParts.join(". "), "killer", roast);
   }
 
   // ---------- сборка против пика ----------
@@ -682,6 +755,100 @@ class MatchAnalyzer {
     let bestMinute = 0, best = adv[0];
     adv.forEach((a, i) => { if (a > best) { best = a; bestMinute = i; } });
     if (best >= 8000) this.add(FIGHTS, WARN, "game_throw", "game_throw_tip", { gold: num(best), minute: bestMinute });
+  }
+
+  // ---------- карта, Рошан, концовка ----------
+
+  checkRoshan() {
+    const myTeam = this.p.isRadiant ? 2 : 3;
+    const kills = (this.match.objectives || []).filter((o) => o.type === "CHAT_MESSAGE_ROSHAN_KILL");
+    const ours = kills.filter((o) => o.team === myTeam).length;
+    const theirs = kills.length - ours;
+    if (theirs >= 2 && ours === 0) {
+      this.add(FIGHTS, WARN, "fights_roshan_lost", "fights_roshan_lost_tip", { theirs, times_word: timesWord(theirs) });
+    } else if (ours >= 2 && theirs === 0) {
+      this.add(FIGHTS, GOOD, "fights_roshan_won", null, { ours, times_word: timesWord(ours) });
+    }
+  }
+
+  fightDeathPoints() {
+    const idx = this.match.players.indexOf(this.p);
+    const points = [];
+    for (const tf of this.match.teamfights || []) {
+      const players = tf.players || [];
+      if (players.length <= idx) continue;
+      for (const [x, ys] of Object.entries(players[idx].deaths_pos || {})) {
+        for (const [y, count] of Object.entries(ys)) {
+          for (let i = 0; i < count; i++) points.push([parseFloat(x), parseFloat(y)]);
+        }
+      }
+    }
+    return points;
+  }
+
+  checkDeathZones() {
+    const n = this.fightDeathPoints().filter(([x, y]) => enemyHalf(x, y, this.p.isRadiant)).length;
+    if (n >= 3) {
+      this.add(SURVIVAL, WARN, "surv_enemy_half", `surv_enemy_half_tip_${this.role()}`,
+        { n, times_word: timesWord(n), deaths_word: deathsWord(n) });
+    }
+  }
+
+  checkWardZones() {
+    const wards = this.p.obs_log || [];
+    if (this.pos < 4 || this.minutes < 20 || wards.length < 5) return;
+    const enemy = wards.filter((w) => enemyHalf(w.x, w.y, this.p.isRadiant)).length;
+    const share = enemy / wards.length;
+    if (share < 0.2) this.add(VISION, WARN, "vision_own_half", "vision_own_half_tip", { enemy, total: wards.length });
+    else if (share >= 0.5) this.add(VISION, GOOD, "vision_deep_good", null, { enemy, total: wards.length });
+  }
+
+  checkLateGame() {
+    const late = (this.p.deaths_log || []).filter((d) => d.time >= LATE_GAME_TIME);
+    if (!this.won && late.length >= 2 && !this.p.buyback_count) {
+      const n = late.length;
+      this.add(ITEMS, WARN, "items_no_buyback", "items_no_buyback_tip", { n, times_word: timesWord(n), deaths_word: deathsWord(n) });
+    }
+  }
+
+  // ---------- сравнение с другими игроками на герое ----------
+
+  benchValue(key, percentile) {
+    for (const row of this.heroBench[key] || []) if (Math.abs(row.percentile - percentile) < 1e-9) return row.value;
+    return null;
+  }
+
+  compare() {
+    const result = [];
+    const playerBench = this.p.benchmarks || {};
+    for (const [key, name, scale, category] of COMPARE_METRICS) {
+      if (!(key in playerBench) || !(this.heroBench[key] || []).length) continue;
+      if (!this.core && SUPPORT_SKIP_METRICS.has(key)) continue;
+      const lowerBetter = key === "deaths_per_min";
+      const median = this.benchValue(key, 0.5);
+      const top = this.benchValue(key, lowerBetter ? 0.1 : 0.99);
+      if (median === null || top === null) continue;
+      const fmt = scale !== 1 ? tenths : (v) => num(pyRound(v));
+      result.push({
+        key, name, category,
+        you: fmt(playerBench[key].raw * scale),
+        median: fmt(median * scale),
+        top: fmt(top * scale),
+        pct: this.bench[key] ?? 50,
+        lower_better: lowerBetter,
+      });
+    }
+    return result;
+  }
+
+  checkCompareGap(compare) {
+    const candidates = compare.filter((c) => !this.flagged.has(c.key) && c.key !== "deaths_per_min");
+    if (!candidates.length) return;
+    let worst = candidates[0];
+    for (const c of candidates) if (c.pct < worst.pct) worst = c;
+    if (worst.pct >= 30) return;
+    this.add(worst.category, WARN, "compare_gap", `compare_gap_tip_${worst.key}`,
+      { name: worst.name, you: worst.you, median: worst.median, top: worst.top, hero: this.hero });
   }
 
   // ---------- фазы игры ----------
@@ -835,6 +1002,6 @@ class MatchAnalyzer {
   }
 }
 
-export function analyze(match, player, od, knowledge, texts, proItems) {
-  return new MatchAnalyzer(match, player, od, knowledge, texts, proItems).run();
+export function analyze(match, player, od, knowledge, texts, proItems, heroBench) {
+  return new MatchAnalyzer(match, player, od, knowledge, texts, proItems, heroBench).run();
 }

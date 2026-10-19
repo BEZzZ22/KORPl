@@ -35,6 +35,7 @@ class OpenDota:
         self._cache: OrderedDict[int, tuple[float, dict]] = OrderedDict()
         self.item_ids: dict[str, str] = {}
         self._pro_items: dict[int, tuple[float, dict[str, int]]] = {}
+        self._hero_bench: dict[int, tuple[float, dict]] = {}
 
     async def start(self):
         self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
@@ -101,6 +102,19 @@ class OpenDota:
         counts = pro_item_counts(data, self.item_ids)
         self._pro_items[hero_id] = (time.monotonic(), counts)
         return counts
+
+    async def hero_bench(self, hero_id: int) -> dict:
+        """Распределение показателей всех игроков на герое: процентиль -> значение."""
+        cached = self._hero_bench.get(hero_id)
+        if cached and time.monotonic() - cached[0] < PRO_ITEMS_TTL:
+            return cached[1]
+        try:
+            data = await self._request("GET", f"/benchmarks?hero_id={hero_id}", allow_404=True) or {}
+        except OpenDotaError:
+            return cached[1] if cached else {}
+        result = data.get("result") or {}
+        self._hero_bench[hero_id] = (time.monotonic(), result)
+        return result
 
     async def request_parse(self, match_id: int):
         """Просит OpenDota разобрать реплей. Без этого нет поминутных данных."""

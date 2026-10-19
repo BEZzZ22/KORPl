@@ -26,3 +26,4 @@ def test_js_engine_matches_python():
         assert js[i]["pro_build"] == py.pro_build, f"про-сборка разошлась у игрока {i}"
         assert js[i]["verdict"] == py.verdict, f"вердикт разошёлся у игрока {i}"
         assert js[i]["killers"] == json.loads(json.dumps(py.killers)), f"убийцы разошлись у игрока {i}"
+        assert js[i]["compare"] == py.compare, f"сравнение разошлось у игрока {i}"

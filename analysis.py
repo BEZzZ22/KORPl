@@ -51,6 +51,23 @@ UPGRADED_BOOTS = ("tranquil_boots", "arcane_boots", "phase_boots", "power_treads
 PHASES = [("lane", "Линия", 0, 10), ("mid", "Мидгейм", 10, 25), ("late", "Лейт", 25, None)]
 SWING_WINDOW = 5
 SWING_MIN_GOLD = 3000
+# Сравнение с другими игроками на герое: ключ бенчмарка, подпись, множитель (за 10 минут), раздел
+COMPARE_METRICS = [
+    ("gold_per_min", "GPM", 1, FARM),
+    ("xp_per_min", "XPM", 1, FARM),
+    ("last_hits_per_min", "Ластхиты за 10 мин", 10, FARM),
+    ("hero_damage_per_min", "Урон по героям в минуту", 1, FIGHTS),
+    ("kills_per_min", "Убийства за 10 мин", 10, FIGHTS),
+    ("assists_per_min", "Ассисты за 10 мин", 10, FIGHTS),
+    ("deaths_per_min", "Смерти за 10 мин", 10, SURVIVAL),
+    ("tower_damage", "Урон по вышкам", 1, FARM),
+]
+# Метрики, которые саппорту не важны
+SUPPORT_SKIP_METRICS = {"gold_per_min", "last_hits_per_min", "tower_damage"}
+MAP_CENTER_SUM = 256
+RIVER_MARGIN = 12
+EARLY_DEATH_TIME = 180
+LATE_GAME_TIME = 35 * 60
 
 
 @dataclass
@@ -60,6 +77,7 @@ class Finding:
     text: str
     tip: str = ""
     kind: str = ""
+    roast: str = ""
 
 
 @dataclass
@@ -72,6 +90,7 @@ class Analysis:
     phases: list[dict] = field(default_factory=list)
     moments: list[dict] = field(default_factory=list)
     pro_build: list[dict] = field(default_factory=list)
+    compare: list[dict] = field(default_factory=list)
     verdict: str = ""
 
     @property
@@ -129,6 +148,20 @@ def at_minute(series: list | None, minute: int) -> int | None:
     return series[minute] if minute < len(series) else series[-1]
 
 
+def tenths(x: float) -> str:
+    """Число с одним знаком после запятой, одинаково в Python и JS."""
+    n = round(x * 10)
+    sign = "-" if n < 0 else ""
+    n = abs(n)
+    return f"{sign}{n // 10},{n % 10}"
+
+
+def enemy_half(x: float, y: float, radiant: bool) -> bool:
+    """Точка на половине врага (река не считается). Свет внизу слева, Тьма вверху справа."""
+    s = x + y
+    return s > MAP_CENTER_SUM + RIVER_MARGIN if radiant else s < MAP_CENTER_SUM - RIVER_MARGIN
+
+
 def deaths_word(n: int) -> str:
     return plural(n, "смерть", "смерти", "смертей")
 
@@ -138,8 +171,11 @@ def times_word(n: int) -> str:
 
 
 class MatchAnalyzer:
-    def __init__(self, match: dict, player: dict, od: OpenDota, pro_items: dict[str, int] | None = None):
+    def __init__(self, match: dict, player: dict, od: OpenDota, pro_items: dict[str, int] | None = None,
+                 hero_bench: dict | None = None):
         self.match = match
+        self.hero_bench = hero_bench or {}
+        self.flagged: set[str] = set()
         self.p = player
         self.od = od
         self.pro = pro_items or {}
@@ -178,10 +214,12 @@ class MatchAnalyzer:
     def add(self, category: str, severity: str, key: str, tip_key: str | None = None, kind: str = "", **params):
         text = self.say(key, **params)
         tip = self.say(tip_key, **params) if tip_key else ""
-        self.add_raw(category, severity, text, tip, kind)
+        roast_key = f"{key}_roast"
+        roast = self.say(roast_key, **params) if severity != GOOD and roast_key in TEXTS else ""
+        self.add_raw(category, severity, text, tip, kind, roast)
 
-    def add_raw(self, category: str, severity: str, text: str, tip: str = "", kind: str = ""):
-        self.findings.append(Finding(category, severity, text, tip, kind))
+    def add_raw(self, category: str, severity: str, text: str, tip: str = "", kind: str = "", roast: str = ""):
+        self.findings.append(Finding(category, severity, text, tip, kind, roast))
         self.penalty[category] += {BAD: 1.0, WARN: 0.5, GOOD: -0.5}[severity]
 
     def run(self) -> Analysis:
@@ -196,10 +234,16 @@ class MatchAnalyzer:
         self.check_itemization()
         pro_build = self.pro_build()
         self.check_pro_build(pro_build)
+        self.check_roshan()
+        self.check_death_zones()
+        self.check_ward_zones()
+        self.check_late_game()
+        compare = self.compare()
+        self.check_compare_gap(compare)
         scores = self.compute_scores()
         phases = self.phases()
         return Analysis(
-            facts=self.collect_facts(killers, phases, pro_build),
+            facts=self.collect_facts(killers, phases, pro_build, compare),
             findings=self.findings,
             scores=scores,
             timeline=self.collect_timeline(),
@@ -207,6 +251,7 @@ class MatchAnalyzer:
             phases=phases,
             moments=self.moments(),
             pro_build=pro_build,
+            compare=compare,
             verdict=self.verdict(scores),
         )
 
@@ -287,6 +332,10 @@ class MatchAnalyzer:
             elif diff >= 1000:
                 self.add(LANE, GOOD, "lane_won", opp=self.opp_name, gold=num(diff))
 
+        first_death = next(iter(p.get("deaths_log") or []), None)
+        if first_death and first_death["time"] < EARLY_DEATH_TIME:
+            self.add(LANE, WARN, "surv_early_death", "surv_early_death_tip", time=mmss(first_death["time"]))
+
         early = [d for d in p.get("deaths_log") or [] if d["time"] < 600]
         if len(early) >= 2:
             n = len(early)
@@ -303,6 +352,7 @@ class MatchAnalyzer:
                 if pct is None:
                     continue
                 if pct < 25:
+                    self.flagged.add(key)
                     self.add(FARM, BAD, "farm_bench_bad", name=name, pct=100 - pct)
                 elif pct >= 80:
                     self.add(FARM, GOOD, "farm_bench_good", name=name, pct=pct)
@@ -318,7 +368,13 @@ class MatchAnalyzer:
 
             towers = self.bench.get("tower_damage")
             if self.pos in (1, 3) and self.minutes >= 25 and towers is not None and towers < 20:
+                self.flagged.add("tower_damage")
                 self.add(FARM, WARN, "farm_towers", "farm_towers_tip", pct=100 - towers)
+
+            xp = self.bench.get("xp_per_min")
+            if xp is not None and xp < 25:
+                self.flagged.add("xp_per_min")
+                self.add(FARM, WARN, "farm_xp_bad", "farm_xp_bad_tip", pct=100 - xp)
 
         if self.opponent and self.minutes >= 20 and self.core:
             diff = at_minute(p["networth_t"], 20) - at_minute(self.opponent["networth_t"], 20)
@@ -370,9 +426,15 @@ class MatchAnalyzer:
         if self.core:
             pct = self.bench.get("hero_damage_per_min")
             if pct is not None and pct < 25:
+                self.flagged.add("hero_damage_per_min")
                 self.add(FIGHTS, WARN, "fights_dmg_bad", "fights_dmg_bad_tip", pct=100 - pct)
             elif pct is not None and pct >= 80:
                 self.add(FIGHTS, GOOD, "fights_dmg_good", pct=pct)
+        else:
+            assists = self.bench.get("assists_per_min")
+            if assists is not None and assists < 25:
+                self.flagged.add("assists_per_min")
+                self.add(FIGHTS, WARN, "fights_assists_bad", "fights_assists_bad_tip", pct=100 - assists)
 
     def missed_fights(self) -> list[tuple[int, int]]:
         """Драки, где у команды погибли 2+ героя, а игрок не участвовал и не был мёртв."""
@@ -403,6 +465,7 @@ class MatchAnalyzer:
         pct = self.bench.get("deaths_per_min")
         n = p["deaths"]
         if pct is not None and pct < 25:
+            self.flagged.add("deaths_per_min")
             self.add(SURVIVAL, BAD, "surv_deaths_bad", n=n, deaths_word=deaths_word(n), pct=100 - pct)
         elif pct is not None and pct >= 80 and self.minutes >= 20:
             self.add(SURVIVAL, GOOD, "surv_deaths_good", n=n, deaths_word=deaths_word(n))
@@ -652,7 +715,16 @@ class MatchAnalyzer:
             if active:
                 tip_parts.append(self.say("killer_had_active", seed=k["key"], items=", ".join(active[:2]),
                                           verb="были" if len(active) > 1 else "был"))
-        self.add_raw(SURVIVAL, BAD if n >= 4 else WARN, text, ". ".join(tip_parts), "killer")
+        roast = ""
+        if n >= 3:
+            params = {"hero": k["hero"], "n": n, "times_word": times_word(n), "deaths_word": deaths_word(n)}
+            if "невидимость" in k["mechanics"] and not set(k["had_counter_keys"]) & DETECTION_ITEMS:
+                roast = self.say("killer_roast_detect", seed=k["key"], **params)
+            elif k["counters"]:
+                roast = self.say("killer_roast_item", seed=k["key"], item=k["counters"][0], **params)
+            else:
+                roast = self.say("killer_roast_generic", seed=k["key"], **params)
+        self.add_raw(SURVIVAL, BAD if n >= 4 else WARN, text, ". ".join(tip_parts), "killer", roast)
 
     # ---------- сборка против вражеского пика ----------
 
@@ -708,6 +780,99 @@ class MatchAnalyzer:
         best_minute, best = max(enumerate(adv), key=lambda x: x[1])
         if best >= 8000:
             self.add(FIGHTS, WARN, "game_throw", "game_throw_tip", gold=num(best), minute=best_minute)
+
+    # ---------- карта, Рошан, концовка ----------
+
+    def check_roshan(self):
+        my_team = 2 if self.p["isRadiant"] else 3
+        kills = [o for o in self.match.get("objectives") or [] if o.get("type") == "CHAT_MESSAGE_ROSHAN_KILL"]
+        ours = sum(1 for o in kills if o.get("team") == my_team)
+        theirs = len(kills) - ours
+        if theirs >= 2 and ours == 0:
+            self.add(FIGHTS, WARN, "fights_roshan_lost", "fights_roshan_lost_tip", theirs=theirs, times_word=times_word(theirs))
+        elif ours >= 2 and theirs == 0:
+            self.add(FIGHTS, GOOD, "fights_roshan_won", ours=ours, times_word=times_word(ours))
+
+    def fight_death_points(self) -> list[tuple[float, float]]:
+        """Координаты смертей игрока в драках (вне драк OpenDota позиций не даёт)."""
+        idx = self.match["players"].index(self.p)
+        points = []
+        for tf in self.match.get("teamfights") or []:
+            players = tf.get("players") or []
+            if len(players) <= idx:
+                continue
+            for x, ys in (players[idx].get("deaths_pos") or {}).items():
+                for y, count in ys.items():
+                    points += [(float(x), float(y))] * count
+        return points
+
+    def check_death_zones(self):
+        n = sum(1 for x, y in self.fight_death_points() if enemy_half(x, y, self.p["isRadiant"]))
+        if n >= 3:
+            self.add(SURVIVAL, WARN, "surv_enemy_half", f"surv_enemy_half_tip_{self.role()}",
+                     n=n, times_word=times_word(n), deaths_word=deaths_word(n))
+
+    def check_ward_zones(self):
+        wards = self.p.get("obs_log") or []
+        if self.pos < 4 or self.minutes < 20 or len(wards) < 5:
+            return
+        enemy = sum(1 for w in wards if enemy_half(w["x"], w["y"], self.p["isRadiant"]))
+        share = enemy / len(wards)
+        if share < 0.2:
+            self.add(VISION, WARN, "vision_own_half", "vision_own_half_tip", enemy=enemy, total=len(wards))
+        elif share >= 0.5:
+            self.add(VISION, GOOD, "vision_deep_good", enemy=enemy, total=len(wards))
+
+    def check_late_game(self):
+        late = [d for d in self.p.get("deaths_log") or [] if d["time"] >= LATE_GAME_TIME]
+        if not self.won and len(late) >= 2 and not self.p.get("buyback_count"):
+            n = len(late)
+            self.add(ITEMS, WARN, "items_no_buyback", "items_no_buyback_tip", n=n, times_word=times_word(n),
+                     deaths_word=deaths_word(n))
+
+    # ---------- сравнение с другими игроками на герое ----------
+
+    def bench_value(self, key: str, percentile: float) -> float | None:
+        for row in self.hero_bench.get(key) or []:
+            if abs(row["percentile"] - percentile) < 1e-9:
+                return row["value"]
+        return None
+
+    def compare(self) -> list[dict]:
+        result = []
+        player_bench = self.p.get("benchmarks") or {}
+        for key, name, scale, category in COMPARE_METRICS:
+            if key not in player_bench or not self.hero_bench.get(key):
+                continue
+            if not self.core and key in SUPPORT_SKIP_METRICS:
+                continue
+            lower_better = key == "deaths_per_min"
+            median = self.bench_value(key, 0.5)
+            top = self.bench_value(key, 0.1 if lower_better else 0.99)
+            if median is None or top is None:
+                continue
+            fmt = tenths if scale != 1 else (lambda v: num(round(v)))
+            result.append({
+                "key": key,
+                "name": name,
+                "category": category,
+                "you": fmt(player_bench[key]["raw"] * scale),
+                "median": fmt(median * scale),
+                "top": fmt(top * scale),
+                "pct": self.bench.get(key, 50),
+                "lower_better": lower_better,
+            })
+        return result
+
+    def check_compare_gap(self, compare: list[dict]):
+        candidates = [c for c in compare if c["key"] not in self.flagged and c["key"] != "deaths_per_min"]
+        if not candidates:
+            return
+        worst = min(candidates, key=lambda c: c["pct"])
+        if worst["pct"] >= 30:
+            return
+        self.add(worst["category"], WARN, "compare_gap", f"compare_gap_tip_{worst['key']}",
+                 name=worst["name"], you=worst["you"], median=worst["median"], top=worst["top"], hero=self.hero)
 
     # ---------- фазы игры ----------
 
@@ -821,7 +986,7 @@ class MatchAnalyzer:
         key = "verdict_top" if mean >= 8 else "verdict_good" if mean >= 6.5 else "verdict_mid" if mean >= 5 else "verdict_bad"
         return self.say(key)
 
-    def collect_facts(self, killers: list[dict], phases: list[dict], pro_build: list[dict]) -> dict:
+    def collect_facts(self, killers: list[dict], phases: list[dict], pro_build: list[dict], compare: list[dict]) -> dict:
         p = self.p
         return {
             "match_id": self.match["match_id"],
@@ -849,6 +1014,9 @@ class MatchAnalyzer:
             "pro_build": [f"{b['item']} ({b['share']}%){' — был' if b['owned'] else ''}" for b in pro_build],
             "phases": [f"{ph['title']}: {ph['text']}" for ph in phases],
             "benchmarks_percentile": self.bench,
+            "compare_with_hero_players": [
+                f"{c['name']}: ты {c['you']}, средний {c['median']}, лучшие {c['top']}" for c in compare
+            ],
             "deaths": [
                 f"{mmss(d['time'])} от {self.od.hero_name_by_key(d['key'])}" for d in p.get("deaths_log") or []
             ],
@@ -871,5 +1039,6 @@ class MatchAnalyzer:
         }
 
 
-def analyze(match: dict, player: dict, od: OpenDota, pro_items: dict[str, int] | None = None) -> Analysis:
-    return MatchAnalyzer(match, player, od, pro_items).run()
+def analyze(match: dict, player: dict, od: OpenDota, pro_items: dict[str, int] | None = None,
+            hero_bench: dict | None = None) -> Analysis:
+    return MatchAnalyzer(match, player, od, pro_items, hero_bench).run()

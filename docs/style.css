@@ -278,7 +278,25 @@ ol.focus li::marker { color: var(--ember); font-weight: 800; font-family: var(--
 
 /* ---------- графики ---------- */
 
-.chart { width: 100%; height: auto; display: block; overflow: visible; }
+.chart { width: 100%; height: auto; display: block; overflow: visible; touch-action: pan-y; cursor: crosshair; user-select: none; -webkit-user-select: none; }
+.chart .tt { font-size: 10.5px; fill: var(--text); font-weight: 600; }
+.chart .tt-title { fill: var(--gold); font-family: var(--display); }
+.chart .tt-death { fill: var(--bad); }
+
+.roast { margin-top: 6px; font-style: italic; color: #ffb38a; font-size: 14px; }
+.roast::before { content: "« "; color: var(--crimson); }
+.roast::after { content: " »"; color: var(--crimson); }
+
+.cmp-row { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.cmp-row:last-child { border-bottom: 0; }
+.cmp-head { display: flex; justify-content: space-between; align-items: baseline; }
+.cmp-head b { font-family: var(--display); font-size: 17px; }
+.cmp-scale { position: relative; height: 8px; margin: 10px 0 6px; border-radius: 4px;
+  background: linear-gradient(90deg, #5a0b18 0%, #b3122b 30%, #ff6a2a 70%, #e6b65c 100%); opacity: .9; }
+.cmp-median { position: absolute; left: 50%; top: -3px; width: 2px; height: 14px; background: rgba(255, 255, 255, 0.55); }
+.cmp-marker { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
+  background: #fff; box-shadow: 0 0 0 3px var(--bg), 0 0 14px rgba(255, 200, 120, 0.9); }
+.cmp-legend { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); gap: 8px; }
 .chart text { fill: var(--muted); font-size: 10px; }
 .chart .grid { stroke: rgba(255, 96, 48, 0.08); stroke-width: 1; }
 

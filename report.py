@@ -48,9 +48,38 @@ def finding_lines(findings, numbered: bool) -> list[str]:
     for i, f in enumerate(findings, 1):
         mark = f"{i}." if numbered else "•"
         lines.append(f"{mark} {escape(f.text)}")
+        if f.roast:
+            lines.append(f"    <i>«{escape(f.roast)}»</i>")
         if f.tip:
             lines.append(f"    <i>→ {escape(f.tip)}</i>")
     return lines
+
+
+# Короткие подписи, чтобы таблица влезала в экран телефона
+COMPARE_SHORT = {
+    "gold_per_min": "GPM",
+    "xp_per_min": "XPM",
+    "last_hits_per_min": "Крипы/10м",
+    "hero_damage_per_min": "Урон/мин",
+    "kills_per_min": "Убийства/10м",
+    "assists_per_min": "Ассисты/10м",
+    "deaths_per_min": "Смерти/10м",
+    "tower_damage": "По вышкам",
+}
+
+
+def compare_block(a: Analysis) -> str:
+    rows = [("", "ты", "средн", "топ")]
+    for c in a.compare:
+        mark = "▲" if c["pct"] >= 50 else "▼"
+        rows.append((f"{mark} {COMPARE_SHORT.get(c['key'], c['name'])}", c["you"], c["median"], c["top"]))
+    widths = [max(len(r[i]) for r in rows) for i in range(4)]
+    lines = [" ".join(r[0].ljust(widths[0]) if i == 0 else r[i].rjust(widths[i]) for i in range(4)) for r in rows]
+    return (
+        f"<b>Ты против других игроков на {escape(a.facts['hero'])}</b>\n"
+        "<pre>" + escape("\n".join(lines)) + "</pre>\n"
+        "<i>средн — медиана всех игроков на герое, топ — лучший 1%</i>"
+    )
 
 
 def phases_block(a: Analysis) -> str:
@@ -74,7 +103,8 @@ def moments_block(a: Analysis) -> str:
 
 def killers_block(a: Analysis) -> str:
     lines = ["<b>Кто тебя убивал и как</b>"]
-    for k in a.killers:
+    roasts = [f.roast for f in a.findings if f.kind == "killer"]
+    for k, roast in zip(a.killers, roasts + [""] * len(a.killers)):
         lines.append(f"\n<b>{escape(k['hero'])}</b> — {k['deaths']} {plural(k['deaths'], 'смерть', 'смерти', 'смертей')}")
         if k["damage"]:
             kind = f", {k['main_type_share']}% {DAMAGE_TYPE_NAMES[k['main_type']]}" if k["main_type"] else ""
@@ -90,6 +120,8 @@ def killers_block(a: Analysis) -> str:
             lines.append("<i>→ На твоём герое против него берут: " + escape(", ".join(k["counters"])) + "</i>")
         if k["had_counters"]:
             lines.append("Уже было: " + escape(", ".join(k["had_counters"])))
+        if roast:
+            lines.append(f"<i>«{escape(roast)}»</i>")
     return "\n".join(lines)
 
 
@@ -121,6 +153,8 @@ def full_report(a: Analysis) -> str:
     if not bad and not warn:
         parts.append("Явных ошибок по цифрам не нашёл. Красавчик.")
 
+    if a.compare:
+        parts.append(compare_block(a))
     if a.phases:
         parts.append(phases_block(a))
     if a.moments:

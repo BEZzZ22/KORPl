@@ -8,15 +8,16 @@ const json = (path) => JSON.parse(readFileSync(new URL(path, import.meta.url)));
 const constants = load("./fixtures/constants.json.gz");
 const match = load("./fixtures/match_9052987576.json.gz");
 const pro = load("./fixtures/pro_items.json.gz");
+const bench = load("./fixtures/hero_bench.json.gz");
 const knowledge = json("../docs/knowledge.json");
 const texts = json("../docs/texts.json");
 const od = createDictionary(constants);
 
 const result = match.players.map((p) => {
-  const a = analyze(match, p, od, knowledge, texts, pro[String(p.hero_id)] || {});
+  const a = analyze(match, p, od, knowledge, texts, pro[String(p.hero_id)] || {}, bench[String(p.hero_id)] || {});
   return {
     scores: a.scores, findings: a.findings, phases: a.phases, moments: a.moments,
-    pro_build: a.pro_build, verdict: a.verdict, killers: a.killers,
+    pro_build: a.pro_build, verdict: a.verdict, killers: a.killers, compare: a.compare,
   };
 });
 process.stdout.write(JSON.stringify(result));

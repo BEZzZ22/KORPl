@@ -19,6 +19,7 @@ const app = document.getElementById("app");
 let dictionary = null, knowledge = null, texts = null, itemIds = null;
 let pollTimer = null;
 const proCache = new Map();
+const benchCache = new Map();
 
 // ---------- утилиты ----------
 
@@ -94,6 +95,18 @@ async function proItems(heroId) {
     }
   }
   return proCache.get(heroId);
+}
+
+async function heroBench(heroId) {
+  if (!benchCache.has(heroId)) {
+    try {
+      const data = await api(`/benchmarks?hero_id=${heroId}`);
+      benchCache.set(heroId, (data && data.result) || {});
+    } catch {
+      return {};
+    }
+  }
+  return benchCache.get(heroId);
 }
 
 function toAccountId(raw) {
@@ -276,8 +289,8 @@ async function matchScreen(matchId, slot, accountId, attempt = 0) {
   }
   if (!player) { heroPicker(match); return; }
 
-  const pro = await proItems(player.hero_id);
-  analysisScreen(analyze(match, player, dictionary, knowledge, texts, pro));
+  const [pro, bench] = await Promise.all([proItems(player.hero_id), heroBench(player.hero_id)]);
+  analysisScreen(analyze(match, player, dictionary, knowledge, texts, pro, bench));
 }
 
 function heroPicker(match) {
@@ -303,6 +316,7 @@ const TABS = [
   ["Ошибки", findingsTab],
   ["Убийцы", killersTab],
   ["Сборка", buildTab],
+  ["Сравнение", compareTab],
   ["Графики", chartsTab],
 ];
 
@@ -367,6 +381,7 @@ function findingCard(f) {
   return h("div", { class: `finding ${f.severity}` },
     h("div", { class: "cat" }, `${SEVERITY_LABEL[f.severity]} · ${f.category}`),
     h("div", {}, f.text),
+    f.roast && h("div", { class: "roast" }, f.roast),
     f.tip && h("div", { class: "tip" }, f.tip),
   );
 }
@@ -419,7 +434,8 @@ function findingsTab(a) {
 
 function killersTab(a) {
   if (!a.killers.length) return h("p", { class: "muted" }, "Никто не убил тебя больше одного раза. Выживание на уровне.");
-  return h("div", {}, ...a.killers.map((k) => {
+  const roasts = a.findings.filter((f) => f.kind === "killer").map((f) => f.roast);
+  return h("div", {}, ...a.killers.map((k, idx) => {
     const total = Object.values(k.damage_by_type).reduce((x, y) => x + y, 0) || 1;
     return h("div", { class: "card" },
       h("div", { class: "killer-head" },
@@ -441,6 +457,7 @@ function killersTab(a) {
       k.counter_keys.length > 0 && h("div", { class: "sub" }, "Что берут на твоём герое против него"),
       k.counter_keys.length > 0 && h("div", { class: "chips" }, ...k.counter_keys.map((key) => itemChip(key, "chip need"))),
       k.had_counter_keys.length > 0 && h("div", { class: "small muted" }, "Уже было: " + k.had_counters.join(", ")),
+      roasts[idx] && h("div", { class: "roast" }, roasts[idx]),
     );
   }));
 }
@@ -471,11 +488,28 @@ function buildTab(a) {
   return h("div", {}, pro, yours);
 }
 
+function compareTab(a) {
+  if (!a.compare.length) return h("p", { class: "muted" }, "Нет данных для сравнения с другими игроками на этом герое.");
+  return h("div", {},
+    h("h2", {}, `Ты против игроков на ${a.facts.hero}`),
+    h("div", { class: "card" }, ...a.compare.map((c) => h("div", { class: "cmp-row" },
+      h("div", { class: "cmp-head" }, h("span", {}, c.name), h("b", { class: c.pct >= 50 ? "win-text" : "loss-text" }, c.you)),
+      h("div", { class: "cmp-scale" }, h("i", { class: "cmp-median" }), h("i", { class: "cmp-marker", "data-left": c.pct })),
+      h("div", { class: "cmp-legend" },
+        h("span", {}, `средний ${c.median}`),
+        h("span", {}, `${c.pct >= 50 ? "лучше" : "хуже"}, чем у ${c.pct >= 50 ? c.pct : 100 - c.pct}%`),
+        h("span", {}, `топ-1% ${c.top}`)),
+    ))),
+    h("div", { class: "small muted" }, "Шкала — твоё место среди всех игроков на этом герое: слева худшие, справа лучшие, черта — середина."),
+  );
+}
+
 function chartsTab(a) {
   const t = a.timeline;
   const series = [{ values: t.player, color: "#ff6a2a", label: t.hero, glow: true }];
   if (t.opponent) series.push({ values: t.opponent, color: "#9b3b5a", label: t.opponent_name });
   return h("div", {},
+    h("p", { class: "small muted" }, "Веди пальцем по графику, чтобы увидеть значения на каждой минуте."),
     h("h2", {}, "Нетворс против оппонента"),
     h("div", { class: "card" }, lineChart(series, { markers: t.deaths, unit: "k" }), legend(series, t.deaths.length > 0)),
     t.team_gold_adv.length > 0 && h("h2", {}, "Преимущество команды"),
@@ -502,12 +536,58 @@ function chartFrame(values, len, { zero = false, unit = "" } = {}) {
   const y = (v) => T + (1 - (v - min) / (max - min)) * (H - T - B);
   const fmt = (v) => (unit === "k" ? `${Math.round(v / 1000)}k` : String(Math.round(v)));
   const chart = svg("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img" });
+  chart.dataset.len = String(len);
   for (let i = 0; i <= 4; i++) {
     const v = min + ((max - min) * i) / 4;
     chart.append(svg("line", { class: "grid", x1: L, x2: W - R, y1: y(v), y2: y(v) }), svg("text", { x: 2, y: y(v) + 3 }, fmt(v)));
   }
   for (let m = 0; m <= n; m += 10) chart.append(svg("text", { x: x(m) - 4, y: H - 4 }, m));
-  return { chart, x, y };
+  return { chart, x, y, W, H, L, R, T, B };
+}
+
+// Палец или мышь над графиком: вертикальная линия, точки и подсказка со значениями этой минуты
+function makeInteractive(frame, series, { deaths = [], valueFmt = (v) => num(v) } = {}) {
+  const { chart, x, y, W, H, L, R, T, B } = frame;
+  const len = Math.max(...series.map((s) => s.values.length));
+  const guide = svg("line", { y1: T, y2: H - B, stroke: "#e6b65c", "stroke-width": 1, "stroke-dasharray": "3 3", opacity: 0 });
+  const dots = series.map((s) => svg("circle", { r: 4, fill: s.color, stroke: "#070404", "stroke-width": 2, opacity: 0 }));
+  const box = svg("rect", { rx: 6, fill: "rgba(7,4,4,0.92)", stroke: "rgba(255,96,48,0.45)", opacity: 0 });
+  const lines = [svg("text", { class: "tt tt-title" })].concat(series.map(() => svg("text", { class: "tt" })), [svg("text", { class: "tt tt-death" })]);
+  const tip = svg("g", { "pointer-events": "none" }, guide, ...dots, box, ...lines);
+  chart.append(tip);
+
+  const show = (evt) => {
+    const rect = chart.getBoundingClientRect();
+    const px = ((evt.clientX - rect.left) / rect.width) * W;
+    const i = Math.max(0, Math.min(len - 1, Math.round(((px - L) / (W - L - R)) * (len - 1))));
+    const cx = x(i);
+    guide.setAttribute("x1", cx); guide.setAttribute("x2", cx); guide.setAttribute("opacity", 1);
+    series.forEach((s, k) => {
+      const v = s.values[Math.min(i, s.values.length - 1)];
+      dots[k].setAttribute("cx", cx); dots[k].setAttribute("cy", y(v)); dots[k].setAttribute("opacity", 1);
+      lines[k + 1].textContent = `${s.label ? s.label + ": " : ""}${valueFmt(v)}`;
+      lines[k + 1].setAttribute("fill", s.color);
+    });
+    lines[0].textContent = `${i} мин`;
+    const died = deaths.filter((t) => Math.floor(t / 60) === i);
+    lines[lines.length - 1].textContent = died.length ? `смерть ${died.map((t) => mmss(t)).join(", ")}` : "";
+    const rows = lines.filter((l) => l.textContent).length;
+    const boxW = 128, boxH = 8 + rows * 13;
+    const bx = cx + 10 + boxW > W - R ? cx - 10 - boxW : cx + 10;
+    box.setAttribute("x", bx); box.setAttribute("y", T); box.setAttribute("width", boxW); box.setAttribute("height", boxH);
+    box.setAttribute("opacity", 1);
+    let row = 0;
+    lines.forEach((l) => {
+      if (!l.textContent) { l.setAttribute("opacity", 0); return; }
+      l.setAttribute("x", bx + 8); l.setAttribute("y", T + 15 + row * 13); l.setAttribute("opacity", 1);
+      row++;
+    });
+  };
+  const hide = () => [guide, box, ...dots, ...lines].forEach((el) => el.setAttribute("opacity", 0));
+  chart.addEventListener("pointermove", show);
+  chart.addEventListener("pointerdown", (evt) => { show(evt); haptic("light"); });
+  chart.addEventListener("pointerleave", hide);
+  return chart;
 }
 
 const pathOf = (values, x, y) => values.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
@@ -516,7 +596,8 @@ const pathOf = (values, x, y) => values.map((v, i) => `${i ? "L" : "M"}${x(i).to
 function lineChart(series, { markers = [], unit = "" } = {}) {
   const all = series.flatMap((s) => s.values);
   const len = Math.max(...series.map((s) => s.values.length));
-  const { chart, x, y } = chartFrame(all.length ? all : [0], len, { unit });
+  const frame = chartFrame(all.length ? all : [0], len, { unit });
+  const { chart, x, y } = frame;
   for (const s of series) {
     const d = pathOf(s.values, x, y);
     if (s.glow) chart.append(svg("path", { d, fill: "none", stroke: s.color, "stroke-width": 7, "stroke-opacity": 0.18, "stroke-linejoin": "round" }));
@@ -531,12 +612,13 @@ function lineChart(series, { markers = [], unit = "" } = {}) {
       svg("line", { x1: cx - 3.5, y1: cy + 3.5, x2: cx + 3.5, y2: cy - 3.5, stroke: "#ff2a2a", "stroke-width": 2 }),
     );
   }
-  return chart;
+  return makeInteractive(frame, series, { deaths: markers });
 }
 
 // Преимущество команды: плюс — огнём, минус — кровью
 function areaChart(values) {
-  const { chart, x, y } = chartFrame(values, values.length, { zero: true, unit: "k" });
+  const frame = chartFrame(values, values.length, { zero: true, unit: "k" });
+  const { chart, x, y } = frame;
   const last = values.length - 1;
   const area = (clamped) => `${pathOf(clamped, x, y)} L${x(last).toFixed(1)},${y(0).toFixed(1)} L${x(0).toFixed(1)},${y(0).toFixed(1)} Z`;
   chart.append(
@@ -544,7 +626,7 @@ function areaChart(values) {
     svg("path", { d: area(values.map((v) => Math.min(v, 0))), fill: "#b3122b", "fill-opacity": 0.75 }),
     svg("line", { x1: x(0), x2: x(last), y1: y(0), y2: y(0), stroke: "#9b8576", "stroke-width": 1 }),
   );
-  return chart;
+  return makeInteractive(frame, [{ values, color: "#ff8a3d", label: "команда" }], { valueFmt: (v) => (v > 0 ? "+" : "") + num(v) });
 }
 
 // Ширины полосок и цвета легенды выставляем из JS: CSP запрещает inline-стили в разметке
@@ -559,6 +641,7 @@ function applyDynamicStyles(root) {
     el.style.background = "var(--fire)";
   });
   root.querySelectorAll("[data-color]").forEach((el) => { el.style.background = el.dataset.color; });
+  root.querySelectorAll("[data-left]").forEach((el) => { el.style.left = `${Number(el.dataset.left)}%`; });
 }
 new MutationObserver(() => applyDynamicStyles(app)).observe(app, { childList: true, subtree: true });
 

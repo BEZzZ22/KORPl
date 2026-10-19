@@ -46,8 +46,19 @@ def pro_for(player) -> dict:
     return PRO_ITEMS.get(str(player["hero_id"]), {})
 
 
+HERO_BENCH = None
+
+
+def bench_for(player) -> dict:
+    """Распределение показателей на герое игрока из фикстуры."""
+    global HERO_BENCH
+    if HERO_BENCH is None:
+        HERO_BENCH = load("hero_bench.json.gz")
+    return HERO_BENCH.get(str(player["hero_id"]), {})
+
+
 def run(match, player, od):
-    return analysis.analyze(match, player, od, pro_for(player))
+    return analysis.analyze(match, player, od, pro_for(player), bench_for(player))
 
 
 @pytest.fixture(scope="module")

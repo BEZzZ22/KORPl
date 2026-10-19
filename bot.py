@@ -315,8 +315,8 @@ async def analyze_match(message: Message, user_id: int, match_id: int, account_i
         await message.answer("За кого показать разбор?", reply_markup=hero_keyboard(match))
         return
 
-    pro_items = await od.pro_items(player["hero_id"])
-    result = analysis.analyze(match, player, od, pro_items)
+    pro_items, hero_bench = await asyncio.gather(od.pro_items(player["hero_id"]), od.hero_bench(player["hero_id"]))
+    result = analysis.analyze(match, player, od, pro_items, hero_bench)
     await message.bot.send_chat_action(message.chat.id, ChatAction.UPLOAD_PHOTO)
     png = await asyncio.to_thread(chart.networth_chart, result.timeline)
     markup = None
