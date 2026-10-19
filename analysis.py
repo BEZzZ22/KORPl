@@ -163,6 +163,12 @@ class MatchAnalyzer:
         """Текст по шаблону. Вариант зависит от матча, игрока и seed, чтобы фразы не повторялись."""
         variants = TEXTS[key]
         seed = f"{self.match['match_id']}:{self.p['player_slot']}:{key}:{seed}"
+        # Слова при числах склоняются сами: «2 крипа», «5 минут»
+        if "lh" in params:
+            params["creeps"] = plural(params["lh"], "крип", "крипа", "крипов")
+            params["lasthits"] = plural(params["lh"], "ластхит", "ластхита", "ластхитов")
+        if "mins" in params:
+            params["mins_word"] = plural(params["mins"], "минуту", "минуты", "минут")
         return fill(variants[text_hash(seed) % len(variants)], params)
 
     def add(self, category: str, severity: str, key: str, tip_key: str | None = None, kind: str = "", **params):

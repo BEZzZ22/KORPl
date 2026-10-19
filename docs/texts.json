@@ -1,8 +1,8 @@
 {
   "lane_lh_bad": [
-    "К 10:00 у тебя {lh} крипов, а норма для позиции — {target}+",
-    "Добивание провалено: {lh} ластхитов на десятой минуте при норме {target}",
-    "Всего {lh} крипов к 10:00. Для твоей роли нужно хотя бы {target}"
+    "К 10:00 у тебя {lh} {creeps}, а норма для позиции — {target}+",
+    "Добивание провалено: {lh} {lasthits} на десятой минуте при норме {target}",
+    "Всего {lh} {creeps} к 10:00. Для твоей роли нужно хотя бы {target}"
   ],
   "lane_lh_bad_tip": [
     "Тренируй добивание в демке: 5 минут на линии без скиллов, цель 40+ крипов",
@@ -11,13 +11,13 @@
   ],
   "lane_lh_warn": [
     "Ластхиты к 10:00: {lh}, чуть ниже нормы {target}",
-    "{lh} крипов на десятой минуте — почти норма, но до {target} не дотянул",
+    "{lh} {creeps} на десятой минуте — почти норма, но до {target} не дотянул",
     "Добивание на линии средненькое: {lh} при ориентире {target}"
   ],
   "lane_lh_good": [
-    "Отличное добивание: {lh} крипов к 10:00",
-    "{lh} ластхитов к десятой минуте — линия отфармлена на совесть",
-    "На линии ты фармил как машина: {lh} крипов к 10:00"
+    "Отличное добивание: {lh} {creeps} к 10:00",
+    "{lh} {lasthits} к десятой минуте — линия отфармлена на совесть",
+    "На линии ты фармил как машина: {lh} {creeps} к 10:00"
   ],
   "lane_denies_warn": [
     "Денаев на миде к 10:00 всего {dn}",
@@ -64,9 +64,9 @@
     "По показателю «{name}» ты обходишь {pct}% игроков на этом герое"
   ],
   "farm_idle": [
-    "Простой с {from} по {to}: всего {lh} крипов за {mins} мин",
-    "С {from} до {to} фарм встал — {lh} крипов за {mins} минуты",
-    "{mins} минуты без фарма ({from}–{to}): добито всего {lh} крипов"
+    "Простой с {from} по {to}: всего {lh} {creeps} за {mins} мин",
+    "С {from} до {to} фарм встал — {lh} {creeps} за {mins} {mins_word}",
+    "Простой {mins} {mins_word} ({from}–{to}): добито всего {lh} {creeps}"
   ],
   "farm_idle_tip": [
     "Если нечего делать, фарми лес или пушь линию. Минута без фарма — минус 300-500 золота",
@@ -243,8 +243,8 @@
   ],
   "items_tp": [
     "Всего {n} ТП за {mins} мин",
-    "ТП использован {n} раз за {mins} минут — это мало",
-    "За {mins} минут всего {n} телепортов"
+    "ТП использован {n} раз за {mins} {mins_word} — это мало",
+    "За {mins} {mins_word} всего {n} телепортов"
   ],
   "items_tp_tip": [
     "ТП должен быть в слоте всегда: спасает вышки, союзников и экономит время на ходьбу",
@@ -309,7 +309,7 @@
   ],
   "vision_obs_bad": [
     "Всего {n} обсов за {mins} мин",
-    "Видения не хватало: {n} обсов за {mins} минут",
+    "Видения не хватало: {n} обсов за {mins} {mins_word}",
     "{n} обсерверов за всю игру ({mins} мин) — для саппорта мало"
   ],
   "vision_obs_bad_tip": [
@@ -367,56 +367,56 @@
     "Один Dust за 80 золота может спасти союзника и выиграть драку"
   ],
   "vision_smoke": [
-    "Ни одного смока за {mins} минут",
-    "За {mins} минут ты ни разу не использовал Smoke"
+    "Ни одного смока за {mins} {mins_word}",
+    "За {mins} {mins_word} ты ни разу не использовал Smoke"
   ],
   "vision_smoke_tip": [
     "Smoke — лучший способ начать ганг или пройти через видение врага. Саппорту нужно 2-3 смока за игру",
     "Купи смок и позови кора на ганг: так начинаются выигранные мидгеймы"
   ],
   "phase_lane_good": [
-    "Линию ты провёл сильно: {lh} крипов, {kills_text}, {deaths_text}. {nw_text}",
-    "Первые 10 минут — твои: {lh} ластхитов, {kills_text}, {deaths_text}. {nw_text}",
-    "Сильный старт: {lh} крипов к 10:00, {kills_text}, {deaths_text}. {nw_text}"
+    "Линию ты провёл сильно: {lh} {creeps}, {kills_text}, {deaths_text}. {nw_text}",
+    "Первые 10 минут — твои: {lh} {lasthits}, {kills_text}, {deaths_text}. {nw_text}",
+    "Сильный старт: {lh} {creeps} к 10:00, {kills_text}, {deaths_text}. {nw_text}"
   ],
   "phase_lane_even": [
-    "Линия прошла ровно: {lh} крипов, {kills_text}, {deaths_text}. {nw_text}",
-    "На линии без явного перевеса: {lh} ластхитов, {kills_text}, {deaths_text}. {nw_text}",
-    "Обычная линия: {lh} крипов к 10:00, {kills_text}, {deaths_text}. {nw_text}"
+    "Линия прошла ровно: {lh} {creeps}, {kills_text}, {deaths_text}. {nw_text}",
+    "На линии без явного перевеса: {lh} {lasthits}, {kills_text}, {deaths_text}. {nw_text}",
+    "Обычная линия: {lh} {creeps} к 10:00, {kills_text}, {deaths_text}. {nw_text}"
   ],
   "phase_lane_bad": [
-    "Линия не задалась: {lh} крипов, {kills_text}, {deaths_text}. {nw_text}",
-    "Тяжёлый старт: {lh} ластхитов к 10:00, {kills_text}, {deaths_text}. {nw_text}",
-    "Первые 10 минут ушли в минус: {lh} крипов, {kills_text}, {deaths_text}. {nw_text}"
+    "Линия не задалась: {lh} {creeps}, {kills_text}, {deaths_text}. {nw_text}",
+    "Тяжёлый старт: {lh} {lasthits} к 10:00, {kills_text}, {deaths_text}. {nw_text}",
+    "Первые 10 минут ушли в минус: {lh} {creeps}, {kills_text}, {deaths_text}. {nw_text}"
   ],
   "phase_mid_good": [
-    "В мидгейме ты разогнался: +{lh} крипов, {kills_text}, {deaths_text}. {nw_text}",
-    "С 10 по 25 минуту ты задавал темп: +{lh} крипов, {kills_text}, {deaths_text}. {nw_text}",
-    "Мидгейм — лучшая часть твоей игры: +{lh} ластхитов, {kills_text}, {deaths_text}. {nw_text}"
+    "В мидгейме ты разогнался: +{lh} {creeps}, {kills_text}, {deaths_text}. {nw_text}",
+    "С 10 по 25 минуту ты задавал темп: +{lh} {creeps}, {kills_text}, {deaths_text}. {nw_text}",
+    "Мидгейм — лучшая часть твоей игры: +{lh} {lasthits}, {kills_text}, {deaths_text}. {nw_text}"
   ],
   "phase_mid_even": [
-    "Мидгейм прошёл ровно: +{lh} крипов, {kills_text}, {deaths_text}. {nw_text}",
-    "С 10 по 25 минуту без резких движений: +{lh} ластхитов, {kills_text}, {deaths_text}. {nw_text}",
-    "В середине игры всё по нулям: +{lh} крипов, {kills_text}, {deaths_text}. {nw_text}"
+    "Мидгейм прошёл ровно: +{lh} {creeps}, {kills_text}, {deaths_text}. {nw_text}",
+    "С 10 по 25 минуту без резких движений: +{lh} {lasthits}, {kills_text}, {deaths_text}. {nw_text}",
+    "В середине игры всё по нулям: +{lh} {creeps}, {kills_text}, {deaths_text}. {nw_text}"
   ],
   "phase_mid_bad": [
-    "Мидгейм провален: +{lh} крипов, {kills_text}, {deaths_text}. {nw_text}",
-    "С 10 по 25 минуту игра уходила из рук: +{lh} ластхитов, {kills_text}, {deaths_text}. {nw_text}",
-    "Самый слабый отрезок — мидгейм: +{lh} крипов, {kills_text}, {deaths_text}. {nw_text}"
+    "Мидгейм провален: +{lh} {creeps}, {kills_text}, {deaths_text}. {nw_text}",
+    "С 10 по 25 минуту игра уходила из рук: +{lh} {lasthits}, {kills_text}, {deaths_text}. {nw_text}",
+    "Самый слабый отрезок — мидгейм: +{lh} {creeps}, {kills_text}, {deaths_text}. {nw_text}"
   ],
   "phase_late_good": [
-    "В лейте ты тащил: +{lh} крипов, {kills_text}, {deaths_text}. {nw_text}",
-    "Концовка за тобой: +{lh} ластхитов, {kills_text}, {deaths_text}. {nw_text}",
+    "В лейте ты тащил: +{lh} {creeps}, {kills_text}, {deaths_text}. {nw_text}",
+    "Концовка за тобой: +{lh} {lasthits}, {kills_text}, {deaths_text}. {nw_text}",
     "После 25 минуты ты был ключевым героем: {kills_text}, {deaths_text}. {nw_text}"
   ],
   "phase_late_even": [
-    "Лейт прошёл ровно: +{lh} крипов, {kills_text}, {deaths_text}. {nw_text}",
+    "Лейт прошёл ровно: +{lh} {creeps}, {kills_text}, {deaths_text}. {nw_text}",
     "После 25 минуты без явного перевеса: {kills_text}, {deaths_text}. {nw_text}",
-    "Концовка в обычном темпе: +{lh} ластхитов, {kills_text}, {deaths_text}. {nw_text}"
+    "Концовка в обычном темпе: +{lh} {lasthits}, {kills_text}, {deaths_text}. {nw_text}"
   ],
   "phase_late_bad": [
     "В лейте ты отдавал игру: {kills_text}, {deaths_text}. {nw_text}",
-    "Концовка не твоя: +{lh} крипов, {kills_text}, {deaths_text}. {nw_text}",
+    "Концовка не твоя: +{lh} {creeps}, {kills_text}, {deaths_text}. {nw_text}",
     "После 25 минуты всё пошло не так: {kills_text}, {deaths_text}. {nw_text}"
   ],
   "moment_death_fight": [

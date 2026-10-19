@@ -182,6 +182,13 @@ class MatchAnalyzer {
   say(key, params = {}, seed = "") {
     const variants = this.texts[key];
     const fullSeed = `${this.match.match_id}:${this.p.player_slot}:${key}:${seed}`;
+    // Слова при числах склоняются сами: «2 крипа», «5 минут»
+    params = { ...params };
+    if ("lh" in params) {
+      params.creeps = plural(params.lh, "крип", "крипа", "крипов");
+      params.lasthits = plural(params.lh, "ластхит", "ластхита", "ластхитов");
+    }
+    if ("mins" in params) params.mins_word = plural(params.mins, "минуту", "минуты", "минут");
     return fill(variants[textHash(fullSeed) % variants.length], params);
   }
 
