@@ -278,7 +278,7 @@ ol.focus li::marker { color: var(--ember); font-weight: 800; font-family: var(--
 
 /* ---------- графики ---------- */
 
-.chart { width: 100%; height: auto; display: block; overflow: visible; touch-action: pan-y; cursor: crosshair; user-select: none; -webkit-user-select: none; }
+.chart { width: 100%; height: auto; display: block; overflow: visible; touch-action: none; cursor: crosshair; user-select: none; -webkit-user-select: none; }
 .chart .tt { font-size: 10.5px; fill: var(--text); font-weight: 600; }
 .chart .tt-title { fill: var(--gold); font-family: var(--display); }
 .chart .tt-death { fill: var(--bad); }
@@ -322,3 +322,21 @@ ol.focus li::marker { color: var(--ember); font-weight: 800; font-family: var(--
 @keyframes fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 .error { color: var(--bad); }
+
+/* ---------- сводка ---------- */
+
+.who { display: inline-block; margin-top: 4px; padding: 4px 12px; border-radius: 999px; font-size: 13px;
+  border: 1px solid var(--line-strong); background: rgba(255, 106, 42, 0.06); color: var(--text); }
+.problem { display: grid; grid-template-columns: 34px 1fr; gap: 12px; align-items: start; }
+.problem-num { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+  font-family: var(--display); font-weight: 800; color: #fff; background: var(--fire);
+  box-shadow: 0 0 16px rgba(215, 38, 61, 0.45); }
+.problem-title { font-family: var(--display); font-size: 17px; color: var(--gold); margin-bottom: 4px; }
+.problem-fact { font-size: 14px; color: var(--text); }
+.problem-action { margin-top: 8px; padding: 8px 10px; border-radius: 10px; font-size: 14px;
+  background: rgba(255, 106, 42, 0.08); border: 1px solid rgba(255, 106, 42, 0.2); }
+.problem-action::before { content: "Что делать: "; color: var(--ember); font-weight: 700; }
+.strength { margin: 8px 0; padding-left: 14px; border-left: 2px solid var(--gold); font-size: 14px; }
+.goal { margin-top: 18px; text-align: center; font-family: var(--display); font-size: 16px; color: #fff;
+  border: 1px solid rgba(230, 182, 92, 0.5);
+  background: linear-gradient(135deg, rgba(255, 106, 42, 0.18), rgba(122, 16, 32, 0.35)); }

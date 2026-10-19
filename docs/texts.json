@@ -689,5 +689,40 @@
     "{hero} явно записал тебя в любимые цели",
     "Похоже, {hero} фармил тебя как лесной лагерь",
     "{hero} наверняка запомнил твой ник"
+  ],
+  "rank_low_terrible": [
+    "{what}: {value} — это провал для {rank_gen}. У большинства {role_gen} твоего ранга {median}, у сильных — {strong}",
+    "{what} — {value}. Хуже, чем у {worse_pct}% {role_gen} на ранге {rank}: обычно {median}, у сильных {strong}",
+    "{what}: {value} при обычных для {rank_gen} {median}. Это уровень худших 10% твоего ранга"
+  ],
+  "rank_low_bad": [
+    "{what}: {value} — хуже, чем у {worse_pct}% {role_gen} на ранге {rank} (обычно {median})",
+    "{what} — {value}. Для {rank_gen} это слабо: большинство делает {median}, сильные — {strong}",
+    "{what}: {value}. На ранге {rank} у {role_gen} обычно {median}"
+  ],
+  "rank_high": [
+    "{what}: {value} — лучше, чем у {pct}% {role_gen} на ранге {rank}",
+    "{what} — {value}, это уровень сильнейших {rank_plural}",
+    "{what}: {value}. Ты обходишь {pct}% {role_gen} своего ранга"
+  ],
+  "surv_no_deaths": [
+    "Ни одной смерти за игру",
+    "Ни разу не умер — так и надо",
+    "Ноль смертей: враги до тебя не добрались"
+  ],
+  "phase_sup_good": [
+    "Сильный отрезок: участвовал {fights_text}, {deaths_text}, поставил {wards_text}. {nw_text}",
+    "Ты был там, где нужно: {fights_text}, {deaths_text}, {wards_text} на карте. {nw_text}",
+    "Отличная работа саппорта: {fights_text}, {deaths_text}, {wards_text}. {nw_text}"
+  ],
+  "phase_sup_even": [
+    "Ровный отрезок: участвовал {fights_text}, {deaths_text}, поставил {wards_text}. {nw_text}",
+    "Без провалов, но и без яркого вклада: {fights_text}, {deaths_text}, {wards_text}. {nw_text}",
+    "Средне: {fights_text}, {deaths_text}, {wards_text}. {nw_text}"
+  ],
+  "phase_sup_bad": [
+    "Тяжёлый отрезок: участвовал {fights_text}, {deaths_text}, поставил {wards_text}. {nw_text}",
+    "Здесь ты больше мешал себе, чем помогал команде: {fights_text}, {deaths_text}, {wards_text}. {nw_text}",
+    "Провал: {fights_text}, {deaths_text}, {wards_text}. {nw_text}"
   ]
 }

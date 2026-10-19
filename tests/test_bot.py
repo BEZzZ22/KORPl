@@ -32,6 +32,7 @@ def offline_od() -> OpenDota:
     client.hero_keys = {int(h["id"]): h["name"] for h in c["heroes"].values()}
     client.items = c["items"]
     client.abilities = {k: {"dname": a["dname"], "dmg_type": damage_type(a["dmg_type"])} for k, a in c["abilities"].items()}
+    client.constants = {"heroes": c["heroes"], "items": c["items"], "abilities": client.abilities}
     return client
 
 
@@ -193,3 +194,34 @@ def test_turbo_matches_get_a_warning(match, od):
     turbo = dict(match, game_mode=23)
     assert "Турбо" in report.caption(run(turbo, turbo["players"][0], od))
     assert "Турбо" not in report.caption(run(match, match["players"][0], od))
+
+
+def test_summary_is_short_and_actionable(match, od):
+    for player in match["players"]:
+        s = run(match, player, od).summary
+        assert len(s["problems"]) <= 3
+        for p in s["problems"]:
+            assert p["title"] and p["fact"] and p["action"] and p["impact"] > 0
+        assert s["goal"]
+        assert len(s["strengths"]) <= 2
+
+
+def test_support_phases_talk_about_fights_not_creeps(match, od):
+    tusk = match["players"][0]  # пятая позиция
+    a = run(match, tusk, od)
+    assert a.facts["position"] == 5
+    for ph in a.phases:
+        assert "крип" not in ph["text"] and "ластхит" not in ph["text"]
+
+
+def test_no_contradictions_and_few_roasts(match, od):
+    for player in match["players"]:
+        a = run(match, player, od)
+        assert sum(1 for f in a.findings if f.roast) <= 3
+        survival = [f.severity for f in a.findings if f.category == analysis.SURVIVAL]
+        assert not (analysis.BAD in survival and analysis.GOOD in survival)
+
+
+def test_summary_in_chat_report(match, od):
+    text = report.full_report(run(match, match["players"][0], od))
+    assert "Сводка" in text and "Цель на следующую игру" in text

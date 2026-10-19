@@ -1,6 +1,6 @@
-// Движок разбора матча. Точная копия analysis.py для веб-приложения:
-// тест tests/test_parity.py прогоняет оба движка на одном матче и сверяет результат.
-// Тексты общие: docs/texts.json, база механик: docs/knowledge.json.
+// Движок разбора матча — единственный источник логики.
+// Его используют веб-приложение (app.js) и бот (через engine_cli.mjs).
+// Тексты: docs/texts.json, механики героев: docs/knowledge.json, нормы по рангам: docs/rank_norms.json.
 
 export const LANE = "Линия", FARM = "Фарм", FIGHTS = "Драки", SURVIVAL = "Выживание", ITEMS = "Предметы", VISION = "Видение";
 export const CATEGORIES = [LANE, FARM, FIGHTS, SURVIVAL, ITEMS, VISION];
@@ -45,6 +45,76 @@ const MAP_CENTER_SUM = 256;
 const RIVER_MARGIN = 12;
 const EARLY_DEATH_TIME = 180;
 const LATE_GAME_TIME = 35 * 60;
+
+// Ранги: [именительный, родительный, родительный мн.]
+const RANKS = {
+  herald: ["Рекрут", "Рекрута", "Рекрутов"],
+  guardian: ["Страж", "Стража", "Стражей"],
+  crusader: ["Рыцарь", "Рыцаря", "Рыцарей"],
+  archon: ["Герой", "Героя", "Героев"],
+  legend: ["Легенда", "Легенды", "Легенд"],
+  ancient: ["Властелин", "Властелина", "Властелинов"],
+  divine: ["Божество", "Божества", "Божеств"],
+  immortal: ["Титан", "Титана", "Титанов"],
+};
+const RANK_ORDER = Object.keys(RANKS);
+const ROLE_GEN_PLURAL = { 1: "керри", 2: "мидеров", 3: "оффлейнеров", 4: "четвёрок", 5: "пятёрок" };
+const ROLE_NAME = { 1: "керри", 2: "мидер", 3: "оффлейнер", 4: "четвёрка", 5: "пятёрка" };
+const NORM_PCTS = [10, 25, 50, 75, 90];
+const GRADE_WORD = {
+  terrible: "провал", bad: "плохо", below: "ниже среднего", avg: "средне", good: "хорошо", great: "отлично",
+};
+// Ключевые показатели для оценки относительно ранга и роли
+const RANK_METRICS = {
+  lh10: { what: "Крипы к 10:00", cat: "Линия", roles: [1, 2, 3], fmt: (v) => String(Math.round(v)) },
+  gpm: { what: "Золото в минуту", cat: "Фарм", roles: [1, 2, 3], fmt: (v) => String(Math.round(v)) },
+  xpm: { what: "Опыт в минуту", cat: "Фарм", roles: [1, 2, 3, 4, 5], fmt: (v) => String(Math.round(v)) },
+  kp: { what: "Участие в убийствах", cat: "Драки", roles: [1, 2, 3, 4, 5], fmt: (v) => `${Math.round(v * 100)}%` },
+  dmg_min: { what: "Урон по героям в минуту", cat: "Драки", roles: [1, 2, 3], fmt: (v) => num(v) },
+  deaths10: { what: "Смерти за 10 минут", cat: "Выживание", roles: [1, 2, 3, 4, 5], lower: true, fmt: (v) => tenths(v) },
+  dead_share: { what: "Время в таверне", cat: "Выживание", roles: [1, 2, 3, 4, 5], lower: true, fmt: (v) => `${Math.round(v * 100)}% игры` },
+  first_item: { what: "Первый крупный предмет", cat: "Предметы", roles: [1, 2, 3], lower: true, fmt: (v) => mmss(v) },
+  obs10: { what: "Обсы за 10 минут", cat: "Видение", roles: [4, 5], fmt: (v) => tenths(v) },
+};
+// Сколько примерно золота стоит отставание по показателю — для сортировки проблем в сводке
+const FIRST_ITEM_KEYS = new Set(["blink", "black_king_bar", "battle_fury", "bfury", "desolator", "maelstrom", "radiance", "manta",
+  "echo_sabre", "aghanims_shard", "ultimate_scepter", "orchid", "kaya", "sange", "yasha", "armlet", "witch_blade",
+  "diffusal_blade", "dragon_lance", "mask_of_madness", "hand_of_midas", "vanguard", "blade_mail", "force_staff",
+  "glimmer_cape", "cyclone", "aether_lens", "spirit_vessel", "pipe", "crimson_guard", "invis_sword", "phylactery",
+  "harpoon", "sange_and_yasha", "kaya_and_sange", "yasha_and_kaya", "mjollnir", "skadi", "basher", "heavens_halberd",
+  "solar_crest", "pavise", "holy_locket", "rod_of_atos", "ghost", "lotus_orb", "meteor_hammer", "travel_boots"]);
+
+// Механика засчитывается, только если враг ею реально пользовался в этом матче
+const INVIS_ABILITIES = new Set(["clinkz_wind_walk", "bounty_hunter_wind_walk", "weaver_shukuchi", "nyx_assassin_vendetta",
+  "mirana_invis", "sand_king_sand_storm", "invoker_ghost_walk", "treant_natures_guise", "riki_tricks_of_the_trade"]);
+const INVIS_ITEMS = new Set(["invis_sword", "silver_edge", "shadow_amulet"]);
+const ALWAYS_INVIS = new Set(["npc_dota_hero_riki"]);
+const BLINK_ITEMS = new Set(["blink", "overwhelming_blink", "swift_blink", "arcane_blink", "force_staff", "hurricane_pike"]);
+const INNATE_INITIATORS = new Set(["faceless_void", "magnataur", "batrider", "sand_king", "puck", "slardar", "primal_beast",
+  "tiny", "queenofpain", "storm_spirit", "void_spirit", "ember_spirit", "mars", "dark_seer", "spirit_breaker", "earth_spirit"]
+  .map((h) => `npc_dota_hero_${h}`));
+
+// Процентиль значения среди игроков ранга по квантилям [p10, p25, p50, p75, p90]
+export function percentileIn(v, q) {
+  if (v <= q[0]) return q[0] > 0 ? Math.max(0, (10 * v) / q[0]) : 10;
+  if (v >= q[4]) return Math.min(100, 90 + (10 * (v - q[4])) / Math.max(q[4] - q[2], 1e-9));
+  for (let i = 0; i < 4; i++) {
+    if (v <= q[i + 1]) {
+      const span = q[i + 1] - q[i];
+      return NORM_PCTS[i] + (span > 0 ? ((NORM_PCTS[i + 1] - NORM_PCTS[i]) * (v - q[i])) / span : (NORM_PCTS[i + 1] - NORM_PCTS[i]) / 2);
+    }
+  }
+  return 50;
+}
+
+function gradeOf(pct) {
+  if (pct < 10) return "terrible";
+  if (pct < 25) return "bad";
+  if (pct < 45) return "below";
+  if (pct < 65) return "avg";
+  if (pct < 85) return "good";
+  return "great";
+}
 
 // ---------- общие утилиты (как в analysis.py) ----------
 
@@ -106,6 +176,56 @@ export function position(player) {
   return player.position_est || { 1: 1, 2: 2, 3: 3 }[player.lane_role] || 4;
 }
 
+// Доля фарма игрока: чем больше, тем вероятнее он кор. Ранний фарм весит больше —
+// поздний у саппорта тоже растёт, а на 10-й минуте роли видны чётче.
+function farmScore(p) {
+  const lh10 = atMinute(p.lh_t, 10) ?? 0;
+  const nw10 = atMinute(p.networth_t, 10) ?? 0;
+  return lh10 * 3 + nw10 / 40 + (p.last_hits || 0) + (p.net_worth || 0) / 150;
+}
+
+function wardsPlaced(p) {
+  return (p.obs_placed ?? 0) + (p.sen_placed ?? 0);
+}
+
+// Роли внутри одной команды по фарму, линии и вардам.
+// Позиции OpenDota (position_est) в пабах часто ошибаются: кор с 13к нетворса попадает в саппорты.
+export function assignRoles(team) {
+  const ranked = [...team].sort((a, b) => farmScore(b) - farmScore(a));
+  let cores = ranked.slice(0, 3);
+  let supports = ranked.slice(3);
+  // Кор, который поставил кучу вардов, а саппорт без вардов — меняем местами
+  const wardy = cores.filter((p) => wardsPlaced(p) >= 8).sort((a, b) => farmScore(a) - farmScore(b))[0];
+  const greedy = supports.filter((p) => wardsPlaced(p) <= 2).sort((a, b) => farmScore(b) - farmScore(a))[0];
+  if (wardy && greedy && wardsPlaced(wardy) > wardsPlaced(greedy) + 5) {
+    cores = cores.map((p) => (p === wardy ? greedy : p));
+    supports = supports.map((p) => (p === greedy ? wardy : p));
+  }
+
+  const roles = new Map();
+  const laneRole = (p) => p.lane_role || 0;
+  const byFarm = (a, b) => farmScore(b) - farmScore(a);
+  const pool = [...cores].sort(byFarm);
+  const take = (p, pos) => { if (p) { roles.set(p, pos); pool.splice(pool.indexOf(p), 1); } };
+  // Мидер — кор, стоявший на центральной линии
+  take(pool.find((p) => laneRole(p) === 2) || pool.find((p) => p.lane === 2), 2);
+  // Керри — кор на лёгкой линии, иначе самый богатый из оставшихся
+  take(pool.find((p) => laneRole(p) === 1) || pool[0], 1);
+  // Остальные коры — оффлейн; если мидера не нашли, богатейший из них считается мидером
+  const hasMid = [...roles.values()].includes(2);
+  pool.forEach((p, i) => roles.set(p, !hasMid && i === 0 ? 2 : 3));
+  // Саппорты: пятёрка стоит с керри на лёгкой линии, четвёрка — на сложной или роумит
+  const sups = [...supports].sort((a, b) => wardsPlaced(b) - wardsPlaced(a));
+  const five = sups.find((p) => laneRole(p) === 1 && !p.is_roaming) || sups[0];
+  if (five) roles.set(five, 5);
+  for (const p of sups) if (!roles.has(p)) roles.set(p, 4);
+
+  // Уверенность: насколько третий кор отрывается по фарму от лучшего саппорта
+  const s3 = farmScore(ranked[2] || ranked[0]), s4 = farmScore(ranked[3] || ranked[0]);
+  const confidence = s3 > 0 ? Math.max(0, Math.min(1, (s3 - s4) / s3 * 2.5)) : 0;
+  return { roles, confidence };
+}
+
 function atMinute(series, minute) {
   if (!series || !series.length) return null;
   return minute < series.length ? series[minute] : series[series.length - 1];
@@ -153,7 +273,7 @@ export function createDictionary({ heroes, items, abilities }) {
     heroNameByKey(key) {
       if (key in heroesByKey) return heroesByKey[key];
       if (key.includes("tower")) return "башня";
-      if (key.includes("creep") || key.includes("neutral")) return "крипы";
+      if (key.includes("creep") || key.includes("neutral") || key.includes("siege")) return "крипы";
       return key.replace("npc_dota_", "");
     },
     itemName: (key) => (items[key] && items[key].dname) || key,
@@ -178,8 +298,10 @@ export function isParsed(match) {
 }
 
 class MatchAnalyzer {
-  constructor(match, player, od, knowledge, texts, proItems, heroBench) {
+  constructor(match, player, od, knowledge, texts, proItems, heroBench, norms) {
     this.match = match;
+    this.norms = norms || {};
+    this.issues = [];
     this.heroBench = heroBench || {};
     this.flagged = new Set();
     this.p = player;
@@ -191,12 +313,17 @@ class MatchAnalyzer {
     this.damageTypeNames = Object.fromEntries(Object.entries(knowledge.damage_types).map(([k, v]) => [k, v.name]));
     this.duration = match.duration;
     this.minutes = Math.floor(this.duration / 60);
-    this.pos = position(player);
+    const radiant = match.players.filter((x) => x.isRadiant);
+    const dire = match.players.filter((x) => !x.isRadiant);
+    const rr = assignRoles(radiant), dr = assignRoles(dire);
+    this.roleOf = new Map([...rr.roles, ...dr.roles]);
+    this.roleConfidence = player.isRadiant ? rr.confidence : dr.confidence;
+    this.pos = this.roleOf.get(player) || position(player);
     this.core = this.pos <= 3;
     this.won = player.isRadiant === match.radiant_win;
     this.allies = match.players.filter((x) => x.isRadiant === player.isRadiant);
     this.enemies = match.players.filter((x) => x.isRadiant !== player.isRadiant);
-    this.opponent = this.enemies.find((e) => position(e) === LANE_OPPONENT[this.pos]) || null;
+    this.opponent = this.laneOpponent();
     this.oppName = this.opponent ? od.heroName(this.opponent.hero_id) : null;
     this.hero = od.heroName(player.hero_id);
     this.bench = {};
@@ -206,6 +333,119 @@ class MatchAnalyzer {
     this.fightWindows = (match.teamfights || []).map((tf) => [tf.start - TEAMFIGHT_MARGIN, tf.end + TEAMFIGHT_MARGIN]);
     this.findings = [];
     this.penalty = Object.fromEntries(CATEGORIES.map((c) => [c, 0]));
+    // Игрок разнёс игру: мелкие придирки ему не показываем
+    this.dominant = this.won && (player.kills + player.assists) / Math.max(1, player.deaths) >= 5;
+    // Роль 3 или 4 при низкой уверенности спорная: ролевые проверки для неё не запускаем
+    this.roleSure = this.roleConfidence >= 0.3 || ![3, 4].includes(this.pos);
+    this.bracket = this.detectBracket();
+    this.metrics = this.collectMetrics();
+    this.rank = this.rankMetrics();
+  }
+
+  // ---------- ранг и нормы ----------
+
+  // Ранг игрока; если скрыт — средний по открытым рангам в матче
+  detectBracket() {
+    const toBracket = (tier) => RANK_ORDER[Math.min(8, Math.max(1, Math.floor(tier / 10))) - 1];
+    if (this.p.rank_tier) return toBracket(this.p.rank_tier);
+    const tiers = this.match.players.map((x) => x.rank_tier).filter(Boolean);
+    if (tiers.length) return toBracket(sum(tiers) / tiers.length);
+    return null;
+  }
+
+  collectMetrics() {
+    const p = this.p;
+    const minutes = this.duration / 60;
+    const teamKills = sum(this.match.players.filter((x) => x.isRadiant === p.isRadiant).map((x) => x.kills));
+    const first = (p.purchase_log || []).find((x) => FIRST_ITEM_KEYS.has(x.key));
+    return {
+      lh10: this.minutes >= 10 ? atMinute(p.lh_t, 10) : null,
+      gpm: p.gold_per_min,
+      xpm: p.xp_per_min,
+      kp: teamKills ? (p.kills + p.assists) / teamKills : null,
+      dmg_min: p.hero_damage / minutes,
+      deaths10: (p.deaths / minutes) * 10,
+      dead_share: (p.life_state_dead || 0) / this.duration,
+      first_item: first ? first.time : null,
+      obs10: ((p.obs_placed || 0) / minutes) * 10,
+    };
+  }
+
+  normFor(metric, bracket = this.bracket) {
+    const row = this.norms[bracket] && this.norms[bracket][`pos${this.pos}`];
+    return row && row[metric] && row[metric].n >= 8 ? row[metric].q : null;
+  }
+
+  // Процентиль каждого показателя среди игроков того же ранга и роли (больше — лучше)
+  rankMetrics() {
+    const out = {};
+    if (!this.bracket) return out;
+    // При спорной роли не сравниваем с нормами, которые сильно зависят от роли
+    const roleBound = new Set(["lh10", "first_item", "obs10", "gpm"]);
+    for (const [key, m] of Object.entries(RANK_METRICS)) {
+      const v = this.metrics[key];
+      const q = this.normFor(key);
+      if (v == null || !q || !m.roles.includes(this.pos)) continue;
+      if (!this.roleSure && roleBound.has(key)) continue;
+      const raw = percentileIn(v, q);
+      const pct = Math.max(1, Math.min(99, Math.round(m.lower ? 100 - raw : raw)));
+      out[key] = { value: v, pct, grade: gradeOf(pct), median: q[2], strong: m.lower ? q[1] : q[3] };
+    }
+    return out;
+  }
+
+  rankParams(key) {
+    const r = this.rank[key], m = RANK_METRICS[key];
+    const nextBracket = RANK_ORDER[RANK_ORDER.indexOf(this.bracket) + 1];
+    const nextQ = nextBracket ? this.normFor(key, nextBracket) : null;
+    return {
+      what: m.what,
+      value: m.fmt(r.value),
+      grade: GRADE_WORD[r.grade],
+      pct: r.pct,
+      worse_pct: 100 - r.pct,
+      median: m.fmt(r.median),
+      strong: m.fmt(r.strong),
+      rank: RANKS[this.bracket][0],
+      rank_gen: RANKS[this.bracket][1],
+      rank_plural: RANKS[this.bracket][2],
+      role_gen: ROLE_GEN_PLURAL[this.pos],
+      next_rank: nextBracket ? RANKS[nextBracket][2] : "",
+      next_median: nextQ ? m.fmt(nextQ[2]) : "",
+    };
+  }
+
+  // Находка по показателю относительно ранга. true — если норма есть и проверка сделана
+  rankCheck(key, { tipKey = null, roastKey = null } = {}) {
+    const r = this.rank[key];
+    if (!r) return false;
+    const m = RANK_METRICS[key];
+    const params = this.rankParams(key);
+    this.flagged.add(key);
+    if (r.grade === "terrible" || r.grade === "bad") {
+      const text = this.say(`rank_low_${r.grade}`, params, key);
+      const tip = tipKey ? this.say(tipKey, params) : "";
+      const roast = roastKey && roastKey in this.texts ? this.say(roastKey, params) : "";
+      this.addRaw(m.cat, r.grade === "terrible" ? BAD : WARN, text, tip, "rank", roast);
+    } else if (r.grade === "great") {
+      this.addRaw(m.cat, GOOD, this.say("rank_high", params, key), "", "rank");
+    }
+    return true;
+  }
+
+  issue(group, impact, title, fact, action, goal = null) {
+    this.issues.push({ group, impact: Math.round(impact), title, fact, action, ...(goal ? { goal } : {}) });
+  }
+
+  // Оппонент по линии: враг на той же физической линии с похожей ролью (кор против кора).
+  // Если на линии никого подходящего — зеркальная позиция.
+  laneOpponent() {
+    const isCore = (pos) => pos <= 3;
+    const sameLane = this.enemies.filter((e) => e.lane && e.lane === this.p.lane);
+    const fit = sameLane.filter((e) => isCore(this.roleOf.get(e)) === this.core)
+      .sort((a, b) => farmScore(b) - farmScore(a));
+    if (fit.length) return fit[0];
+    return this.enemies.find((e) => this.roleOf.get(e) === LANE_OPPONENT[this.pos]) || null;
   }
 
   // ---------- тексты ----------
@@ -254,22 +494,162 @@ class MatchAnalyzer {
     this.checkLateGame();
     const compare = this.compare();
     this.checkCompareGap(compare);
-    const scores = this.computeScores();
+    this.cleanup();
+    const rankScores = this.rankScores(proBuild);
+    const scores = rankScores ? rankScores.scores : this.computeScores();
     const values = Object.values(scores);
+    const overall = rankScores ? rankScores.overall : Math.round((sum(values) / values.length) * 10) / 10;
     return {
       facts: this.collectFacts(),
       findings: this.findings,
       scores,
-      overall: Math.round((sum(values) / values.length) * 10) / 10,
+      overall,
+      summary: this.summary(),
       timeline: this.collectTimeline(),
       killers,
       phases: this.phases(),
       moments: this.moments(),
       pro_build: proBuild,
       compare,
-      verdict: this.verdict(scores),
+      verdict: this.verdict(scores, overall),
       items: this.coreItems(),
     };
+  }
+
+  // Убирает противоречия и лишние подколы
+  cleanup() {
+    // Похвала за выживание рядом с серьёзной ошибкой по смертям звучит как издёвка
+    const survivalBad = this.findings.some((f) => f.category === SURVIVAL && f.severity === BAD);
+    if (survivalBad) {
+      this.findings = this.findings.filter((f) => !(f.category === SURVIVAL && f.severity === GOOD));
+    }
+    // Подколы: максимум 3, сначала к самым тяжёлым ошибкам; в выигранной игре — только к серьёзным
+    const order = { [BAD]: 0, [WARN]: 1, [GOOD]: 2 };
+    const withRoast = this.findings.filter((f) => f.roast)
+      .sort((a, b) => order[a.severity] - order[b.severity]);
+    withRoast.forEach((f, i) => {
+      if (i >= 3 || (this.won && f.severity !== BAD)) f.roast = "";
+    });
+  }
+
+  // ---------- оценки относительно ранга ----------
+
+  rankScores(proBuild) {
+    if (Object.keys(this.rank).length < 3) return null;
+    const pct = (k) => (this.rank[k] ? this.rank[k].pct : null);
+    const p = this.p;
+    const early = (p.deaths_log || []).filter((d) => d.time < 600).length;
+    const earlyPct = [70, 50, 25, 10][Math.min(early, 3)];
+    let lanePct = null;
+    if (this.opponent && this.minutes >= 10) {
+      const diff = atMinute(p.networth_t, 10) - atMinute(this.opponent.networth_t, 10);
+      lanePct = Math.max(0, Math.min(100, 50 + diff / 40));
+    }
+    const solo = (p.deaths_log || []).filter((d) => d.time >= 600 && this.isSoloDeath(d.time)).length;
+    const have = proBuild.slice(0, 5).filter((b) => b.owned).length;
+    const cats = {
+      [LANE]: [pct("lh10"), earlyPct, lanePct],
+      [FARM]: [pct("gpm"), pct("xpm")],
+      [FIGHTS]: [pct("kp"), pct("dmg_min")],
+      [SURVIVAL]: [pct("deaths10"), pct("dead_share"), solo ? Math.max(0, 60 - solo * 15) : null],
+      [ITEMS]: [pct("first_item"), proBuild.length >= 3 ? 30 + have * 14 : null],
+      [VISION]: this.core ? [] : [pct("obs10")],
+    };
+    const weights = this.core
+      ? { [LANE]: 1, [FARM]: 1.4, [FIGHTS]: 1.1, [SURVIVAL]: 1.2, [ITEMS]: 0.7, [VISION]: 0 }
+      : { [LANE]: 0.8, [FARM]: 0.4, [FIGHTS]: 1.3, [SURVIVAL]: 1.2, [ITEMS]: 0.5, [VISION]: 1.3 };
+    // Ошибки-события (не процентили) немного сдвигают раздел
+    const eventShift = Object.fromEntries(CATEGORIES.map((c) => [c, 0]));
+    for (const f of this.findings) {
+      if (f.kind) continue;
+      eventShift[f.category] += { [BAD]: -0.6, [WARN]: -0.3, [GOOD]: 0.3 }[f.severity];
+    }
+    const scores = {};
+    let wSum = 0, total = 0;
+    for (const c of CATEGORIES) {
+      const xs = cats[c].filter((x) => x != null);
+      if (!xs.length) {
+        scores[c] = Math.max(1, Math.min(10, Math.round(6 + eventShift[c])));
+        continue;
+      }
+      const raw = 1 + (9 * sum(xs)) / xs.length / 100 + eventShift[c];
+      scores[c] = Math.max(1, Math.min(10, Math.round(raw)));
+      wSum += weights[c];
+      total += weights[c] * Math.max(1, Math.min(10, raw));
+    }
+    return { scores, overall: wSum ? Math.round((total / wSum) * 10) / 10 : 5 };
+  }
+
+  // ---------- сводка: что было не так и что делать ----------
+
+  summary() {
+    const sorted = [...this.issues].sort((a, b) => b.impact - a.impact);
+    const deathFamily = (g) => ["lane_deaths", "solo_deaths", "dead_time"].includes(g) || g.startsWith("killer_");
+    const problems = [];
+    let deathCount = 0;
+    for (const i of sorted) {
+      if (i.impact <= 0 || problems.some((x) => x.group === i.group)) continue;
+      if (deathFamily(i.group)) {
+        if (deathCount >= 2) continue;
+        deathCount++;
+      }
+      problems.push(i);
+      if (problems.length === 3) break;
+    }
+    // Сильные стороны: по одной из каждой группы, чтобы не хвалить дважды за одно и то же
+    const family = { deaths10: "surv", dead_share: "surv", gpm: "farm", xpm: "farm", lh10: "farm" };
+    const usedFamilies = new Set();
+    const strengths = Object.entries(this.rank)
+      .filter(([, r]) => r.pct >= 75)
+      .sort((a, b) => b[1].pct - a[1].pct)
+      .filter(([key]) => {
+        const fam = family[key] || key;
+        if (usedFamilies.has(fam)) return false;
+        usedFamilies.add(fam);
+        return true;
+      })
+      .slice(0, 2)
+      .map(([key, r]) => ({
+        title: `${RANK_METRICS[key].what}: ${RANK_METRICS[key].fmt(r.value)}`,
+        fact: `лучше, чем у ${r.pct}% ${ROLE_GEN_PLURAL[this.pos]} на ранге ${RANKS[this.bracket][0]}`,
+      }));
+    if (strengths.length < 2) {
+      for (const f of this.findings.filter((x) => x.severity === GOOD && x.kind !== "rank")) {
+        if (strengths.length >= 2) break;
+        strengths.push({ title: f.text, fact: "" });
+      }
+    }
+    return {
+      rank: this.bracket ? RANKS[this.bracket][0] : null,
+      role: ROLE_NAME[this.pos],
+      role_sure: this.roleSure,
+      problems,
+      strengths,
+      goal: problems.length ? this.goalFor(problems[0]) : "Повтори такую же игру — и ранг пойдёт вверх",
+    };
+  }
+
+  goalFor(issue) {
+    if (issue.goal) return issue.goal;
+    const r = this.rank;
+    const g = issue.group;
+    const nextOr = (key, fmt) => {
+      const next = RANK_ORDER[RANK_ORDER.indexOf(this.bracket) + 1];
+      const q = (next && this.normFor(key, next)) || this.normFor(key);
+      return q ? fmt(q[2]) : null;
+    };
+    if (g === "lane_farm") return `Цель на следующую игру: ${nextOr("lh10", (v) => Math.round(v)) ?? 45}+ крипов к 10:00`;
+    if (g === "lane_deaths") return "Цель на следующую игру: не больше одной смерти до 10:00";
+    if (g === "solo_deaths") return "Цель на следующую игру: ни одной смерти вне драк";
+    if (g === "dead_time") return `Цель на следующую игру: не больше ${r.dead_share ? Math.round(r.dead_share.median * 100) : 12}% игры в таверне`;
+    if (g === "gpm") return `Цель на следующую игру: ${nextOr("gpm", (v) => Math.round(v)) ?? 450}+ золота в минуту`;
+    if (g === "obs") return `Цель на следующую игру: ${Math.ceil(((r.obs10 ? r.obs10.median : 3) * this.minutes) / 10) + 2}+ обсов`;
+    if (g === "missed_fights" || g === "kp") return "Цель на следующую игру: быть в 6 из 10 убийств команды";
+    if (g === "first_item") return `Цель на следующую игру: первый крупный предмет к ${nextOr("first_item", mmss) ?? "15:00"}`;
+    if (g === "idle") return "Цель на следующую игру: ни одной минуты без фарма или драки";
+    if (g === "lane_lost") return "Цель на следующую игру: выйти с линии хотя бы в ноль по золоту";
+    if (g.startsWith("killer_")) return `Цель на следующую игру: заранее купить защиту против самого опасного врага`;
+    return "Цель на следующую игру: исправить главную ошибку выше";
   }
 
   // ---------- про-сборки ----------
@@ -323,16 +703,30 @@ class MatchAnalyzer {
   checkLane() {
     const p = this.p, pos = this.pos;
     const lh10 = atMinute(p.lh_t, 10), dn10 = atMinute(p.dn_t, 10);
-    if (this.core && this.minutes >= 10) {
-      const target = LH_TARGET_10[pos];
-      if (lh10 < target * 0.7) this.add(LANE, BAD, "lane_lh_bad", "lane_lh_bad_tip", { lh: lh10, target });
-      else if (lh10 < target) this.add(LANE, WARN, "lane_lh_warn", null, { lh: lh10, target });
-      else if (lh10 >= target * 1.25) this.add(LANE, GOOD, "lane_lh_good", null, { lh: lh10 });
+    if (this.core && this.minutes >= 10 && this.roleSure) {
+      if (this.rankCheck("lh10", { tipKey: "lane_lh_bad_tip", roastKey: "lane_lh_bad_roast" })) {
+        const r = this.rank.lh10;
+        if (r.pct < 25) {
+          this.issue("lane_farm", Math.max(0, r.median - lh10) * 45, "Мало крипов на линии",
+            `${lh10} ${plural(lh10, "крип", "крипа", "крипов")} к 10:00 — хуже, чем у ${100 - r.pct}% ${ROLE_GEN_PLURAL[pos]} на ранге ${RANKS[this.bracket][0]} (обычно ${Math.round(r.median)})`,
+            "Перед игрой 5 минут добивания в демке. На линии бей крипа только последним ударом и не бей его просто так");
+        }
+      } else {
+        const target = LH_TARGET_10[pos];
+        if (lh10 < target * 0.7) this.add(LANE, BAD, "lane_lh_bad", "lane_lh_bad_tip", { lh: lh10, target });
+        else if (lh10 < target) this.add(LANE, WARN, "lane_lh_warn", null, { lh: lh10, target });
+        else if (lh10 >= target * 1.25) this.add(LANE, GOOD, "lane_lh_good", null, { lh: lh10 });
+      }
       if (pos === 2 && dn10 < 6) this.add(LANE, WARN, "lane_denies_warn", "lane_denies_warn_tip", { dn: dn10 });
     }
     if (this.opponent && this.minutes >= 10) {
       const diff = atMinute(p.networth_t, 10) - atMinute(this.opponent.networth_t, 10);
-      if (diff <= -1000) this.add(LANE, BAD, "lane_lost", "lane_lost_tip", { opp: this.oppName, gold: num(-diff) });
+      if (diff <= -1000) {
+        this.add(LANE, BAD, "lane_lost", "lane_lost_tip", { opp: this.oppName, gold: num(-diff) });
+        this.issue("lane_lost", -diff * 0.8, `Проиграна линия против ${this.oppName}`,
+          `К 10:00 ${this.oppName} был богаче на ${num(-diff)} золота`,
+          `Пересмотри первые 10 минут реплея: отметь каждый размен с ${this.oppName} и где ты стоял, когда терял ХП`);
+      }
       else if (diff >= 1000) this.add(LANE, GOOD, "lane_won", null, { opp: this.oppName, gold: num(diff) });
     }
     const firstDeath = (p.deaths_log || [])[0];
@@ -345,6 +739,11 @@ class MatchAnalyzer {
       this.add(LANE, BAD, "lane_deaths", "lane_deaths_tip", {
         n, deaths_word: deathsWord(n), times_word: timesWord(n), times: early.map((d) => mmss(d.time)).join(", "),
       });
+      const killers = [...new Set(early.map((d) => this.od.heroNameByKey(d.key)))].join(", ");
+      this.issue("lane_deaths", n * 450, "Смерти на линии",
+        `${n} ${deathsWord(n)} до 10-й минуты (${early.map((d) => mmss(d.time)).join(", ")}), убивали: ${killers}` +
+          (early[0].time < 90 ? ". Первая — ещё в драке за руну на старте" : ""),
+        "Пока не видишь всех врагов на карте, стой за своей крипволной. Не лезь в размен первым без преимущества по ХП и мане");
     }
   }
 
@@ -353,7 +752,16 @@ class MatchAnalyzer {
   checkFarm() {
     const p = this.p;
     if (this.core) {
-      for (const [key, name] of [["gold_per_min", "GPM"], ["last_hits_per_min", "Ластхиты в минуту"]]) {
+      const rankGpm = this.rankCheck("gpm", { tipKey: "compare_gap_tip_gold_per_min" });
+      if (rankGpm && this.rank.gpm.pct < 25) {
+        const r = this.rank.gpm;
+        this.flagged.add("gold_per_min");
+        this.flagged.add("last_hits_per_min");
+        this.issue("gpm", (r.median - r.value) * (this.duration / 60), "Мало золота за игру",
+          `${Math.round(r.value)} золота в минуту — хуже, чем у ${100 - r.pct}% ${ROLE_GEN_PLURAL[this.pos]} на ранге ${RANKS[this.bracket][0]} (обычно ${Math.round(r.median)})`,
+          "Всегда держи в голове следующую волну или лагерь. Между драками не стой на месте — фарми ближайшее");
+      }
+      for (const [key, name] of rankGpm ? [] : [["gold_per_min", "GPM"], ["last_hits_per_min", "Ластхиты в минуту"]]) {
         const pct = this.bench[key];
         if (pct == null) continue;
         if (pct < 25) {
@@ -362,8 +770,15 @@ class MatchAnalyzer {
         }
         else if (pct >= 80) this.add(FARM, GOOD, "farm_bench_good", null, { name, pct });
       }
-      for (const [start, end, lh] of this.idleWindows()) {
+      const idle = this.idleWindows();
+      for (const [start, end, lh] of idle) {
         this.add(FARM, WARN, "farm_idle", "farm_idle_tip", { from: mmss(start * 60), to: mmss(end * 60), lh, mins: end - start });
+      }
+      if (idle.length) {
+        const mins = sum(idle.map(([s, e]) => e - s));
+        this.issue("idle", mins * (p.gold_per_min || 300) * 0.8, "Простой без фарма и драк",
+          `${idle.map(([s, e]) => `${mmss(s * 60)}–${mmss(e * 60)}`).join(", ")}: почти не было ни крипов, ни золота, ни драк`,
+          "Если нет драки — фарми: линия, лагерь, линия. Заранее решай, куда пойдёшь после текущей волны");
       }
       if (this.pos === 1 && this.minutes >= 25 && p.last_hits > 0) {
         const share = (p.neutral_kills ?? 0) / p.last_hits;
@@ -375,7 +790,9 @@ class MatchAnalyzer {
         this.add(FARM, WARN, "farm_towers", "farm_towers_tip", { pct: 100 - towers });
       }
       const xp = this.bench.xp_per_min;
-      if (xp != null && xp < 25) {
+      if (this.rankCheck("xpm", { tipKey: "farm_xp_bad_tip" })) {
+        this.flagged.add("xp_per_min");
+      } else if (xp != null && xp < 25) {
         this.flagged.add("xp_per_min");
         this.add(FARM, WARN, "farm_xp_bad", "farm_xp_bad_tip", { pct: 100 - xp });
       }
@@ -387,18 +804,39 @@ class MatchAnalyzer {
     }
   }
 
+  // Минуты, когда игрок участвовал в драке (урон, хил, смерть или скиллы)
+  fightMinutes() {
+    const idx = this.match.players.indexOf(this.p);
+    const busy = new Set();
+    for (const tf of this.match.teamfights || []) {
+      const me = (tf.players || [])[idx];
+      if (!me) continue;
+      if (me.damage > 0 || me.healing > 0 || me.deaths > 0 || Object.keys(me.ability_uses || {}).length > 0) {
+        for (let m = Math.floor(tf.start / 60); m <= Math.floor(tf.end / 60) + 1; m++) busy.add(m);
+      }
+    }
+    for (const k of this.p.kills_log || []) busy.add(Math.floor(k.time / 60));
+    return busy;
+  }
+
+  // Простой: почти нет крипов, мало золота, игрок жив и не дерётся. Драки и ганги простоем не считаются
   idleWindows() {
     const lh = this.p.lh_t;
+    const gold = this.p.gold_t || [];
+    const avgGold = gold.length > 1 ? gold[gold.length - 1] / (gold.length - 1) : 0;
+    const busy = this.fightMinutes();
     const deadMinutes = new Set();
     for (const d of this.p.deaths_log || []) {
       const from = Math.floor(d.time / 60), to = Math.floor((d.time + (d.time_dead ?? 30)) / 60);
       for (let m = from; m <= to; m++) deadMinutes.add(m);
     }
+    const lowGold = (m) => gold.length <= m || gold[m] - gold[m - 1] < avgGold * 0.4;
+    for (const m of busy) deadMinutes.add(m);
     const windows = [];
     let start = null;
     const last = Math.min(lh.length - 1, 40);
     for (let m = 10; m <= last; m++) {
-      const idle = m < lh.length && lh[m] - lh[m - 1] <= 1 && !deadMinutes.has(m);
+      const idle = m < lh.length && lh[m] - lh[m - 1] <= 1 && lowGold(m) && !deadMinutes.has(m);
       if (idle && start === null) start = m - 1;
       if ((!idle || m === last) && start !== null) {
         const end = !idle ? m - 1 : m;
@@ -414,7 +852,7 @@ class MatchAnalyzer {
   checkFights() {
     const p = this.p;
     const teamKills = sum(this.allies.map((a) => a.kills));
-    if (teamKills >= 10) {
+    if (teamKills >= 10 && !this.rankCheck("kp", { tipKey: "fights_kp_bad_tip", roastKey: "fights_kp_bad_roast" })) {
       const kp = pyRound(((p.kills + p.assists) / teamKills) * 100);
       if (kp < 45) this.add(FIGHTS, BAD, "fights_kp_bad", "fights_kp_bad_tip", { kp });
       else if (kp >= 70) this.add(FIGHTS, GOOD, "fights_kp_good", null, { kp });
@@ -425,10 +863,22 @@ class MatchAnalyzer {
       const times = missed.slice(0, 3).map(([t, k]) => `${mmss(t)} (-${k})`).join(", ");
       this.add(FIGHTS, n >= 3 ? BAD : WARN, "fights_missed", "fights_missed_tip",
         { n, fights_word: plural(n, "драку", "драки", "драк"), times });
+      const lostAllies = sum(missed.map(([, k]) => k));
+      this.issue("missed_fights", lostAllies * 300, "Драки без тебя",
+        `${n} ${plural(n, "драка прошла", "драки прошли", "драк прошло")} без тебя, пока ты был жив (${times}; в скобках — сколько союзников погибло)`,
+        "Каждые несколько секунд смотри на миникарту. Видишь, что команда собирается — иди к ним или держи ТП");
+    }
+    if (this.rank.kp && this.rank.kp.pct < 25 && !missed.length) {
+      const r = this.rank.kp;
+      this.issue("kp", (r.median - r.value) * teamKills * 250, "Мало участия в драках",
+        `Ты был в ${Math.round(r.value * 100)}% убийств команды — у ${ROLE_GEN_PLURAL[this.pos]} на ранге ${RANKS[this.bracket][0]} обычно ${Math.round(r.median * 100)}%`,
+        "После 15-й минуты фарми ближе к команде и приходи на каждую драку, а не добивай лагерь до конца");
     }
     if (this.core) {
       const pct = this.bench.hero_damage_per_min;
-      if (pct != null && pct < 25) {
+      if (this.rankCheck("dmg_min", { tipKey: "fights_dmg_bad_tip" })) {
+        this.flagged.add("hero_damage_per_min");
+      } else if (pct != null && pct < 25) {
         this.flagged.add("hero_damage_per_min");
         this.add(FIGHTS, WARN, "fights_dmg_bad", "fights_dmg_bad_tip", { pct: 100 - pct });
       } else if (pct != null && pct >= 80) this.add(FIGHTS, GOOD, "fights_dmg_good", null, { pct });
@@ -464,25 +914,51 @@ class MatchAnalyzer {
     return this.fightWindows.some(([s, e]) => s <= t && t <= e);
   }
 
+  // Смерть «в одиночку»: не в крупной драке и рядом по времени (±20 с) никто из своих не умер и не убил,
+  // а сам игрок никого не забрал. Стычки 2 на 2 OpenDota дракой не считает — их отсекаем так
+  isSoloDeath(t) {
+    if (this.inFight(t)) return false;
+    const near = (x) => Math.abs(x - t) <= 20;
+    for (const a of this.allies) {
+      if (a !== this.p && (a.deaths_log || []).some((d) => near(d.time))) return false;
+      if ((a.kills_log || []).some((k) => near(k.time) && k.key.startsWith("npc_dota_hero_"))) return false;
+    }
+    return true;
+  }
+
   checkSurvival() {
     const p = this.p;
     const deaths = p.deaths_log || [];
     const pct = this.bench.deaths_per_min;
     const n = p.deaths;
-    if (pct != null && pct < 25) {
+    if (this.rankCheck("deaths10", { roastKey: "surv_deaths_bad_roast", tipKey: "surv_dead_time_tip" })) {
+      this.flagged.add("deaths_per_min");
+    } else if (pct != null && pct < 25) {
       this.flagged.add("deaths_per_min");
       this.add(SURVIVAL, BAD, "surv_deaths_bad", null, { n, deaths_word: deathsWord(n), pct: 100 - pct });
+    } else if (pct != null && pct >= 80 && this.minutes >= 20) {
+      this.add(SURVIVAL, GOOD, n === 0 ? "surv_no_deaths" : "surv_deaths_good", null, { n, deaths_word: deathsWord(n) });
     }
-    else if (pct != null && pct >= 80 && this.minutes >= 20) this.add(SURVIVAL, GOOD, "surv_deaths_good", null, { n, deaths_word: deathsWord(n) });
 
-    const solo = deaths.filter((d) => d.time >= 600 && !this.inFight(d.time));
+    const solo = deaths.filter((d) => d.time >= 600 && this.isSoloDeath(d.time));
     if (solo.length >= 2) {
       const k = solo.length;
       this.add(SURVIVAL, BAD, "surv_solo", "surv_solo_tip",
         { n: k, times_word: timesWord(k), times: solo.slice(0, 5).map((d) => mmss(d.time)).join(", ") });
+      const killers = [...new Set(solo.map((d) => this.od.heroNameByKey(d.key)))].slice(0, 3).join(", ");
+      this.issue("solo_deaths", k * 550, "Тебя ловили одного",
+        `${k} ${deathsWord(k)} вне драк: ${solo.slice(0, 5).map((d) => mmss(d.time)).join(", ")}. Ловили: ${killers}`,
+        "Прежде чем идти фармить дальнюю линию или чужой лес, посчитай врагов на карте. Нет троих — не иди, фарми ближе к своим");
     }
     const deadShare = (p.life_state_dead || 0) / Math.max(this.duration, 1);
-    if (deadShare >= 0.15) {
+    if (this.rankCheck("dead_share", { tipKey: "surv_dead_time_tip", roastKey: "surv_dead_time_roast" })) {
+      const r = this.rank.dead_share;
+      if (r.pct < 25) {
+        this.issue("dead_time", (r.value - r.median) * this.duration * ((p.gold_per_min || 300) / 60), "Слишком много времени в таверне",
+          `Ты провёл мёртвым ${mmss(p.life_state_dead)} (${Math.round(r.value * 100)}% игры), у ${ROLE_GEN_PLURAL[this.pos]} на ранге ${RANKS[this.bracket][0]} обычно ${Math.round(r.median * 100)}%`,
+          "Каждая смерть после 20-й минуты стоит минуту игры. Уходи из драки, когда ХП меньше трети и нет спасающих предметов");
+      }
+    } else if (deadShare >= 0.15) {
       this.add(SURVIVAL, BAD, "surv_dead_time", "surv_dead_time_tip", { time: mmss(p.life_state_dead), pct: pyRound(deadShare * 100) });
     }
     const lost = sum(deaths.map((d) => d.gold_lost ?? 0));
@@ -501,7 +977,15 @@ class MatchAnalyzer {
 
   checkItems() {
     const p = this.p, items = this.coreItems();
-    if (this.core && items.length) {
+    if (this.core && this.roleSure && this.rankCheck("first_item", { tipKey: "items_first_bad_tip", roastKey: "items_first_bad_roast" })) {
+      const r = this.rank.first_item;
+      if (r.pct < 25) {
+        const first = (p.purchase_log || []).find((x) => FIRST_ITEM_KEYS.has(x.key));
+        this.issue("first_item", ((r.value - r.median) / 60) * (p.gold_per_min || 300) * 0.6, "Поздний первый предмет",
+          `${this.od.itemName(first.key)} только на ${mmss(r.value)} — у ${ROLE_GEN_PLURAL[this.pos]} на ранге ${RANKS[this.bracket][0]} первый крупный предмет обычно к ${mmss(r.median)}`,
+          "Сначала собирай главный предмет героя, ситуативные — потом. Не трать золото на лишние расходники и не умирай с полным карманом");
+      }
+    } else if (this.core && items.length) {
       const first = items[0];
       const minute = first.time / 60;
       const params = { item: first.item, time: mmss(first.time) };
@@ -512,16 +996,19 @@ class MatchAnalyzer {
       this.add(ITEMS, BAD, "items_none");
     }
 
-    const bkbPopular = this.proCount("black_king_bar") >= PRO_MIN_COUNT;
-    if ((this.pos === 1 || this.pos === 2) && this.minutes >= 30 && bkbPopular) {
+    // BKB — только если его реально часто собирают на этом герое и игрок много умирал
+    const topPro = Math.max(0, ...Object.entries(this.pro).filter(([k]) => this.isFinalItem(k)).map(([, c]) => c));
+    const bkbPopular = topPro > 0 && this.proCount("black_king_bar") >= topPro * 0.3;
+    if ((this.pos === 1 || this.pos === 2) && this.minutes >= 30 && bkbPopular && (!this.won || p.deaths >= 6) && p.deaths >= 4) {
       if (!items.some((x) => x.key === "black_king_bar")) this.add(ITEMS, WARN, "items_no_bkb", "items_no_bkb_tip");
     }
 
-    const tps = (p.item_uses || {}).tpscroll ?? 0;
-    if (this.minutes >= 20 && tps < this.minutes / 10) this.add(ITEMS, WARN, "items_tp", "items_tp_tip", { n: tps, mins: this.minutes });
-
-    const boots = (p.purchase_log || []).find((x) => x.key === "boots");
-    if (this.core && boots && boots.time > 360) this.add(ITEMS, WARN, "items_boots", "items_boots_tip", { time: mmss(boots.time) });
+    if (!this.dominant) {
+      const tps = (p.item_uses || {}).tpscroll ?? 0;
+      if (this.minutes >= 20 && tps < this.minutes / 10) this.add(ITEMS, WARN, "items_tp", "items_tp_tip", { n: tps, mins: this.minutes });
+      const boots = (p.purchase_log || []).find((x) => x.key === "boots");
+      if (this.core && boots && boots.time > 360) this.add(ITEMS, WARN, "items_boots", "items_boots_tip", { time: mmss(boots.time) });
+    }
 
     if (!this.won && (p.gold ?? 0) >= 2500) this.add(ITEMS, WARN, "items_gold_left", "items_gold_left_tip", { gold: num(p.gold) });
   }
@@ -532,21 +1019,30 @@ class MatchAnalyzer {
     const p = this.p;
     const obs = p.obs_placed ?? 0, sen = p.sen_placed ?? 0;
     const dewards = (p.observer_kills ?? 0) + (p.sentry_kills ?? 0);
-    if (this.pos >= 4 && this.minutes >= 15) {
+    if (this.pos >= 4 && this.minutes >= 15 && this.roleSure) {
       const per10 = (obs / this.minutes) * 10;
-      if (per10 < 2.5) this.add(VISION, BAD, "vision_obs_bad", "vision_obs_bad_tip", { n: obs, mins: this.minutes });
+      if (this.rankCheck("obs10", { tipKey: "vision_obs_bad_tip", roastKey: "vision_obs_bad_roast" })) {
+        const r = this.rank.obs10;
+        if (r.pct < 25) {
+          this.issue("obs", ((r.median - r.value) / 10) * this.minutes * 300, "Мало видения",
+            `${obs} ${plural(obs, "обс", "обса", "обсов")} за ${this.minutes} ${plural(this.minutes, "минуту", "минуты", "минут")} — меньше, чем у ${100 - r.pct}% ${ROLE_GEN_PLURAL[this.pos]} на ранге ${RANKS[this.bracket][0]}`,
+            "Обс в лавке — сразу в слот и на карту. Ставь там, где команда пойдёт драться или фармить через минуту");
+        }
+      } else if (per10 < 2.5) this.add(VISION, BAD, "vision_obs_bad", "vision_obs_bad_tip", { n: obs, mins: this.minutes });
       else if (per10 >= 4) this.add(VISION, GOOD, "vision_obs_good", null, { n: obs });
 
       const [short, total] = this.dewardedObservers();
       if (total >= 4 && short / total >= 0.4) this.add(VISION, WARN, "vision_dewarded", "vision_dewarded_tip", { short, total });
       if (sen < obs / 2) this.add(VISION, WARN, "vision_sentries", "vision_sentries_tip", { sen, obs, dewards });
-      if (this.pos === 5 && this.minutes >= 25 && (p.camps_stacked ?? 0) < 2) this.add(VISION, WARN, "vision_stacks", "vision_stacks_tip");
-      const smokes = (p.item_uses || {}).smoke_of_deceit ?? 0;
-      if (this.minutes >= 30 && smokes === 0) this.add(VISION, WARN, "vision_smoke", "vision_smoke_tip", { mins: this.minutes });
+      if (!this.dominant) {
+        if (this.pos === 5 && this.minutes >= 25 && (p.camps_stacked ?? 0) < 2) this.add(VISION, WARN, "vision_stacks", "vision_stacks_tip");
+        const smokes = (p.item_uses || {}).smoke_of_deceit ?? 0;
+        if (this.minutes >= 30 && smokes === 0) this.add(VISION, WARN, "vision_smoke", "vision_smoke_tip", { mins: this.minutes });
+      }
     } else if (this.core && dewards >= 3) {
       this.add(VISION, GOOD, "vision_dewards_good", null, { n: dewards });
     }
-    if (this.pos === 2 && this.minutes >= 20) {
+    if (this.pos === 2 && this.minutes >= 20 && !this.dominant) {
       const runes = p.rune_pickups ?? 0;
       if (runes < this.minutes / 5) this.add(VISION, WARN, "vision_runes", "vision_runes_tip", { n: runes });
     }
@@ -612,8 +1108,19 @@ class MatchAnalyzer {
     return [missing.slice(0, MAX_COUNTER_ITEMS), had];
   }
 
-  relevantMechanics(mechanics, mainType) {
+  mechanicConfirmed(m, enemy, key) {
+    const used = enemy.ability_uses || {};
+    const bought = new Set((enemy.purchase_log || []).map((x) => x.key));
+    if (m === "invis") {
+      return ALWAYS_INVIS.has(key) || Object.keys(used).some((a) => INVIS_ABILITIES.has(a)) || [...bought].some((x) => INVIS_ITEMS.has(x));
+    }
+    if (m === "blink_init") return INNATE_INITIATORS.has(key) || [...bought].some((x) => BLINK_ITEMS.has(x));
+    return true;
+  }
+
+  relevantMechanics(mechanics, mainType, enemy = null, key = "") {
     return mechanics.filter((m) => {
+      if (enemy && !this.mechanicConfirmed(m, enemy, key)) return false;
       if (m === "burst_physical" && mainType !== "Physical") return false;
       if (m === "burst_magic" && !(mainType === "Magical" || mainType === "Pure")) return false;
       return this.k.mechanics[m].roles.includes(this.role());
@@ -635,7 +1142,7 @@ class MatchAnalyzer {
       let mainType = null;
       for (const [t, v] of byType) if (mainType === null || v > byType.get(mainType)) mainType = t;
       const share = mainType && total ? pyRound((byType.get(mainType) / total) * 100) : 0;
-      const mechanics = this.relevantMechanics(this.k.heroes[key] || [], mainType);
+      const mechanics = this.relevantMechanics(this.k.heroes[key] || [], mainType, enemy, key);
       const [missing, had] = this.pickCounters(mechanics, mainType, owned);
       const name = this.od.heroName(enemy.hero_id);
       killers.push({
@@ -695,6 +1202,17 @@ class MatchAnalyzer {
       }
     }
     this.addRaw(SURVIVAL, n >= 4 ? BAD : WARN, text, tipParts.join(". "), "killer", roast);
+    if (n >= 3) {
+      const how = k.sources.slice(0, 2).map((s) => s.name).join(" и ");
+      const action = [k.tips[0], k.counters.length ? `Купи ${k.counters.slice(0, 2).join(" или ")}` : ""]
+        .filter(Boolean).join(". ");
+      this.issue(`killer_${k.key}`, n * 380, `${k.hero} постоянно тебя убивал`,
+        `${n} ${deathsWord(n)} от ${k.hero}${how ? `, в основном ${how}` : ""}`,
+        action || `Держись дальше от ${k.hero} и не выходи к нему один`,
+        k.counters.length
+          ? `Цель на следующую игру: ${k.counters[0]} к 20-й минуте, если снова против ${k.hero}`
+          : `Цель на следующую игру: не больше одной смерти от ${k.hero}`);
+    }
   }
 
   // ---------- сборка против пика ----------
@@ -728,7 +1246,9 @@ class MatchAnalyzer {
 
     const enemyTags = {};
     for (const e of this.enemies) {
-      for (const tag of this.k.heroes[this.od.heroKey(e.hero_id)] || []) {
+      const key = this.od.heroKey(e.hero_id);
+      for (const tag of this.k.heroes[key] || []) {
+        if (!this.mechanicConfirmed(tag, e, key)) continue;
         (enemyTags[tag] = enemyTags[tag] || []).push(this.od.heroName(e.hero_id));
       }
     }
@@ -877,15 +1397,33 @@ class MatchAnalyzer {
         nwText = `Команда за этот отрезок: ${signed(teamDelta)} золота.`;
         swing = teamDelta / 2000;
       }
-      const score = nKills - nDeaths * 1.5 + swing;
-      const verdict = score >= 2 ? "good" : score <= -2 ? "bad" : "even";
       const killsText = `${nKills} ${plural(nKills, "убийство", "убийства", "убийств")}`;
       const deathsText = nDeaths === 0 ? "без смертей" : `${nDeaths} ${deathsWord(nDeaths)}`;
+      let verdict, text;
+      if (this.core) {
+        const score = nKills - nDeaths * 1.5 + swing;
+        verdict = score >= 2 ? "good" : score <= -2 ? "bad" : "even";
+        text = this.say(`phase_${key}_${verdict}`, { lh: lhGain, kills_text: killsText, deaths_text: deathsText, nw_text: nwText });
+      } else {
+        // Саппорта оцениваем по дракам, смертям и вардам, а не по крипам
+        const fights = this.fightsInWindow(t0, t1);
+        const wards = (p.obs_log || []).filter((w) => t0 <= w.time && w.time < t1).length;
+        const score = fights.took * 0.8 + nKills * 0.5 - nDeaths * 1.5 + teamDelta / 3000 - Math.max(0, fights.total - fights.took) * 0.5;
+        verdict = score >= 2 ? "good" : score <= -2 ? "bad" : "even";
+        const fightsText = fights.total
+          ? `в ${fights.took} из ${fights.total} ${plural(fights.total, "драки", "драк", "драк")}`
+          : "драк почти не было";
+        const wardsText = wards ? `${wards} ${plural(wards, "обс", "обса", "обсов")}` : "ни одного обса";
+        text = this.say(`phase_sup_${verdict}`, {
+          fights_text: fightsText, deaths_text: deathsText, wards_text: wardsText,
+          nw_text: `Команда за этот отрезок: ${signed(teamDelta)} золота.`,
+        }, key);
+      }
       result.push({
         key,
         title: `${title} · ${start}–${stop} мин`,
         verdict,
-        text: this.say(`phase_${key}_${verdict}`, { lh: lhGain, kills_text: killsText, deaths_text: deathsText, nw_text: nwText }),
+        text,
         kills: nKills,
         deaths: nDeaths,
         last_hits: lhGain,
@@ -894,6 +1432,19 @@ class MatchAnalyzer {
       });
     }
     return result;
+  }
+
+  // Сколько драк было в окне и в скольких игрок участвовал
+  fightsInWindow(t0, t1) {
+    const idx = this.match.players.indexOf(this.p);
+    let total = 0, took = 0;
+    for (const tf of this.match.teamfights || []) {
+      if (tf.start < t0 || tf.start >= t1) continue;
+      total++;
+      const me = (tf.players || [])[idx];
+      if (me && (me.damage > 0 || me.healing > 0 || me.deaths > 0 || Object.keys(me.ability_uses || {}).length > 0)) took++;
+    }
+    return { total, took };
   }
 
   // ---------- ключевые моменты ----------
@@ -912,7 +1463,7 @@ class MatchAnalyzer {
       let key;
       if (killer === "башня") key = "moment_death_tower";
       else if (!d.key.startsWith("npc_dota_hero_")) key = "moment_death_creeps";
-      else key = this.inFight(d.time) ? "moment_death_fight" : "moment_death_solo";
+      else key = this.isSoloDeath(d.time) ? "moment_death_solo" : "moment_death_fight";
       add(d.time, BAD, this.say(key, { killer }, String(d.time)));
     }
     for (const x of p.purchase_log || []) {
@@ -955,9 +1506,9 @@ class MatchAnalyzer {
     return Object.fromEntries(CATEGORIES.map((c) => [c, Math.max(1, Math.min(10, pyRound(base[c] + 1 - this.penalty[c])))]));
   }
 
-  verdict(scores) {
+  verdict(scores, overall) {
     const values = Object.values(scores);
-    const mean = sum(values) / values.length;
+    const mean = overall ?? sum(values) / values.length;
     const key = mean >= 8 ? "verdict_top" : mean >= 6.5 ? "verdict_good" : mean >= 5 ? "verdict_mid" : "verdict_bad";
     return this.say(key);
   }
@@ -1002,6 +1553,6 @@ class MatchAnalyzer {
   }
 }
 
-export function analyze(match, player, od, knowledge, texts, proItems, heroBench) {
-  return new MatchAnalyzer(match, player, od, knowledge, texts, proItems, heroBench).run();
+export function analyze(match, player, od, knowledge, texts, proItems, heroBench, norms) {
+  return new MatchAnalyzer(match, player, od, knowledge, texts, proItems, heroBench, norms).run();
 }

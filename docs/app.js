@@ -1,7 +1,7 @@
 // Telegram Mini App: разбор матча Dota 2 внутри Телеграма.
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, CATEGORIES, BAD, WARN, GOOD,
-} from "./engine.js";
+} from "./engine.js?v=4";
 
 const API = "https://api.opendota.com/api";
 const STEAM_CDN = "https://cdn.cloudflare.steamstatic.com";
@@ -16,9 +16,14 @@ const TURBO_MODE = 23;
 
 const tg = window.Telegram && window.Telegram.WebApp;
 const app = document.getElementById("app");
-let dictionary = null, knowledge = null, texts = null, itemIds = null;
+let dictionary = null, knowledge = null, texts = null, itemIds = null, norms = {};
 let pollTimer = null;
 const proCache = new Map();
+// Подсказки графиков прячутся по тапу вне графика: один общий обработчик на документ
+const chartHiders = new Set();
+document.addEventListener("pointerdown", (evt) => {
+  if (!(evt.target instanceof Element) || !evt.target.closest(".chart")) chartHiders.forEach((hide) => hide());
+});
 const benchCache = new Map();
 
 // ---------- утилиты ----------
@@ -50,6 +55,7 @@ function svg(tag, attrs = {}, ...children) {
 }
 
 function render(...nodes) {
+  chartHiders.clear();
   app.replaceChildren(h("div", { class: "fade-in" }, ...nodes));
   window.scrollTo(0, 0);
 }
@@ -290,7 +296,7 @@ async function matchScreen(matchId, slot, accountId, attempt = 0) {
   if (!player) { heroPicker(match); return; }
 
   const [pro, bench] = await Promise.all([proItems(player.hero_id), heroBench(player.hero_id)]);
-  analysisScreen(analyze(match, player, dictionary, knowledge, texts, pro, bench));
+  analysisScreen(analyze(match, player, dictionary, knowledge, texts, pro, bench, norms));
 }
 
 function heroPicker(match) {
@@ -387,18 +393,27 @@ function findingCard(f) {
 }
 
 function overviewTab(a) {
-  const problems = a.findings.filter((f) => f.severity === BAD && f.kind !== "killer").slice(0, 3);
-  const goods = a.findings.filter((f) => f.severity === GOOD).slice(0, 3);
-  const focus = a.findings.filter((f) => (f.severity === BAD || f.severity === WARN) && f.tip && f.kind !== "killer").slice(0, 3);
+  const s = a.summary || {};
+  const who = [s.role, s.rank && `ранг ${s.rank}`].filter(Boolean).join(" · ");
+  const problems = s.problems || [];
+  const strengths = s.strengths || [];
   return h("div", {},
+    who && h("div", { class: "who" }, who, s.role_sure === false && h("span", { class: "muted" }, " · роль определена неточно")),
+    h("h2", {}, problems.length ? "Что было не так" : "Серьёзных ошибок нет"),
+    ...problems.map((p, i) => h("div", { class: "card problem" },
+      h("div", { class: "problem-num" }, String(i + 1)),
+      h("div", { class: "problem-body" },
+        h("div", { class: "problem-title" }, p.title),
+        h("div", { class: "problem-fact" }, p.fact),
+        h("div", { class: "problem-action" }, p.action),
+      ),
+    )),
+    strengths.length > 0 && h("h2", {}, "Что получилось"),
+    ...strengths.map((st) => h("div", { class: "strength" }, h("b", {}, st.title), st.fact && h("span", { class: "muted" }, ` — ${st.fact}`))),
+    s.goal && h("div", { class: "card goal" }, s.goal),
+    h("h2", {}, "Оценки по разделам"),
     h("div", { class: "card" }, ...CATEGORIES.map((c) => h("div", { class: "score-row" },
       h("span", {}, c), h("div", { class: "bar" }, h("i", { "data-w": a.scores[c] })), h("b", {}, a.scores[c])))),
-    problems.length > 0 && h("h2", {}, "Главное"),
-    ...problems.map(findingCard),
-    focus.length > 0 && h("h2", {}, "Над чем работать"),
-    focus.length > 0 && h("div", { class: "card" }, h("ol", { class: "focus" }, ...focus.map((f) => h("li", {}, f.tip)))),
-    goods.length > 0 && h("h2", {}, "Что получилось"),
-    ...goods.map(findingCard),
   );
 }
 
@@ -584,9 +599,23 @@ function makeInteractive(frame, series, { deaths = [], valueFmt = (v) => num(v) 
     });
   };
   const hide = () => [guide, box, ...dots, ...lines].forEach((el) => el.setAttribute("opacity", 0));
-  chart.addEventListener("pointermove", show);
-  chart.addEventListener("pointerdown", (evt) => { show(evt); haptic("light"); });
-  chart.addEventListener("pointerleave", hide);
+  // На телефоне после касания сразу приходит pointerleave, поэтому подсказку прячем только для мыши.
+  // Пальцем: тап или протяжка показывают значения, повторный тап вне графика — прячет.
+  chart.addEventListener("pointerdown", (evt) => {
+    if (evt.pointerType !== "mouse") chart.setPointerCapture(evt.pointerId);
+    show(evt);
+    haptic("light");
+  });
+  chart.addEventListener("pointermove", (evt) => {
+    if (evt.pointerType === "mouse" || chart.hasPointerCapture(evt.pointerId)) show(evt);
+  });
+  chart.addEventListener("pointerleave", (evt) => { if (evt.pointerType === "mouse") hide(); });
+  // Запасной путь для старых WebView без pointer events
+  chart.addEventListener("touchmove", (evt) => {
+    const t = evt.touches[0];
+    if (t) show({ clientX: t.clientX });
+  }, { passive: true });
+  chartHiders.add(hide);
   return chart;
 }
 
@@ -670,6 +699,8 @@ async function boot() {
       tg.setBackgroundColor(BG_COLOR);
     }
     if (backSupported()) tg.BackButton.onClick(back);
+    // Иначе свайп по графику сворачивает приложение вместо подсказки
+    if (tg.isVersionAtLeast && tg.isVersionAtLeast("7.7") && tg.disableVerticalSwipes) tg.disableVerticalSwipes();
   }
   loading("Разжигаю огонь...");
   try {
@@ -682,6 +713,8 @@ async function boot() {
     itemIds = ids;
     knowledge = kb;
     texts = tx;
+    // Нормы по рангам необязательны: без них разбор работает по общим порогам
+    norms = await fetch("rank_norms.json?v=4").then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
   } catch {
     errorScreen("Не удалось загрузить данные OpenDota.", boot);
     return;

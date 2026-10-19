@@ -31,6 +31,7 @@ class OpenDota:
         self.hero_keys: dict[int, str] = {}
         self.items: dict[str, dict] = {}
         self.abilities: dict[str, dict] = {}
+        self.constants: dict = {}
         self._limit = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
         self._cache: OrderedDict[int, tuple[float, dict]] = OrderedDict()
         self.item_ids: dict[str, str] = {}
@@ -40,6 +41,10 @@ class OpenDota:
     async def start(self):
         self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
         heroes = await self._request("GET", "/constants/heroes")
+        # Компактные справочники для движка разбора (engine_cli.mjs)
+        self.constants = {
+            "heroes": {k: {f: h.get(f) for f in ("id", "name", "localized_name", "img")} for k, h in heroes.items()},
+        }
         self.heroes = {int(h["id"]): h["localized_name"] for h in heroes.values()}
         self.heroes_by_key = {h["name"]: h["localized_name"] for h in heroes.values()}
         self.hero_keys = {int(h["id"]): h["name"] for h in heroes.values()}
@@ -52,6 +57,10 @@ class OpenDota:
             for key, a in abilities.items()
             if a.get("dname")
         }
+        self.constants["items"] = {
+            k: {f: v.get(f) for f in ("dname", "cost", "components", "img")} for k, v in self.items.items()
+        }
+        self.constants["abilities"] = self.abilities
 
     async def close(self):
         if self.session:

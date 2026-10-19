@@ -4,7 +4,6 @@ from html import escape as _escape
 
 from analysis import BAD, CATEGORIES, DAMAGE_TYPE_NAMES, GOOD, TURBO_MODE, WARN, Analysis, mmss, num, plural
 
-MAX_MAIN_PROBLEMS = 4
 MAX_MOMENTS = 16
 TURBO_NOTE = "⚠ Это Турбо: золото и опыт идут быстрее, а нормы разбора рассчитаны на обычную игру. Оценки могут быть неточными."
 
@@ -137,21 +136,42 @@ def pro_build_block(a: Analysis) -> str:
     return "\n".join(lines)
 
 
+def summary_block(a: Analysis) -> str:
+    s = a.summary or {}
+    who = s.get("role") or ""
+    if s.get("rank"):
+        who += f" · ранг {s['rank']}"
+    if not s.get("role_sure", True):
+        who += " · роль определена неточно"
+    lines = [f"<b>Сводка</b> <i>({escape(who)})</i>" if who else "<b>Сводка</b>"]
+    problems = s.get("problems") or []
+    if problems:
+        lines.append("\n<b>Что было не так</b>")
+        for i, p in enumerate(problems, 1):
+            lines.append(f"{i}. <b>{escape(p['title'])}</b>\n{escape(p['fact'])}\n<i>→ {escape(p['action'])}</i>")
+    else:
+        lines.append("\nСерьёзных ошибок не нашёл.")
+    strengths = s.get("strengths") or []
+    if strengths:
+        lines.append("\n<b>Что получилось</b>")
+        for st in strengths:
+            lines.append(f"+ {escape(st['title'])}" + (f" — {escape(st['fact'])}" if st.get("fact") else ""))
+    if s.get("goal"):
+        lines.append(f"\n<b>{escape(s['goal'])}</b>")
+    return "\n".join(lines)
+
+
+MAX_DETAILS = 6
+
+
 def full_report(a: Analysis) -> str:
-    parts = [f"<b>Оценка: {a.overall}/10</b>\n<i>{escape(a.verdict)}</i>", scores_block(a)]
+    parts = [f"<b>Оценка: {a.overall}/10</b>\n<i>{escape(a.verdict)}</i>", summary_block(a), scores_block(a)]
 
     # Убийцы выводятся отдельным блоком, в общих списках их не дублируем
-    bad = [f for f in a.by_severity(BAD) if f.kind != "killer"]
-    warn = [f for f in a.by_severity(WARN) if f.kind != "killer"]
+    rest = [f for f in a.by_severity(BAD) + a.by_severity(WARN) if f.kind != "killer"]
     good = a.by_severity(GOOD)
-
-    if bad:
-        parts.append("\n".join(["<b>Главные проблемы</b>"] + finding_lines(bad[:MAX_MAIN_PROBLEMS], True)))
-        warn = bad[MAX_MAIN_PROBLEMS:] + warn
-    if warn:
-        parts.append("\n".join(["<b>Мелкие ошибки</b>"] + finding_lines(warn, False)))
-    if not bad and not warn:
-        parts.append("Явных ошибок по цифрам не нашёл. Красавчик.")
+    if rest:
+        parts.append("\n".join(["<b>Остальные замечания</b>"] + finding_lines(rest[:MAX_DETAILS], False)))
 
     if a.compare:
         parts.append(compare_block(a))
@@ -166,12 +186,6 @@ def full_report(a: Analysis) -> str:
     if good:
         parts.append("<b>Что получилось</b>\n" + "\n".join(f"+ {escape(f.text)}" for f in good))
 
-    focus = [f for f in a.by_severity(BAD) + a.by_severity(WARN) if f.tip and f.kind != "killer"][:3]
-    if focus:
-        parts.append(
-            "<b>Над чем работать в следующих играх</b>\n"
-            + "\n".join(f"{i}. {escape(f.tip)}" for i, f in enumerate(focus, 1))
-        )
     return "\n\n".join(parts)
 
 
