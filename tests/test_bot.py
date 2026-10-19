@@ -224,4 +224,4 @@ def test_no_contradictions_and_few_roasts(match, od):
 
 def test_summary_in_chat_report(match, od):
     text = report.full_report(run(match, match["players"][0], od))
-    assert "Сводка" in text and "Цель на следующую игру" in text
+    assert "Сводка" in text and "Цель на следующую катку" in text

@@ -340,3 +340,11 @@ ol.focus li::marker { color: var(--ember); font-weight: 800; font-family: var(--
 .goal { margin-top: 18px; text-align: center; font-family: var(--display); font-size: 16px; color: #fff;
   border: 1px solid rgba(230, 182, 92, 0.5);
   background: linear-gradient(135deg, rgba(255, 106, 42, 0.18), rgba(122, 16, 32, 0.35)); }
+
+.glossary { margin-top: 22px; }
+.glossary summary { cursor: pointer; font-family: var(--display); color: var(--gold); list-style: none; }
+.glossary summary::before { content: "▸ "; color: var(--ember); }
+.glossary[open] summary::before { content: "▾ "; }
+.gl-row { display: grid; grid-template-columns: 38% 1fr; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.gl-row:last-child { border-bottom: 0; }
+.gl-row span { color: var(--muted); }

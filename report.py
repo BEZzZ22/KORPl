@@ -143,7 +143,7 @@ def summary_block(a: Analysis) -> str:
         who += f" · ранг {s['rank']}"
     if not s.get("role_sure", True):
         who += " · роль определена неточно"
-    lines = [f"<b>Сводка</b> <i>({escape(who)})</i>" if who else "<b>Сводка</b>"]
+    lines = [f"<b>Сводка</b> — <i>{escape(who)}</i>" if who else "<b>Сводка</b>"]
     problems = s.get("problems") or []
     if problems:
         lines.append("\n<b>Что было не так</b>")

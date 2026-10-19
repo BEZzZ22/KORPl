@@ -1,7 +1,7 @@
 // Telegram Mini App: разбор матча Dota 2 внутри Телеграма.
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, CATEGORIES, BAD, WARN, GOOD,
-} from "./engine.js?v=4";
+} from "./engine.js?v=5";
 
 const API = "https://api.opendota.com/api";
 const STEAM_CDN = "https://cdn.cloudflare.steamstatic.com";
@@ -16,7 +16,7 @@ const TURBO_MODE = 23;
 
 const tg = window.Telegram && window.Telegram.WebApp;
 const app = document.getElementById("app");
-let dictionary = null, knowledge = null, texts = null, itemIds = null, norms = {};
+let dictionary = null, knowledge = null, texts = null, itemIds = null, norms = {}, glossary = [];
 let pollTimer = null;
 const proCache = new Map();
 // Подсказки графиков прячутся по тапу вне графика: один общий обработчик на документ
@@ -414,6 +414,15 @@ function overviewTab(a) {
     h("h2", {}, "Оценки по разделам"),
     h("div", { class: "card" }, ...CATEGORIES.map((c) => h("div", { class: "score-row" },
       h("span", {}, c), h("div", { class: "bar" }, h("i", { "data-w": a.scores[c] })), h("b", {}, a.scores[c])))),
+    glossaryBlock(),
+  );
+}
+
+function glossaryBlock() {
+  if (!glossary.length) return null;
+  return h("details", { class: "card glossary" },
+    h("summary", {}, "Словарик: что значат слова в разборе"),
+    ...glossary.map(([term, meaning]) => h("div", { class: "gl-row" }, h("b", {}, term), h("span", {}, meaning))),
   );
 }
 
@@ -714,6 +723,7 @@ async function boot() {
     knowledge = kb;
     texts = tx;
     // Нормы по рангам необязательны: без них разбор работает по общим порогам
+    glossary = await fetch("glossary.json?v=5").then((r) => (r.ok ? r.json() : [])).catch(() => []);
     norms = await fetch("rank_norms.json?v=4").then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
   } catch {
     errorScreen("Не удалось загрузить данные OpenDota.", boot);

@@ -1,10 +1,12 @@
 """Телеграм-бот, который разбирает матчи Dota 2."""
 import asyncio
+import json
 import logging
 import os
 import re
 import time
 from html import escape
+from pathlib import Path
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
@@ -160,8 +162,19 @@ async def cmd_start(message: Message):
         "2. <code>/last</code> — разбор последней катки\n"
         "    <code>/recent</code> — последние 5 игр на выбор\n"
         "    Или просто кинь ID матча или ссылку с OpenDota, Dotabuff, Stratz.\n\n"
+        "Непонятное слово в разборе? <code>/slang</code> — словарик доты.\n\n"
         "В Доте должно быть включено: Настройки → Социальное → «Открыть доступ к данным матчей»."
     )
+
+
+GLOSSARY = json.loads((Path(__file__).parent / "docs" / "glossary.json").read_text(encoding="utf-8"))
+
+
+@router.message(Command("slang"))
+async def cmd_slang(message: Message):
+    lines = ["<b>Словарик доты</b>"] + [f"<b>{escape(term)}</b> — {escape(meaning)}" for term, meaning in GLOSSARY]
+    for chunk in report.split_message("\n".join(lines)):
+        await message.answer(chunk)
 
 
 @router.message(Command("me"))
@@ -379,6 +392,7 @@ async def main():
         BotCommand(command="last", description="Разбор последней игры"),
         BotCommand(command="recent", description="Последние 5 игр"),
         BotCommand(command="me", description="Привязать аккаунт"),
+        BotCommand(command="slang", description="Словарик доты"),
         BotCommand(command="help", description="Как пользоваться"),
     ])
     if WEBAPP_URL:
