@@ -1,10 +1,12 @@
 // Движок разбора матча. Точная копия analysis.py для веб-приложения:
 // тест tests/test_parity.py прогоняет оба движка на одном матче и сверяет результат.
+// Тексты общие: docs/texts.json, база механик: docs/knowledge.json.
 
 export const LANE = "Линия", FARM = "Фарм", FIGHTS = "Драки", SURVIVAL = "Выживание", ITEMS = "Предметы", VISION = "Видение";
 export const CATEGORIES = [LANE, FARM, FIGHTS, SURVIVAL, ITEMS, VISION];
 export const BAD = "bad", WARN = "warn", GOOD = "good";
 
+const DAMAGE_TYPE_ADJ = { Physical: "физическим", Magical: "магическим", Pure: "чистым" };
 const LANE_OPPONENT = { 1: 3, 2: 2, 3: 1, 4: 5, 5: 4 };
 const LH_TARGET_10 = { 1: 50, 2: 50, 3: 35 };
 const CORE_ITEM_MIN_COST = 1800;
@@ -20,9 +22,16 @@ const ITEM_UPGRADES = {
 };
 const MAX_COUNTER_ITEMS = 3;
 const DETECTION_ITEMS = new Set(["dust", "ward_sentry", "gem"]);
-const DAMAGE_TYPE_INSTR = { Physical: "физическим", Magical: "магическим", Pure: "чистым" };
+const PRO_MIN_COUNT = 3;
+const PRO_BUILD_SIZE = 6;
+const PHASES = [["lane", "Линия", 0, 10], ["mid", "Мидгейм", 10, 25], ["late", "Лейт", 25, null]];
+const SWING_WINDOW = 5;
+const SWING_MIN_GOLD = 3000;
+const PRO_ITEM_PHASES = ["early_game_items", "mid_game_items", "late_game_items"];
 
-// Python round(): половинки округляются к чётному. Нужен для совпадения с ботом
+// ---------- общие утилиты (как в analysis.py) ----------
+
+// Python round(): половинки округляются к чётному
 export function pyRound(x) {
   const f = Math.floor(x);
   const diff = x - f;
@@ -43,6 +52,27 @@ export function mmss(seconds) {
   return `${sign}${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+export function num(n) {
+  n = Math.trunc(n);
+  const digits = String(Math.abs(n)).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  return (n < 0 ? "-" : "") + digits;
+}
+
+export function signed(n) {
+  n = Math.trunc(n);
+  return n > 0 ? `+${num(n)}` : num(n);
+}
+
+function textHash(s) {
+  let h = 0;
+  for (const ch of s) h = (Math.imul(h, 31) + ch.codePointAt(0)) >>> 0;
+  return h;
+}
+
+function fill(template, params) {
+  return template.replace(/\{(\w+)\}/g, (_, name) => String(params[name]));
+}
+
 export function position(player) {
   return player.position_est || { 1: 1, 2: 2, 3: 3 }[player.lane_role] || 4;
 }
@@ -54,10 +84,24 @@ function atMinute(series, minute) {
 
 const sum = (xs) => xs.reduce((a, b) => a + b, 0);
 const intersects = (set, keys) => keys.some((k) => set.has(k));
+const deathsWord = (n) => plural(n, "смерть", "смерти", "смертей");
+const timesWord = (n) => plural(n, "раз", "раза", "раз");
 
 function damageType(value) {
   if (Array.isArray(value)) value = value.length ? value[0] : null;
   return ["Physical", "Magical", "Pure"].includes(value) ? value : null;
+}
+
+// itemPopularity (id предмета -> сколько раз) -> {ключ предмета: сумма по фазам}
+export function proItemCounts(popularity, itemIds) {
+  const counts = {};
+  for (const phase of PRO_ITEM_PHASES) {
+    for (const [id, n] of Object.entries((popularity && popularity[phase]) || {})) {
+      const key = itemIds[String(id)];
+      if (key) counts[key] = (counts[key] || 0) + n;
+    }
+  }
+  return counts;
 }
 
 // Справочники OpenDota в том же виде, что и класс OpenDota в боте
@@ -73,6 +117,7 @@ export function createDictionary({ heroes, items, abilities }) {
     if (a.dname) abilityInfo[key] = { dname: a.dname, dmg_type: damageType(a.dmg_type) };
   }
   const od = {
+    items,
     heroName: (id) => heroNames[id] ?? `герой #${id}`,
     heroKey: (id) => heroKeys[id] ?? "",
     heroImage: (id) => heroImages[id],
@@ -104,11 +149,14 @@ export function isParsed(match) {
 }
 
 class MatchAnalyzer {
-  constructor(match, player, od, knowledge) {
+  constructor(match, player, od, knowledge, texts, proItems) {
     this.match = match;
     this.p = player;
     this.od = od;
     this.k = knowledge;
+    this.texts = texts;
+    this.pro = proItems || {};
+    this.hasPro = Object.keys(this.pro).length > 0;
     this.damageTypeNames = Object.fromEntries(Object.entries(knowledge.damage_types).map(([k, v]) => [k, v.name]));
     this.duration = match.duration;
     this.minutes = Math.floor(this.duration / 60);
@@ -118,13 +166,32 @@ class MatchAnalyzer {
     this.allies = match.players.filter((x) => x.isRadiant === player.isRadiant);
     this.enemies = match.players.filter((x) => x.isRadiant !== player.isRadiant);
     this.opponent = this.enemies.find((e) => position(e) === LANE_OPPONENT[this.pos]) || null;
+    this.oppName = this.opponent ? od.heroName(this.opponent.hero_id) : null;
+    this.hero = od.heroName(player.hero_id);
     this.bench = {};
     for (const [k, v] of Object.entries(player.benchmarks || {})) this.bench[k] = pyRound(v.pct * 100);
+    const sign = player.isRadiant ? 1 : -1;
+    this.teamAdv = (match.radiant_gold_adv || []).map((a) => a * sign);
+    this.fightWindows = (match.teamfights || []).map((tf) => [tf.start - TEAMFIGHT_MARGIN, tf.end + TEAMFIGHT_MARGIN]);
     this.findings = [];
     this.penalty = Object.fromEntries(CATEGORIES.map((c) => [c, 0]));
   }
 
-  add(category, severity, text, tip = "", kind = "") {
+  // ---------- тексты ----------
+
+  say(key, params = {}, seed = "") {
+    const variants = this.texts[key];
+    const fullSeed = `${this.match.match_id}:${this.p.player_slot}:${key}:${seed}`;
+    return fill(variants[textHash(fullSeed) % variants.length], params);
+  }
+
+  add(category, severity, key, tipKey = null, params = {}, kind = "") {
+    const text = this.say(key, params);
+    const tip = tipKey ? this.say(tipKey, params) : "";
+    this.addRaw(category, severity, text, tip, kind);
+  }
+
+  addRaw(category, severity, text, tip = "", kind = "") {
     this.findings.push({ category, severity, text, tip, kind });
     this.penalty[category] += { [BAD]: 1.0, [WARN]: 0.5, [GOOD]: -0.5 }[severity];
   }
@@ -139,6 +206,8 @@ class MatchAnalyzer {
     this.checkGame();
     const killers = this.checkKillers();
     this.checkItemization();
+    const proBuild = this.proBuild();
+    this.checkProBuild(proBuild);
     const scores = this.computeScores();
     const values = Object.values(scores);
     return {
@@ -148,8 +217,57 @@ class MatchAnalyzer {
       overall: Math.round((sum(values) / values.length) * 10) / 10,
       timeline: this.collectTimeline(),
       killers,
+      phases: this.phases(),
+      moments: this.moments(),
+      pro_build: proBuild,
+      verdict: this.verdict(scores),
       items: this.coreItems(),
     };
+  }
+
+  // ---------- про-сборки ----------
+
+  proCount(key) {
+    return this.pro[key] || 0;
+  }
+
+  isFinalItem(key) {
+    const item = this.od.items[key] || {};
+    return Boolean(item.components && item.components.length) || key === "blink" || key === "aghanims_shard";
+  }
+
+  proFilter(keys) {
+    if (!this.hasPro) return null;
+    return keys.filter((k) => this.proCount(k) >= PRO_MIN_COUNT).sort((a, b) => this.proCount(b) - this.proCount(a));
+  }
+
+  proBuild() {
+    const finals = Object.entries(this.pro)
+      .filter(([k, c]) => this.isFinalItem(k) && c >= PRO_MIN_COUNT)
+      .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    if (!finals.length) return [];
+    const top = finals[0][1];
+    const purchases = {};
+    for (const x of this.p.purchase_log || []) if (!(x.key in purchases)) purchases[x.key] = x.time;
+    const owned = this.ownedItems();
+    return finals.slice(0, PRO_BUILD_SIZE).map(([k, c]) => ({
+      key: k,
+      item: this.od.itemName(k),
+      share: pyRound((c / top) * 100),
+      owned: owned.has(k),
+      time: k in purchases ? purchases[k] : null,
+    }));
+  }
+
+  checkProBuild(build) {
+    if (this.minutes < 25 || build.length < 3) return;
+    const have = build.slice(0, 5).filter((b) => b.owned).length;
+    const missing = build.slice(0, 3).filter((b) => !b.owned).map((b) => b.item);
+    if (have <= 1 && missing.length) {
+      this.add(ITEMS, WARN, "items_pro_missing", "items_pro_missing_tip", { hero: this.hero, items: missing.slice(0, 2).join(", ") });
+    } else if (have >= 3) {
+      this.add(ITEMS, GOOD, "items_pro_match", null, { hero: this.hero, n: have });
+    }
   }
 
   // ---------- линия ----------
@@ -157,39 +275,24 @@ class MatchAnalyzer {
   checkLane() {
     const p = this.p, pos = this.pos;
     const lh10 = atMinute(p.lh_t, 10), dn10 = atMinute(p.dn_t, 10);
-
     if (this.core && this.minutes >= 10) {
       const target = LH_TARGET_10[pos];
-      if (lh10 < target * 0.7) {
-        this.add(LANE, BAD, `Ластхиты к 10:00: ${lh10} при норме ${target}+`,
-          "Тренируй добивание в демке: 5 минут на линии без скиллов, цель 40+ крипов");
-      } else if (lh10 < target) {
-        this.add(LANE, WARN, `Ластхиты к 10:00: ${lh10}, чуть ниже нормы ${target}`);
-      } else if (lh10 >= target * 1.25) {
-        this.add(LANE, GOOD, `Отличное добивание: ${lh10} крипов к 10:00`);
-      }
-      if (pos === 2 && dn10 < 6) {
-        this.add(LANE, WARN, `Денаев на миде к 10:00 всего ${dn10}`,
-          "На миде денай важен почти как ластхит: так ты отбираешь у врага опыт и золото");
-      }
+      if (lh10 < target * 0.7) this.add(LANE, BAD, "lane_lh_bad", "lane_lh_bad_tip", { lh: lh10, target });
+      else if (lh10 < target) this.add(LANE, WARN, "lane_lh_warn", null, { lh: lh10, target });
+      else if (lh10 >= target * 1.25) this.add(LANE, GOOD, "lane_lh_good", null, { lh: lh10 });
+      if (pos === 2 && dn10 < 6) this.add(LANE, WARN, "lane_denies_warn", "lane_denies_warn_tip", { dn: dn10 });
     }
-
     if (this.opponent && this.minutes >= 10) {
       const diff = atMinute(p.networth_t, 10) - atMinute(this.opponent.networth_t, 10);
-      const opp = this.od.heroName(this.opponent.hero_id);
-      if (diff <= -1000) {
-        this.add(LANE, BAD, `Проиграл линию: к 10:00 отставал от ${opp} на ${-diff} золота`,
-          `Посмотри реплей первых 10 минут и найди, в какие моменты ${opp} тебя наказывал`);
-      } else if (diff >= 1000) {
-        this.add(LANE, GOOD, `Выиграл линию: к 10:00 впереди ${opp} на ${diff} золота`);
-      }
+      if (diff <= -1000) this.add(LANE, BAD, "lane_lost", "lane_lost_tip", { opp: this.oppName, gold: num(-diff) });
+      else if (diff >= 1000) this.add(LANE, GOOD, "lane_won", null, { opp: this.oppName, gold: num(diff) });
     }
-
     const early = (p.deaths_log || []).filter((d) => d.time < 600);
     if (early.length >= 2) {
-      const times = early.map((d) => mmss(d.time)).join(", ");
-      this.add(LANE, BAD, `${early.length} ${plural(early.length, "смерть", "смерти", "смертей")} на линии (${times})`,
-        "На линии не заходи за свою крипволну, если не видишь всех врагов. Следи за ранами и не жадничай");
+      const n = early.length;
+      this.add(LANE, BAD, "lane_deaths", "lane_deaths_tip", {
+        n, deaths_word: deathsWord(n), times_word: timesWord(n), times: early.map((d) => mmss(d.time)).join(", "),
+      });
     }
   }
 
@@ -201,26 +304,25 @@ class MatchAnalyzer {
       for (const [key, name] of [["gold_per_min", "GPM"], ["last_hits_per_min", "Ластхиты в минуту"]]) {
         const pct = this.bench[key];
         if (pct == null) continue;
-        if (pct < 25) this.add(FARM, BAD, `${name}: хуже, чем у ${100 - pct}% игроков на этом герое`);
-        else if (pct >= 80) this.add(FARM, GOOD, `${name}: лучше, чем у ${pct}% игроков на этом герое`);
+        if (pct < 25) this.add(FARM, BAD, "farm_bench_bad", null, { name, pct: 100 - pct });
+        else if (pct >= 80) this.add(FARM, GOOD, "farm_bench_good", null, { name, pct });
       }
       for (const [start, end, lh] of this.idleWindows()) {
-        this.add(FARM, WARN, `Простой с ${mmss(start * 60)} по ${mmss(end * 60)}: всего ${lh} крипов за ${end - start} мин`,
-          "Если нечего делать, фарми лес или пушь линию. Минута без фарма — минус 300-500 золота");
+        this.add(FARM, WARN, "farm_idle", "farm_idle_tip", { from: mmss(start * 60), to: mmss(end * 60), lh, mins: end - start });
       }
       if (this.pos === 1 && this.minutes >= 25 && p.last_hits > 0) {
         const share = (p.neutral_kills ?? 0) / p.last_hits;
-        if (share < 0.15) {
-          this.add(FARM, WARN, `Лесных крипов всего ${pyRound(share * 100)}% от фарма`,
-            "Между волнами заходи в лес: линия, лагерь, линия. Так фарм растёт в разы");
-        }
+        if (share < 0.15) this.add(FARM, WARN, "farm_jungle", "farm_jungle_tip", { share: pyRound(share * 100) });
+      }
+      const towers = this.bench.tower_damage;
+      if ((this.pos === 1 || this.pos === 3) && this.minutes >= 25 && towers != null && towers < 20) {
+        this.add(FARM, WARN, "farm_towers", "farm_towers_tip", { pct: 100 - towers });
       }
     }
-    if (this.opponent && this.minutes >= 20) {
+    if (this.opponent && this.minutes >= 20 && this.core) {
       const diff = atMinute(p.networth_t, 20) - atMinute(this.opponent.networth_t, 20);
-      const opp = this.od.heroName(this.opponent.hero_id);
-      if (this.core && diff <= -3000) this.add(FARM, BAD, `К 20:00 отставал от ${opp} на ${-diff} нетворса`);
-      else if (this.core && diff >= 3000) this.add(FARM, GOOD, `К 20:00 обогнал ${opp} на ${diff} нетворса`);
+      if (diff <= -3000) this.add(FARM, BAD, "farm_nw_behind", null, { opp: this.oppName, gold: num(-diff) });
+      else if (diff >= 3000) this.add(FARM, GOOD, "farm_nw_ahead", null, { opp: this.oppName, gold: num(diff) });
     }
   }
 
@@ -253,28 +355,20 @@ class MatchAnalyzer {
     const teamKills = sum(this.allies.map((a) => a.kills));
     if (teamKills >= 10) {
       const kp = pyRound(((p.kills + p.assists) / teamKills) * 100);
-      if (kp < 45) {
-        this.add(FIGHTS, BAD, `Участие в убийствах ${kp}%: команда воюет без тебя`,
-          "Чаще смотри на миникарту и иди на драки с ТП, особенно после 15 минуты");
-      } else if (kp >= 70) {
-        this.add(FIGHTS, GOOD, `Участие в убийствах ${kp}%`);
-      }
+      if (kp < 45) this.add(FIGHTS, BAD, "fights_kp_bad", "fights_kp_bad_tip", { kp });
+      else if (kp >= 70) this.add(FIGHTS, GOOD, "fights_kp_good", null, { kp });
     }
     const missed = this.missedFights();
     if (missed.length) {
-      const times = missed.slice(0, 3).map(([t, n]) => `${mmss(t)} (-${n})`).join(", ");
-      this.add(FIGHTS, missed.length >= 3 ? BAD : WARN,
-        `${missed.length} ${plural(missed.length, "драку", "драки", "драк")} пропустил, пока был жив: ${times}`,
-        "В скобках сколько союзников погибло. Если не успеваешь, не фарми далеко, держи ТП");
+      const n = missed.length;
+      const times = missed.slice(0, 3).map(([t, k]) => `${mmss(t)} (-${k})`).join(", ");
+      this.add(FIGHTS, n >= 3 ? BAD : WARN, "fights_missed", "fights_missed_tip",
+        { n, fights_word: plural(n, "драку", "драки", "драк"), times });
     }
     if (this.core) {
       const pct = this.bench.hero_damage_per_min;
-      if (pct != null && pct < 25) {
-        this.add(FIGHTS, WARN, `Урон по героям ниже, чем у ${100 - pct}% игроков на этом герое`,
-          "Бей тех, до кого достаёшь, а не только цель для убийства. Урон по танку тоже помогает");
-      } else if (pct != null && pct >= 80) {
-        this.add(FIGHTS, GOOD, `Урон по героям выше, чем у ${pct}% игроков на этом герое`);
-      }
+      if (pct != null && pct < 25) this.add(FIGHTS, WARN, "fights_dmg_bad", "fights_dmg_bad_tip", { pct: 100 - pct });
+      else if (pct != null && pct >= 80) this.add(FIGHTS, GOOD, "fights_dmg_good", null, { pct });
     }
   }
 
@@ -297,35 +391,31 @@ class MatchAnalyzer {
 
   // ---------- выживание ----------
 
+  inFight(t) {
+    return this.fightWindows.some(([s, e]) => s <= t && t <= e);
+  }
+
   checkSurvival() {
     const p = this.p;
     const deaths = p.deaths_log || [];
     const pct = this.bench.deaths_per_min;
-    const deathsWord = plural(p.deaths, "смерть", "смерти", "смертей");
-    if (pct != null && pct < 25) {
-      this.add(SURVIVAL, BAD, `${p.deaths} ${deathsWord}: умираешь чаще, чем ${100 - pct}% игроков на этом герое`);
-    } else if (pct != null && pct >= 80 && this.minutes >= 20) {
-      this.add(SURVIVAL, GOOD, `Всего ${p.deaths} ${deathsWord} за игру`);
-    }
+    const n = p.deaths;
+    if (pct != null && pct < 25) this.add(SURVIVAL, BAD, "surv_deaths_bad", null, { n, deaths_word: deathsWord(n), pct: 100 - pct });
+    else if (pct != null && pct >= 80 && this.minutes >= 20) this.add(SURVIVAL, GOOD, "surv_deaths_good", null, { n, deaths_word: deathsWord(n) });
 
-    const fights = (this.match.teamfights || []).map((tf) => [tf.start - TEAMFIGHT_MARGIN, tf.end + TEAMFIGHT_MARGIN]);
-    const solo = deaths.filter((d) => d.time >= 600 && !fights.some(([s, e]) => s <= d.time && d.time <= e));
+    const solo = deaths.filter((d) => d.time >= 600 && !this.inFight(d.time));
     if (solo.length >= 2) {
-      const times = solo.slice(0, 5).map((d) => mmss(d.time)).join(", ");
-      this.add(SURVIVAL, BAD, `Пойман в одиночку ${solo.length} ${plural(solo.length, "раз", "раза", "раз")} вне драк: ${times}`,
-        "Перед фармом опасной зоны глянь миникарту: кого из врагов не видно. Нет 3+ врагов — отходи ближе к своим");
+      const k = solo.length;
+      this.add(SURVIVAL, BAD, "surv_solo", "surv_solo_tip",
+        { n: k, times_word: timesWord(k), times: solo.slice(0, 5).map((d) => mmss(d.time)).join(", ") });
     }
-
     const deadShare = (p.life_state_dead || 0) / Math.max(this.duration, 1);
     if (deadShare >= 0.15) {
-      this.add(SURVIVAL, BAD, `Провёл мёртвым ${mmss(p.life_state_dead)}, это ${pyRound(deadShare * 100)}% игры`,
-        "Каждая минута в таверне — это минута без фарма и опыта");
+      this.add(SURVIVAL, BAD, "surv_dead_time", "surv_dead_time_tip", { time: mmss(p.life_state_dead), pct: pyRound(deadShare * 100) });
     }
-
     const lost = sum(deaths.map((d) => d.gold_lost ?? 0));
     if (lost >= 1000 && lost / Math.max(p.total_gold || 1, 1) >= 0.1) {
-      this.add(SURVIVAL, WARN, `Потерял ${lost} золота на смертях`,
-        "Перед рискованным моментом трать золото: купи предмет или хотя бы компонент");
+      this.add(SURVIVAL, WARN, "surv_gold_lost", "surv_gold_lost_tip", { gold: num(lost) });
     }
   }
 
@@ -342,41 +432,26 @@ class MatchAnalyzer {
     if (this.core && items.length) {
       const first = items[0];
       const minute = first.time / 60;
-      if (minute >= 20) {
-        this.add(ITEMS, BAD, `Первый крупный предмет (${first.item}) только на ${mmss(first.time)}`,
-          "Для кора первый ключевой предмет должен быть к 14-17 минуте. Не трать золото на ситуативщину раньше");
-      } else if (minute >= 17) {
-        this.add(ITEMS, WARN, `Первый крупный предмет (${first.item}) на ${mmss(first.time)}, можно быстрее`);
-      } else if (minute <= 13) {
-        this.add(ITEMS, GOOD, `Быстрый ${first.item} на ${mmss(first.time)}`);
-      }
+      const params = { item: first.item, time: mmss(first.time) };
+      if (minute >= 20) this.add(ITEMS, BAD, "items_first_bad", "items_first_bad_tip", params);
+      else if (minute >= 17) this.add(ITEMS, WARN, "items_first_warn", null, params);
+      else if (minute <= 13) this.add(ITEMS, GOOD, "items_first_good", null, params);
     } else if (this.core && this.minutes >= 20) {
-      this.add(ITEMS, BAD, "За 20+ минут ни одного крупного предмета");
+      this.add(ITEMS, BAD, "items_none");
     }
 
-    if ((this.pos === 1 || this.pos === 2) && this.minutes >= 30) {
-      if (!items.some((x) => x.key === "black_king_bar")) {
-        this.add(ITEMS, WARN, "Не было BKB за всю игру",
-          "Если у врагов много контроля или магии, BKB чаще всего обязателен к 25 минуте");
-      }
+    const bkbPopular = this.proCount("black_king_bar") >= PRO_MIN_COUNT;
+    if ((this.pos === 1 || this.pos === 2) && this.minutes >= 30 && bkbPopular) {
+      if (!items.some((x) => x.key === "black_king_bar")) this.add(ITEMS, WARN, "items_no_bkb", "items_no_bkb_tip");
     }
 
     const tps = (p.item_uses || {}).tpscroll ?? 0;
-    if (this.minutes >= 20 && tps < this.minutes / 10) {
-      this.add(ITEMS, WARN, `Всего ${tps} ТП за ${this.minutes} мин`,
-        "ТП должен быть в слоте всегда: спасает вышки, союзников и экономит время на ходьбу");
-    }
+    if (this.minutes >= 20 && tps < this.minutes / 10) this.add(ITEMS, WARN, "items_tp", "items_tp_tip", { n: tps, mins: this.minutes });
 
     const boots = (p.purchase_log || []).find((x) => x.key === "boots");
-    if (this.core && boots && boots.time > 360) {
-      this.add(ITEMS, WARN, `Сапоги только на ${mmss(boots.time)}`,
-        "Сапоги нужны к 4-5 минуте: без них проще поймать и сложнее размениваться");
-    }
+    if (this.core && boots && boots.time > 360) this.add(ITEMS, WARN, "items_boots", "items_boots_tip", { time: mmss(boots.time) });
 
-    if (!this.won && (p.gold ?? 0) >= 2500) {
-      this.add(ITEMS, WARN, `Закончил проигранную игру с ${p.gold} золота в кармане`,
-        "Неиспользованное золото — это предмет, которого не было в последней драке");
-    }
+    if (!this.won && (p.gold ?? 0) >= 2500) this.add(ITEMS, WARN, "items_gold_left", "items_gold_left_tip", { gold: num(p.gold) });
   }
 
   // ---------- видение ----------
@@ -387,35 +462,21 @@ class MatchAnalyzer {
     const dewards = (p.observer_kills ?? 0) + (p.sentry_kills ?? 0);
     if (this.pos >= 4 && this.minutes >= 15) {
       const per10 = (obs / this.minutes) * 10;
-      if (per10 < 2.5) {
-        this.add(VISION, BAD, `Всего ${obs} обсов за ${this.minutes} мин`,
-          "Саппорт должен ставить обс каждый раз, как он есть в лавке. Видение выигрывает драки");
-      } else if (per10 >= 4) {
-        this.add(VISION, GOOD, `Хорошо варил: ${obs} обсов`);
-      }
-      const [short, total] = this.dewardedObservers();
-      if (total >= 4 && short / total >= 0.4) {
-        this.add(VISION, WARN, `${short} из ${total} обсов враги быстро сносили`,
-          "Не ставь на самые очевидные точки. Сдвигай вард на пару шагов или на соседнюю высоту");
-      }
-      if (sen < obs / 2) {
-        this.add(VISION, WARN, `Мало сентри: ${sen} при ${obs} обсах, снял ${dewards} вардов`,
-          "Сентри у своих вышек и рун ломают вражеское видение и спасают от гангов");
-      }
-      if (this.pos === 5 && this.minutes >= 25 && (p.camps_stacked ?? 0) < 2) {
-        this.add(VISION, WARN, "Почти не стакал лес",
-          "На x:53-x:55 оттяни лагерь: керри потом сразу заберёт двойной стак");
-      }
-    } else if (this.core && dewards >= 3) {
-      this.add(VISION, GOOD, `Снял ${dewards} вражеских вардов, хорошо для кора`);
-    }
+      if (per10 < 2.5) this.add(VISION, BAD, "vision_obs_bad", "vision_obs_bad_tip", { n: obs, mins: this.minutes });
+      else if (per10 >= 4) this.add(VISION, GOOD, "vision_obs_good", null, { n: obs });
 
+      const [short, total] = this.dewardedObservers();
+      if (total >= 4 && short / total >= 0.4) this.add(VISION, WARN, "vision_dewarded", "vision_dewarded_tip", { short, total });
+      if (sen < obs / 2) this.add(VISION, WARN, "vision_sentries", "vision_sentries_tip", { sen, obs, dewards });
+      if (this.pos === 5 && this.minutes >= 25 && (p.camps_stacked ?? 0) < 2) this.add(VISION, WARN, "vision_stacks", "vision_stacks_tip");
+      const smokes = (p.item_uses || {}).smoke_of_deceit ?? 0;
+      if (this.minutes >= 30 && smokes === 0) this.add(VISION, WARN, "vision_smoke", "vision_smoke_tip", { mins: this.minutes });
+    } else if (this.core && dewards >= 3) {
+      this.add(VISION, GOOD, "vision_dewards_good", null, { n: dewards });
+    }
     if (this.pos === 2 && this.minutes >= 20) {
       const runes = p.rune_pickups ?? 0;
-      if (runes < this.minutes / 5) {
-        this.add(VISION, WARN, `Мало рун для мида: ${runes} за игру`,
-          "Руны на миде — это бесплатные ганги и реген. Контролируй их каждые 2 минуты");
-      }
+      if (runes < this.minutes / 5) this.add(VISION, WARN, "vision_runes", "vision_runes_tip", { n: runes });
     }
   }
 
@@ -437,9 +498,7 @@ class MatchAnalyzer {
 
   ownedItems() {
     const owned = new Set((this.p.purchase_log || []).map((x) => x.key));
-    for (const [base, upgrades] of Object.entries(ITEM_UPGRADES)) {
-      if (intersects(owned, upgrades)) owned.add(base);
-    }
+    for (const [base, upgrades] of Object.entries(ITEM_UPGRADES)) if (intersects(owned, upgrades)) owned.add(base);
     return owned;
   }
 
@@ -452,9 +511,7 @@ class MatchAnalyzer {
     const sources = [];
     for (const [inflictor, targets] of Object.entries(enemy.damage_targets || {})) {
       const dmg = (targets || {})[myKey] ?? 0;
-      if (dmg > 0) {
-        sources.push({ key: inflictor, name: this.od.sourceName(inflictor), damage: dmg, type: this.od.sourceType(inflictor) });
-      }
+      if (dmg > 0) sources.push({ key: inflictor, name: this.od.sourceName(inflictor), damage: dmg, type: this.od.sourceType(inflictor) });
     }
     sources.sort((a, b) => b.damage - a.damage);
     return [sum(sources.map((s) => s.damage)), sources];
@@ -474,12 +531,12 @@ class MatchAnalyzer {
     let candidates = [];
     for (const m of mechanics) candidates = candidates.concat(this.k.mechanics[m][this.role()]);
     if (mainType in this.k.damage_types) candidates = candidates.concat(this.k.damage_types[mainType][this.role()]);
-    const seen = new Set(), missing = [], had = [];
-    for (const key of candidates) {
-      if (seen.has(key)) continue;
-      seen.add(key);
-      (owned.has(key) ? had : missing).push(key);
-    }
+    const unique = [];
+    for (const key of candidates) if (!unique.includes(key)) unique.push(key);
+    const had = unique.filter((k) => owned.has(k));
+    let missing = unique.filter((k) => !owned.has(k));
+    const popular = this.proFilter(missing);
+    if (popular !== null) missing = popular;
     return [missing.slice(0, MAX_COUNTER_ITEMS), had];
   }
 
@@ -494,12 +551,10 @@ class MatchAnalyzer {
   checkKillers() {
     const counts = new Map();
     for (const d of this.p.deaths_log || []) counts.set(d.key, (counts.get(d.key) || 0) + 1);
-
     const owned = this.ownedItems();
     const enemiesByKey = new Map(this.enemies.map((e) => [this.od.heroKey(e.hero_id), e]));
     const killers = [];
-    const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]);
-    for (const [key, n] of sorted) {
+    for (const [key, n] of [...counts.entries()].sort((a, b) => b[1] - a[1])) {
       const enemy = enemiesByKey.get(key);
       if (!enemy || n < 2) continue;
       const [total, sources] = this.damageFrom(enemy);
@@ -511,7 +566,7 @@ class MatchAnalyzer {
       const mechanics = this.relevantMechanics(this.k.heroes[key] || [], mainType);
       const [missing, had] = this.pickCounters(mechanics, mainType, owned);
       const name = this.od.heroName(enemy.hero_id);
-      const killer = {
+      killers.push({
         hero: name,
         hero_id: enemy.hero_id,
         key,
@@ -528,37 +583,35 @@ class MatchAnalyzer {
         counter_keys: missing,
         had_counters: had.map((k) => this.od.itemName(k)),
         had_counter_keys: had,
-      };
-      killers.push(killer);
-      this.addKillerFinding(killer);
+      });
     }
+    for (const killer of killers.slice(0, 3)) this.addKillerFinding(killer);
     return killers.slice(0, 3);
   }
 
   addKillerFinding(k) {
-    const how = k.sources.slice(0, 3).map((s) => `${s.name} ${s.damage}`).join(", ");
-    let text = `${k.hero} убил тебя ${k.deaths} ${plural(k.deaths, "раз", "раза", "раз")}`;
+    const n = k.deaths;
+    let text = this.say("killer_head", { hero: k.hero, n, times_word: timesWord(n) }, k.key);
     if (k.damage) {
-      text += `: ${k.damage} урона`;
+      const how = k.sources.slice(0, 3).map((s) => `${s.name} ${num(s.damage)}`).join(", ");
+      text += `: ${num(k.damage)} урона`;
       if (k.main_type) text += `, ${k.main_type_share}% ${this.damageTypeNames[k.main_type]}`;
       text += ` (${how})`;
     }
     if (k.disables.length) text += ". Контроль: " + k.disables.map((d) => `${d.name} ×${d.count}`).join(", ");
 
     const tipParts = k.tips.slice(0, 2);
-    if (k.counters.length) tipParts.push("Возьми: " + k.counters.join(", "));
-    if (k.deaths >= 3) {
+    if (k.counters.length) tipParts.push(this.say("killer_buy", { items: k.counters.join(", ") }, k.key));
+    else if (this.hasPro && !k.had_counters.length) tipParts.push(this.say("killer_no_items", {}, k.key));
+    if (n >= 3) {
       const had = new Set(k.had_counter_keys);
-      if ([...had].some((x) => DETECTION_ITEMS.has(x))) {
-        tipParts.push("Детект у тебя был, но не там: ставь сентри и кидай Dust в местах, где умирал");
-      }
+      if ([...had].some((x) => DETECTION_ITEMS.has(x))) tipParts.push(this.say("killer_had_detect", {}, k.key));
       const active = k.had_counter_keys.filter((x) => !DETECTION_ITEMS.has(x)).map((x) => this.od.itemName(x));
       if (active.length) {
-        const verb = active.length > 1 ? "были" : "был";
-        tipParts.push(`${active.slice(0, 2).join(", ")} у тебя ${verb} — используй заранее, а не когда уже в контроле`);
+        tipParts.push(this.say("killer_had_active", { items: active.slice(0, 2).join(", "), verb: active.length > 1 ? "были" : "был" }, k.key));
       }
     }
-    this.add(SURVIVAL, k.deaths >= 4 ? BAD : WARN, text, tipParts.join(". "), "killer");
+    this.addRaw(SURVIVAL, n >= 4 ? BAD : WARN, text, tipParts.join(". "), "killer");
   }
 
   // ---------- сборка против пика ----------
@@ -579,10 +632,13 @@ class MatchAnalyzer {
       for (const [dmgType, threshold] of [["Magical", 0.5], ["Physical", 0.65]]) {
         const share = (byType[dmgType] || 0) / total;
         const counters = this.k.damage_types[dmgType][role];
-        if (share >= threshold && !intersects(owned, counters)) {
-          const names = counters.slice(0, 3).map((k) => this.od.itemName(k)).join(", ");
-          this.add(ITEMS, WARN, `${pyRound(share * 100)}% урона по тебе было ${DAMAGE_TYPE_INSTR[dmgType]}, а защиты от него не было`,
-            `Против такого урона на твоей роли работают: ${names}`);
+        if (share < threshold || intersects(owned, counters)) continue;
+        const popular = this.proFilter(counters);
+        const options = (popular !== null ? popular : counters).slice(0, 3);
+        if (options.length) {
+          this.add(ITEMS, WARN, "items_dmg_type", "items_dmg_type_tip", {
+            pct: pyRound(share * 100), type: DAMAGE_TYPE_ADJ[dmgType], items: options.map((k) => this.od.itemName(k)).join(", "),
+          });
         }
       }
     }
@@ -593,38 +649,121 @@ class MatchAnalyzer {
         (enemyTags[tag] = enemyTags[tag] || []).push(this.od.heroName(e.hero_id));
       }
     }
-    if (enemyTags.invis && this.pos >= 4 && !intersects(owned, ["dust", "ward_sentry", "gem"])) {
-      this.add(VISION, BAD, `Против ${enemyTags.invis.join(", ")} не купил ни Dust, ни сентри`,
-        "Против невидимых героев саппорт всегда носит Dust и ставит сентри в ключевых местах");
+    if (enemyTags.invis && this.pos >= 4 && !intersects(owned, [...DETECTION_ITEMS])) {
+      this.add(VISION, BAD, "vision_invis", "vision_invis_tip", { heroes: enemyTags.invis.join(", ") });
     }
-    if (enemyTags.evasion && this.pos === 1 && this.minutes >= 30 && !intersects(owned, ["monkey_king_bar", "bloodthorn"])) {
-      this.add(ITEMS, WARN, `Против уклонения ${enemyTags.evasion.join(", ")} не было MKB или Bloodthorn`,
-        "Без точности часть твоих атак просто промахивается");
+    const accuracyPopular = this.proFilter(["monkey_king_bar", "bloodthorn"]);
+    if (enemyTags.evasion && this.pos === 1 && this.minutes >= 30 && !intersects(owned, ["monkey_king_bar", "bloodthorn"]) &&
+        !(accuracyPopular !== null && accuracyPopular.length === 0)) {
+      this.add(ITEMS, WARN, "items_evasion", "items_evasion_tip", { heroes: enemyTags.evasion.join(", ") });
     }
+    const antihealPopular = this.proFilter(["spirit_vessel", "shivas_guard", "skadi"]);
     if ((enemyTags.heal || []).length >= 2 && (this.pos === 3 || this.pos === 4) &&
-        !intersects(owned, ["spirit_vessel", "shivas_guard", "skadi"])) {
-      this.add(ITEMS, WARN, `У врагов много хила (${enemyTags.heal.join(", ")}), а антихила у тебя не было`,
-        "Spirit Vessel на оффлейне или четвёрке режет лечение и добивает тех, кто убегает");
+        !intersects(owned, ["spirit_vessel", "shivas_guard", "skadi"]) && !(antihealPopular !== null && antihealPopular.length === 0)) {
+      this.add(ITEMS, WARN, "items_heal", "items_heal_tip", { heroes: enemyTags.heal.join(", ") });
     }
   }
 
   // ---------- игра в целом ----------
 
   checkGame() {
-    const adv = this.match.radiant_gold_adv || [];
+    const adv = this.teamAdv;
     if (!adv.length || this.won) return;
-    const sign = this.p.isRadiant ? 1 : -1;
-    let bestMinute = 0, best = adv[0] * sign;
-    adv.forEach((a, i) => {
-      if (a * sign > best) { best = a * sign; bestMinute = i; }
-    });
-    if (best >= 8000) {
-      this.add(FIGHTS, WARN, `Команда была впереди на ${best} золота на ${bestMinute}-й минуте и слила игру`,
-        "Когда впереди, не ломитесь на хайграунд без Рошана и аегиса, а давите картой и забирайте объекты");
-    }
+    let bestMinute = 0, best = adv[0];
+    adv.forEach((a, i) => { if (a > best) { best = a; bestMinute = i; } });
+    if (best >= 8000) this.add(FIGHTS, WARN, "game_throw", "game_throw_tip", { gold: num(best), minute: bestMinute });
   }
 
-  // ---------- оценки и факты ----------
+  // ---------- фазы игры ----------
+
+  phases() {
+    const p = this.p;
+    const lh = p.lh_t;
+    const kills = (p.kills_log || []).filter((k) => k.key.startsWith("npc_dota_hero_")).map((k) => k.time);
+    const deaths = (p.deaths_log || []).map((d) => d.time);
+    const result = [];
+    for (const [key, title, start, end] of PHASES) {
+      if (this.minutes <= start + 2) break;
+      const stop = Math.min(end !== null ? end : this.minutes, lh.length - 1);
+      const t0 = start * 60, t1 = end !== null ? stop * 60 : this.duration + 1;
+      const nKills = kills.filter((t) => t0 <= t && t < t1).length;
+      const nDeaths = deaths.filter((t) => t0 <= t && t < t1).length;
+      const lhGain = lh[stop] - lh[start];
+      const teamDelta = this.teamAdv.length ? atMinute(this.teamAdv, stop) - atMinute(this.teamAdv, start) : 0;
+      let nwDelta = null, nwText, swing;
+      if (this.opponent) {
+        const onw = this.opponent.networth_t, pnw = p.networth_t;
+        nwDelta = (atMinute(pnw, stop) - atMinute(onw, stop)) - (atMinute(pnw, start) - atMinute(onw, start));
+        nwText = `По нетворсу против ${this.oppName}: ${signed(nwDelta)}.`;
+        swing = nwDelta / 1000;
+      } else {
+        nwText = `Команда за этот отрезок: ${signed(teamDelta)} золота.`;
+        swing = teamDelta / 2000;
+      }
+      const score = nKills - nDeaths * 1.5 + swing;
+      const verdict = score >= 2 ? "good" : score <= -2 ? "bad" : "even";
+      const killsText = `${nKills} ${plural(nKills, "убийство", "убийства", "убийств")}`;
+      const deathsText = nDeaths === 0 ? "без смертей" : `${nDeaths} ${deathsWord(nDeaths)}`;
+      result.push({
+        key,
+        title: `${title} · ${start}–${stop} мин`,
+        verdict,
+        text: this.say(`phase_${key}_${verdict}`, { lh: lhGain, kills_text: killsText, deaths_text: deathsText, nw_text: nwText }),
+        kills: nKills,
+        deaths: nDeaths,
+        last_hits: lhGain,
+        nw_delta: nwDelta,
+        team_delta: teamDelta,
+      });
+    }
+    return result;
+  }
+
+  // ---------- ключевые моменты ----------
+
+  moments() {
+    const p = this.p;
+    const out = [];
+    const add = (t, severity, text) => out.push({ time: t, clock: mmss(t), severity, text });
+
+    const kills = (p.kills_log || []).filter((k) => k.key.startsWith("npc_dota_hero_"));
+    if (kills.length) {
+      add(kills[0].time, GOOD, this.say("moment_first_kill", { victim: this.od.heroNameByKey(kills[0].key) }, String(kills[0].time)));
+    }
+    for (const d of p.deaths_log || []) {
+      const killer = this.od.heroNameByKey(d.key);
+      let key;
+      if (killer === "башня") key = "moment_death_tower";
+      else if (!d.key.startsWith("npc_dota_hero_")) key = "moment_death_creeps";
+      else key = this.inFight(d.time) ? "moment_death_fight" : "moment_death_solo";
+      add(d.time, BAD, this.say(key, { killer }, String(d.time)));
+    }
+    for (const x of p.purchase_log || []) {
+      if (this.isFinalItem(x.key) && this.od.itemCost(x.key) >= 2000) {
+        add(x.time, "item", this.say("moment_item", { item: this.od.itemName(x.key) }, String(x.time)));
+      }
+    }
+    for (const [t, n] of this.missedFights()) add(t, WARN, this.say("moment_missed_fight", { n }, String(t)));
+    for (const b of p.buyback_log || []) add(b.time, "info", this.say("moment_buyback", {}, String(b.time)));
+
+    const adv = this.teamAdv;
+    if (adv.length > SWING_WINDOW) {
+      let worst = null, best = null;
+      for (let i = 0; i < adv.length - SWING_WINDOW; i++) {
+        const delta = adv[i + SWING_WINDOW] - adv[i];
+        if (worst === null || delta < worst[0]) worst = [delta, i];
+        if (best === null || delta > best[0]) best = [delta, i];
+      }
+      for (const [[delta, i], key, sev] of [[worst, "moment_swing_down", BAD], [best, "moment_swing_up", GOOD]]) {
+        if (Math.abs(delta) >= SWING_MIN_GOLD && (delta < 0) === (key === "moment_swing_down")) {
+          add(i * 60, sev, this.say(key, { gold: num(Math.abs(delta)), from: `${i}:00`, to: `${i + SWING_WINDOW}:00` }));
+        }
+      }
+    }
+    return out.sort((a, b) => a.time - b.time);
+  }
+
+  // ---------- оценки и итоги ----------
 
   computeScores() {
     const pct = (key, def = 50) => 2 + ((this.bench[key] ?? def) / 100) * 7;
@@ -636,16 +775,21 @@ class MatchAnalyzer {
       [ITEMS]: 7,
       [VISION]: this.pos >= 4 ? 6 : 7,
     };
-    return Object.fromEntries(
-      CATEGORIES.map((c) => [c, Math.max(1, Math.min(10, pyRound(base[c] + 1 - this.penalty[c])))]),
-    );
+    return Object.fromEntries(CATEGORIES.map((c) => [c, Math.max(1, Math.min(10, pyRound(base[c] + 1 - this.penalty[c])))]));
+  }
+
+  verdict(scores) {
+    const values = Object.values(scores);
+    const mean = sum(values) / values.length;
+    const key = mean >= 8 ? "verdict_top" : mean >= 6.5 ? "verdict_good" : mean >= 5 ? "verdict_mid" : "verdict_bad";
+    return this.say(key);
   }
 
   collectFacts() {
     const p = this.p;
     return {
       match_id: this.match.match_id,
-      hero: this.od.heroName(p.hero_id),
+      hero: this.hero,
       hero_id: p.hero_id,
       position: this.pos,
       won: this.won,
@@ -659,7 +803,7 @@ class MatchAnalyzer {
       hero_damage: p.hero_damage,
       tower_damage: p.tower_damage,
       level: p.level,
-      lane_opponent: this.opponent ? this.od.heroName(this.opponent.hero_id) : null,
+      lane_opponent: this.oppName,
       lane_opponent_id: this.opponent ? this.opponent.hero_id : null,
       allies: this.allies.filter((a) => a !== p).map((a) => a.hero_id),
       enemies: this.enemies.map((e) => e.hero_id),
@@ -668,19 +812,18 @@ class MatchAnalyzer {
   }
 
   collectTimeline() {
-    const sign = this.p.isRadiant ? 1 : -1;
     return {
       player: this.p.networth_t,
       opponent: this.opponent ? this.opponent.networth_t : null,
-      opponent_name: this.opponent ? this.od.heroName(this.opponent.hero_id) : null,
-      hero: this.od.heroName(this.p.hero_id),
+      opponent_name: this.oppName,
+      hero: this.hero,
       deaths: (this.p.deaths_log || []).map((d) => d.time),
       last_hits: this.p.lh_t,
-      team_gold_adv: (this.match.radiant_gold_adv || []).map((v) => v * sign),
+      team_gold_adv: this.teamAdv,
     };
   }
 }
 
-export function analyze(match, player, od, knowledge) {
-  return new MatchAnalyzer(match, player, od, knowledge).run();
+export function analyze(match, player, od, knowledge, texts, proItems) {
+  return new MatchAnalyzer(match, player, od, knowledge, texts, proItems).run();
 }

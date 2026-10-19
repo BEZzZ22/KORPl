@@ -13,6 +13,8 @@ STEAM64_OFFSET = 76561197960265728
 MAX_CONCURRENT_REQUESTS = 4
 MATCH_CACHE_SIZE = 200
 UNPARSED_CACHE_TTL = 60
+PRO_ITEMS_TTL = 24 * 3600
+PRO_ITEM_PHASES = ("early_game_items", "mid_game_items", "late_game_items")
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +33,8 @@ class OpenDota:
         self.abilities: dict[str, dict] = {}
         self._limit = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
         self._cache: OrderedDict[int, tuple[float, dict]] = OrderedDict()
+        self.item_ids: dict[str, str] = {}
+        self._pro_items: dict[int, tuple[float, dict[str, int]]] = {}
 
     async def start(self):
         self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
@@ -39,6 +43,7 @@ class OpenDota:
         self.heroes_by_key = {h["name"]: h["localized_name"] for h in heroes.values()}
         self.hero_keys = {int(h["id"]): h["name"] for h in heroes.values()}
         self.items = await self._request("GET", "/constants/items")
+        self.item_ids = await self._request("GET", "/constants/item_ids")
         abilities = await self._request("GET", "/constants/abilities")
         # Храним только то, что нужно для разбора: справочник большой
         self.abilities = {
@@ -82,6 +87,20 @@ class OpenDota:
                 self._cache.popitem(last=False)
             return match
         return None
+
+    async def pro_items(self, hero_id: int) -> dict[str, int]:
+        """Какие предметы и как часто берут на герое в про-матчах (после стартовой закупки)."""
+        cached = self._pro_items.get(hero_id)
+        if cached and time.monotonic() - cached[0] < PRO_ITEMS_TTL:
+            return cached[1]
+        try:
+            data = await self._request("GET", f"/heroes/{hero_id}/itemPopularity", allow_404=True) or {}
+        except OpenDotaError:
+            # Без про-сборок разбор всё равно работает, просто советы по предметам общие
+            return cached[1] if cached else {}
+        counts = pro_item_counts(data, self.item_ids)
+        self._pro_items[hero_id] = (time.monotonic(), counts)
+        return counts
 
     async def request_parse(self, match_id: int):
         """Просит OpenDota разобрать реплей. Без этого нет поминутных данных."""
@@ -134,6 +153,17 @@ class OpenDota:
 
     def item_cost(self, key: str) -> int:
         return self.items.get(key, {}).get("cost") or 0
+
+
+def pro_item_counts(popularity: dict, item_ids: dict[str, str]) -> dict[str, int]:
+    """itemPopularity (id предмета -> сколько раз) -> {ключ предмета: сумма по ранней, средней и поздней игре}."""
+    counts: dict[str, int] = {}
+    for phase in PRO_ITEM_PHASES:
+        for item_id, n in (popularity.get(phase) or {}).items():
+            key = item_ids.get(str(item_id))
+            if key:
+                counts[key] = counts.get(key, 0) + n
+    return counts
 
 
 def damage_type(value) -> str | None:

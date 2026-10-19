@@ -35,6 +35,21 @@ def offline_od() -> OpenDota:
     return client
 
 
+PRO_ITEMS = None
+
+
+def pro_for(player) -> dict:
+    """Про-сборки героя игрока из фикстуры."""
+    global PRO_ITEMS
+    if PRO_ITEMS is None:
+        PRO_ITEMS = load("pro_items.json.gz")
+    return PRO_ITEMS.get(str(player["hero_id"]), {})
+
+
+def run(match, player, od):
+    return analysis.analyze(match, player, od, pro_for(player))
+
+
 @pytest.fixture(scope="module")
 def od():
     return offline_od()
@@ -47,7 +62,7 @@ def match():
 
 def test_every_player_is_analyzed(match, od):
     for player in match["players"]:
-        a = analysis.analyze(match, player, od)
+        a = run(match, player, od)
         assert set(a.scores) == set(analysis.CATEGORIES)
         assert all(1 <= s <= 10 for s in a.scores.values())
         assert report.full_report(a)
@@ -56,7 +71,7 @@ def test_every_player_is_analyzed(match, od):
 
 def test_feeding_support_gets_survival_problems(match, od):
     tusk = match["players"][0]  # 4/19/30 на пятой позиции
-    a = analysis.analyze(match, tusk, od)
+    a = run(match, tusk, od)
     survival = [f for f in a.findings if f.category == analysis.SURVIVAL and f.severity == analysis.BAD]
     assert survival
     assert a.scores[analysis.SURVIVAL] <= 2
@@ -65,13 +80,13 @@ def test_feeding_support_gets_survival_problems(match, od):
 
 def test_strong_carry_scores_high(match, od):
     clinkz = match["players"][4]  # 21/11/16, 810 GPM
-    a = analysis.analyze(match, clinkz, od)
+    a = run(match, clinkz, od)
     assert a.scores[analysis.FARM] >= 9
-    assert a.overall > analysis.analyze(match, match["players"][0], od).overall
+    assert a.overall > run(match, match["players"][0], od).overall
 
 
 def test_report_escapes_html(match, od):
-    a = analysis.analyze(match, match["players"][0], od)
+    a = run(match, match["players"][0], od)
     a.findings.append(analysis.Finding(analysis.ITEMS, analysis.WARN, "<script>alert(1)</script>"))
     assert "<script>" not in report.full_report(a)
 
@@ -159,5 +174,5 @@ def test_ai_provider_is_picked_from_keys(monkeypatch):
 def test_ai_prompt_contains_findings(match, od):
     import coach_ai
 
-    prompt = coach_ai.build_prompt(analysis.analyze(match, match["players"][0], od))
+    prompt = coach_ai.build_prompt(run(match, match["players"][0], od))
     assert "Tusk" in prompt and "Tiny" in prompt and "Выживание" in prompt
