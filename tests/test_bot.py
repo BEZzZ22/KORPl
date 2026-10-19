@@ -140,3 +140,24 @@ def test_blocklist_answers_blocked_users_only(monkeypatch):
 
     result, handler, event = asyncio.run(run("someone"))
     assert result == "ok" and handler.called and not event.answer.called
+
+
+def test_ai_provider_is_picked_from_keys(monkeypatch):
+    import coach_ai
+
+    for var in ("AI_PROVIDER", "GEMINI_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    assert not coach_ai.enabled()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "a")
+    assert coach_ai.provider() == "anthropic"
+    monkeypatch.setenv("GEMINI_API_KEY", "g")
+    assert coach_ai.provider() == "gemini"
+    monkeypatch.setenv("AI_PROVIDER", "anthropic")
+    assert coach_ai.provider() == "anthropic"
+
+
+def test_ai_prompt_contains_findings(match, od):
+    import coach_ai
+
+    prompt = coach_ai.build_prompt(analysis.analyze(match, match["players"][0], od))
+    assert "Tusk" in prompt and "Tiny" in prompt and "Выживание" in prompt
