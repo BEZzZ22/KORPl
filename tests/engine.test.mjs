@@ -229,3 +229,17 @@ test("реплей: в моментах тренера правда о сосе�
   assert.ok(ep.facts.some((f) => /^по реплею: своих в радиусе 1 500 не было/.test(f)), ep.facts.join(" | "));
   assert.ok(ep.facts.includes("на вражеской половине карты"));
 });
+
+test("реплей: настоящий разбор матча (GitHub Actions + odota/parser)", () => {
+  const replay = gz("replay_9052987576.json.gz");
+  assert.equal(replay.v, 1);
+  assert.deepEqual(Object.keys(replay.pos).map(Number).sort((a, b) => a - b), [0, 1, 2, 3, 4, 128, 129, 130, 131, 132]);
+  const wr = base.players.find((x) => x.hero_id === 21);
+  const r = replayInsights(base, wr, replay);
+  assert.equal(r.deaths.length, wr.deaths_log.length);
+  // 18:05: по логу «один», а по реплею рядом был союзник и трое врагов
+  const d = r.deaths.find((x) => x.t === 1085);
+  assert.equal(d.allies_near, 1);
+  assert.equal(d.enemies_near, 3);
+  for (const z of Object.values(r.zones)) assert.ok(Math.abs(z.own + z.river + z.enemy - 1) < 1e-9);
+});
