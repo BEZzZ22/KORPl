@@ -41,6 +41,7 @@ document.addEventListener("pointerdown", (evt) => {
   if (!(evt.target instanceof Element) || !evt.target.closest(".chart")) chartHiders.forEach((hide) => hide());
 });
 const benchCache = new Map();
+const matchupCache = new Map();
 
 // ---------- утилиты ----------
 
@@ -118,6 +119,17 @@ async function proItems(heroId) {
     }
   }
   return proCache.get(heroId);
+}
+
+async function heroMatchups(heroId) {
+  if (!matchupCache.has(heroId)) {
+    try {
+      matchupCache.set(heroId, (await api(`/heroes/${heroId}/matchups`)) || []);
+    } catch {
+      return [];
+    }
+  }
+  return matchupCache.get(heroId);
 }
 
 async function heroBench(heroId) {
@@ -474,9 +486,9 @@ async function matchScreen(matchId, slot, accountId, attempt = 0) {
   }
   if (!player) { heroPicker(match); return; }
 
-  const [pro, bench] = await Promise.all([proItems(player.hero_id), heroBench(player.hero_id)]);
+  const [pro, bench, matchups] = await Promise.all([proItems(player.hero_id), heroBench(player.hero_id), heroMatchups(player.hero_id)]);
   if (stale(seq)) return;
-  analysisScreen(analyze(match, player, dictionary, knowledge, texts, pro, bench, norms));
+  analysisScreen(analyze(match, player, dictionary, knowledge, texts, pro, bench, norms, matchups));
 }
 
 function heroPicker(match) {
@@ -610,6 +622,7 @@ function overviewTab(a) {
     ...strengths.map((st) => h("div", { class: "strength" }, h("b", {}, st.title), st.fact && h("span", { class: "muted" }, ` — ${st.fact}`))),
     s.goal && h("div", { class: "card goal" }, s.goal),
     microBlock(a),
+    draftBlock(a),
     h("h2", {}, "Оценки по разделам"),
     h("div", { class: "card" }, ...CATEGORIES.map((c) => h("div", { class: "score-row" },
       h("span", {}, c), h("div", { class: "bar" }, h("i", { "data-w": a.scores[c] })), h("b", {}, a.scores[c])))),
@@ -625,6 +638,16 @@ function microBlock(a) {
   return h("div", {},
     h("h2", {}, "Мелочи, на которых теряешь игру"),
     h("div", { class: "card micro" }, ...micro.map(findingCard)),
+  );
+}
+
+// Драфт: матчапы героя против вражеской пятёрки по статистике OpenDota
+function draftBlock(a) {
+  const d = a.draft;
+  if (!d || !d.notes.length) return null;
+  return h("div", {},
+    h("h2", {}, "Драфт"),
+    h("div", { class: "card" }, ...d.notes.map((n) => h("div", { class: n.severity === GOOD ? "strength" : "problem-fact" }, n.text))),
   );
 }
 

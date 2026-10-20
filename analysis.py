@@ -54,6 +54,7 @@ class Analysis:
     summary: dict = field(default_factory=dict)
     verdict: str = ""
     items: list[dict] = field(default_factory=list)
+    draft: dict | None = None
 
     def by_severity(self, severity: str) -> list[Finding]:
         return [f for f in self.findings if f.severity == severity]
@@ -89,12 +90,13 @@ def from_engine(data: dict) -> Analysis:
 
 
 def analyze(match: dict, player: dict, od: OpenDota, pro_items: dict[str, int] | None = None,
-            hero_bench: dict | None = None) -> Analysis:
+            hero_bench: dict | None = None, matchups: list | None = None) -> Analysis:
     payload = json.dumps({
         "match": match,
         "slot": player["player_slot"],
         "pro_items": pro_items or {},
         "hero_bench": hero_bench or {},
+        "matchups": matchups or [],
         "constants": od.constants,
     })
     try:

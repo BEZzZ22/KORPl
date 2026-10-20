@@ -42,6 +42,7 @@ const ROSHAN_FOLLOW_WINDOW = 180;
 const ROSHAN_FIGHT_MIN_TIME = 1200;
 const LEVEL_XP = [0, 240, 640, 1160, 1760, 2440, 3200, 4000, 4900, 5900, 7000, 8200, 9500, 10900, 12400, 14000, 15700, 17500, 19400, 21400, 23600, 25600, 27600, 29600, 31600];
 const NETWORTH_GAP_20 = 5000; const SUPPORT_LEVEL_GAP = 3; const KILLS_NO_FARM = 8;
+const DRAFT_MIN_GAMES = 40; const DRAFT_BAD_WR = 0.42; const DRAFT_GOOD_WR = 0.56;
 const LANE_XP_GAP = 1500;
 const BKB_SOLO_WINDOW = 240;
 // Дорогие предметы с активкой: купил и ни разу не нажал — деньги в пустоту
@@ -340,8 +341,9 @@ export function isParsed(match) {
 }
 
 class MatchAnalyzer {
-  constructor(match, player, od, knowledge, texts, proItems, heroBench, norms) {
+  constructor(match, player, od, knowledge, texts, proItems, heroBench, norms, matchups) {
     this.match = match;
+    this.matchups = matchups || [];
     this.norms = norms || {};
     this.issues = [];
     this.heroBench = heroBench || {};
@@ -556,6 +558,7 @@ class MatchAnalyzer {
       compare,
       verdict: this.verdict(scores, overall),
       items: this.coreItems(),
+      draft: this.draftReview(),
     };
   }
 
@@ -1995,6 +1998,34 @@ class MatchAnalyzer {
     return Object.fromEntries(CATEGORIES.map((c) => [c, Math.max(1, Math.min(10, pyRound(base[c] + 1 - this.penalty[c])))]));
   }
 
+  // ---------- драфт ----------
+
+  // Как твой герой играет против этих пятерых врагов по статистике OpenDota (все игры на герое, не твои)
+  draftReview() {
+    const byHero = new Map(this.matchups.map((m) => [m.hero_id, m]));
+    const rows = [];
+    for (const e of this.enemies) {
+      const m = byHero.get(e.hero_id);
+      if (!m || m.games_played < DRAFT_MIN_GAMES) continue;
+      rows.push({ hero_id: e.hero_id, name: this.od.heroName(e.hero_id), games: m.games_played, wr: m.wins / m.games_played });
+    }
+    if (rows.length < 3) return null;
+    rows.sort((a, b) => a.wr - b.wr);
+    const hero = this.od.heroName(this.p.hero_id);
+    const notes = [];
+    for (const r of rows.filter((x) => x.wr <= DRAFT_BAD_WR).slice(0, 2)) {
+      notes.push({ severity: WARN, text: this.say("draft_bad", { hero, enemy: r.name, wr: pyRound(r.wr * 100), games: r.games }, r.name) });
+    }
+    for (const r of rows.filter((x) => x.wr >= DRAFT_GOOD_WR).slice(-2)) {
+      notes.push({ severity: GOOD, text: this.say("draft_good", { hero, enemy: r.name, wr: pyRound(r.wr * 100), games: r.games }, r.name) });
+    }
+    const total = sum(rows.map((r) => r.games));
+    const avg = sum(rows.map((r) => r.wr * r.games)) / total;
+    if (rows.length >= 4 && avg <= 0.47) notes.push({ severity: WARN, text: this.say("draft_hard", { hero, wr: pyRound(avg * 100) }) });
+    if (rows.length >= 4 && avg >= 0.53) notes.push({ severity: GOOD, text: this.say("draft_easy", { hero, wr: pyRound(avg * 100) }) });
+    return { hero_id: this.p.hero_id, hero, avg_wr: avg, rows: rows.map((r) => ({ ...r, wr: r.wr })), notes };
+  }
+
   verdict(scores, overall) {
     const values = Object.values(scores);
     const mean = overall ?? sum(values) / values.length;
@@ -2045,6 +2076,6 @@ class MatchAnalyzer {
   }
 }
 
-export function analyze(match, player, od, knowledge, texts, proItems, heroBench, norms) {
-  return new MatchAnalyzer(match, player, od, knowledge, texts, proItems, heroBench, norms).run();
+export function analyze(match, player, od, knowledge, texts, proItems, heroBench, norms, matchups) {
+  return new MatchAnalyzer(match, player, od, knowledge, texts, proItems, heroBench, norms, matchups).run();
 }

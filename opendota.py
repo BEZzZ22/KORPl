@@ -41,6 +41,7 @@ class OpenDota:
         self.item_ids: dict[str, str] = {}
         self._pro_items: dict[int, tuple[float, dict[str, int]]] = {}
         self._hero_bench: dict[int, tuple[float, dict]] = {}
+        self._matchups: dict[int, tuple[float, list]] = {}
 
     async def start(self):
         if self.session is None:
@@ -133,6 +134,18 @@ class OpenDota:
         result = data.get("result") or {}
         self._hero_bench[hero_id] = (time.monotonic(), result)
         return result
+
+    async def hero_matchups(self, hero_id: int) -> list[dict]:
+        """Винрейт героя против каждого вражеского героя: [{hero_id, games_played, wins}]."""
+        cached = self._matchups.get(hero_id)
+        if cached and time.monotonic() - cached[0] < PRO_ITEMS_TTL:
+            return cached[1]
+        try:
+            data = await self._request("GET", f"/heroes/{hero_id}/matchups", allow_404=True) or []
+        except OpenDotaError:
+            return cached[1] if cached else []
+        self._matchups[hero_id] = (time.monotonic(), data)
+        return data
 
     async def request_parse(self, match_id: int):
         """Просит OpenDota разобрать реплей. Без этого нет поминутных данных."""

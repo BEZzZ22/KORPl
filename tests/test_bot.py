@@ -392,3 +392,21 @@ def test_khan_support_level_gap(match, od):
             p["xp_t"] = [x // 4 for x in p["xp_t"]]
     texts = [t for p in m["players"] if p["isRadiant"] for t in micro_texts(run(m, p, od))]
     assert any("уров" in t and "ты" in t for t in texts)
+
+
+def test_draft_matchups_flag_bad_and_good(match, od):
+    from report import draft_block
+
+    p = match["players"][0]
+    enemies = [e for e in match["players"] if e["isRadiant"] != p["isRadiant"]]
+    matchups = [{"hero_id": e["hero_id"], "games_played": 100, "wins": 35 if i == 0 else 60} for i, e in enumerate(enemies)]
+    a = analysis.analyze(match, p, od, pro_for(p), bench_for(p), matchups)
+    assert a.draft and len(a.draft["rows"]) == 5
+    sev = [n["severity"] for n in a.draft["notes"]]
+    assert "warn" in sev and "good" in sev
+    assert "35%" in draft_block(a)
+
+
+def test_draft_skipped_without_matchups(match, od):
+    p = match["players"][0]
+    assert run(match, p, od).draft is None

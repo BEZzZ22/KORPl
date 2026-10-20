@@ -173,6 +173,14 @@ def micro_block(a: Analysis) -> str:
     return "\n".join(["<b>Мелочи, на которых ты теряешь игру</b>"] + finding_lines(micro, False))
 
 
+def draft_block(a: Analysis) -> str:
+    """Драфт врагов против героя игрока: статистика матчапов по OpenDota."""
+    if not a.draft or not a.draft.get("notes"):
+        return ""
+    lines = [("+ " if n["severity"] == GOOD else "• ") + escape(n["text"]) for n in a.draft["notes"]]
+    return "\n".join(["<b>Драфт</b>"] + lines)
+
+
 def full_report(a: Analysis) -> str:
     parts = [f"<b>Оценка: {a.overall}/10</b>\n<i>{escape(a.verdict)}</i>", summary_block(a), scores_block(a)]
 
@@ -185,6 +193,9 @@ def full_report(a: Analysis) -> str:
     if rest:
         parts.append("\n".join(["<b>Остальные замечания</b>"] + finding_lines(rest[:MAX_DETAILS], False)))
 
+    draft = draft_block(a)
+    if draft:
+        parts.append(draft)
     if a.compare:
         parts.append(compare_block(a))
     if a.phases:
