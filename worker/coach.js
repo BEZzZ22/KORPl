@@ -1,22 +1,30 @@
-// Cloudflare Worker: прокси между приложением и Gemini. Ключ лежит в секрете GEMINI_API_KEY и в приложение не попадает.
+// Cloudflare Worker: прокси между приложением и нейросетью. Ключи лежат в секретах воркера и в приложение не попадают.
 // Деплой: dashboard.cloudflare.com -> Workers & Pages -> Create -> Hello World -> Edit code -> вставить этот файл,
-// затем Settings -> Variables and Secrets -> добавить секрет GEMINI_API_KEY. Модель можно сменить переменной GEMINI_MODEL.
+// затем Settings -> Variables and Secrets -> добавить секреты GROQ_API_KEY и/или GEMINI_API_KEY
+// (хватит одного, второй будет запасным). Модели: переменные GROQ_MODEL и GEMINI_MODEL.
+// Какой провайдер первый: переменная COACH_PRIMARY = groq (по умолчанию) или gemini.
 
 const ALLOWED_ORIGINS = ["https://bezzz22.github.io"];
-const DEFAULT_MODEL = "gemini-flash-lite-latest";
+const GEMINI_MODEL = "gemini-flash-lite-latest";
+const GROQ_MODEL = "openai/gpt-oss-120b";
 const MAX_BODY = 6000;         // байт: сюда влезает вся сводка разбора
 const PER_IP_PER_HOUR = 6;     // мягкий лимит на человека (память воркера, сбрасывается при перезапуске)
-const GLOBAL_PER_DAY = 400;    // не даём выжечь бесплатный лимит ключа одному энтузиасту
+const GLOBAL_PER_DAY = 400;    // не даём выжечь бесплатный лимит ключей одному энтузиасту
 
 const hits = new Map();
 let day = { key: "", count: 0 };
 
 const SYSTEM = `Ты тренер по Dota 2. Игрок прислал сводку своего разбора матча: проблемы, мелочи, совет по сборке, драфт.
-Напиши коротко и по-дружески, на «ты», с доташным сленгом, без смайликов и без воды.
+Пиши по-русски, на «ты», коротко и дружески, простыми короткими фразами, без смайликов.
 Формат строго такой:
-Главное: одно-два предложения, что на самом деле решило эту катку.
-План на следующую игру: ровно три пункта, каждый с новой строки через «—», по одному действию на пункт.
-Правила: опирайся только на данные из сводки, не выдумывай числа, героев, предметы и события. Если данных мало, так и скажи. Не больше 110 слов.`;
+Главное: одно-два предложения о том, что решило эту катку.
+План на следующую игру: ровно три пункта, каждый с новой строки, начинается с «— », один пункт — одно конкретное действие.
+Правила:
+- Опирайся только на сводку. Не выдумывай числа, героев, предметы и события.
+- Названия героев и предметов пиши так же, как в сводке. Не придумывай слов и не используй слова, в которых не уверен.
+- Если плохо видно, что решило игру, скажи это прямо.
+- Не больше 100 слов.
+Пример пункта: «— До 7:00 ставь обс на мид, чтобы видеть гангов».`;
 
 function cors(origin) {
   const ok = ALLOWED_ORIGINS.includes(origin);
@@ -64,7 +72,7 @@ export function buildPrompt(raw) {
 }
 
 async function askGemini(env, prompt) {
-  const model = env.GEMINI_MODEL || DEFAULT_MODEL;
+  const model = env.GEMINI_MODEL || GEMINI_MODEL;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const res = await fetch(url, {
     method: "POST",
@@ -72,18 +80,52 @@ async function askGemini(env, prompt) {
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: SYSTEM }] },
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.6, maxOutputTokens: 400 },
+      generationConfig: { temperature: 0.3, maxOutputTokens: 400 },
     }),
   });
-  if (!res.ok) {
-    const err = new Error(`gemini ${res.status}`);
-    err.status = res.status;
-    throw err;
-  }
+  if (!res.ok) throw Object.assign(new Error(`gemini ${res.status}`), { status: res.status });
   const data = await res.json();
-  const text = (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("").trim();
-  if (!text) throw new Error("empty answer");
-  return text;
+  return (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("").trim();
+}
+
+// Groq: OpenAI-совместимый API, отвечает за секунду
+async function askGroq(env, prompt) {
+  const model = env.GROQ_MODEL || GROQ_MODEL;
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.GROQ_API_KEY}` },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "system", content: SYSTEM }, { role: "user", content: prompt }],
+      temperature: 0.3,
+      max_tokens: 700,
+      ...(model.includes("gpt-oss") ? { reasoning_effort: "low" } : {}),
+    }),
+  });
+  if (!res.ok) throw Object.assign(new Error(`groq ${res.status}`), { status: res.status });
+  const data = await res.json();
+  return String(data.choices?.[0]?.message?.content || "").trim();
+}
+
+// Ответ годится, только если в нём есть оба заголовка из формата
+const looksRight = (t) => /Главное:/.test(t) && /План на следующую игру:/.test(t) && t.length < 1500;
+
+// Сначала провайдер из COACH_PRIMARY (по умолчанию groq), второй запасной
+export async function ask(env, prompt) {
+  const providers = [];
+  if (env.GROQ_API_KEY) providers.push(askGroq);
+  if (env.GEMINI_API_KEY) providers.push(askGemini);
+  if (env.COACH_PRIMARY === "gemini") providers.reverse();
+  let lastStatus = 0;
+  for (const fn of providers) {
+    try {
+      const text = await fn(env, prompt);
+      if (looksRight(text)) return text;
+    } catch (e) {
+      lastStatus = e.status || lastStatus;
+    }
+  }
+  throw Object.assign(new Error("no answer"), { status: lastStatus });
 }
 
 export default {
@@ -92,7 +134,7 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(origin) });
     if (request.method !== "POST") return reply(405, { error: "Только POST." }, origin);
     if (!ALLOWED_ORIGINS.includes(origin)) return reply(403, { error: "Нельзя." }, origin);
-    if (!env.GEMINI_API_KEY) return reply(500, { error: "Тренер ещё не настроен." }, origin);
+    if (!env.GEMINI_API_KEY && !env.GROQ_API_KEY) return reply(500, { error: "Тренер ещё не настроен." }, origin);
 
     const text = await request.text();
     if (text.length > MAX_BODY) return reply(413, { error: "Слишком большая сводка." }, origin);
@@ -104,7 +146,7 @@ export default {
     if (limited) return reply(429, { error: limited }, origin);
 
     try {
-      return reply(200, { text: await askGemini(env, buildPrompt(raw)) }, origin);
+      return reply(200, { text: await ask(env, buildPrompt(raw)) }, origin);
     } catch (e) {
       const busy = e.status === 429 || e.status === 503;
       return reply(502, { error: busy ? "Тренер перегружен, попробуй через минуту." : "Тренер сейчас недоступен." }, origin);
