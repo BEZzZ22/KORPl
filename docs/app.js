@@ -1,7 +1,7 @@
 // Telegram Mini App: разбор матча Dota 2 внутри Телеграма.
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, CATEGORIES, BAD, WARN, GOOD,
-} from "./engine.js?v=13";
+} from "./engine.js?v=14";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -918,31 +918,36 @@ function coachPayload(a) {
     micro: a.findings.filter((x) => x.kind === "micro" && x.severity !== GOOD).slice(0, 4).map((x) => ({ text: x.text, tip: x.tip })),
     plan: a.build_plan ? a.build_plan.missing.slice(0, 3).map((i) => ({ item: i.item, why: i.why })) : [],
     draft: a.draft ? a.draft.notes.slice(0, 2).map((n) => n.text) : [],
+    episodes: (a.episodes || []).slice(0, 4).map((e) => ({ clock: e.clock, kind: e.kind, facts: e.facts })),
   };
 }
 
 // Ответ воркера: «Главное: ...», пустая строка, «План на следующую игру:», шаги с «— ».
 // Если формат поплыл, всё, что не шаг и не заголовок, уходит в «Главное».
 function parseCoach(text) {
-  const main = [], steps = [];
+  const main = [], moments = [], steps = [];
+  let into = steps;
   for (const raw of String(text).split("\n")) {
     const line = raw.trim();
-    if (!line || /^план[\s:]/i.test(line)) continue; // \b в JS не видит границ кириллических слов
+    if (!line) continue;
+    // \b в JS не видит границ кириллических слов, поэтому [\s:]
+    if (/^моменты[\s:]/i.test(line)) { into = moments; continue; }
+    if (/^план[\s:]/i.test(line)) { into = steps; continue; }
     const step = line.match(/^(?:[—–-]|\d+[.)])\s*(.+)$/);
-    if (step) steps.push(step[1]);
+    if (step) into.push(step[1]);
     else main.push(line.replace(/^главное\s*:\s*/i, ""));
   }
-  return { main: main.join(" "), steps };
+  return { main: main.join(" "), moments, steps };
 }
 
 function coachBlock(a) {
   if (!COACH_URL) return null;
-  const key = `coach:${a.facts.match_id}:${a.facts.slot}`;
+  const key = `coach2:${a.facts.match_id}:${a.facts.slot}`; // coach2: ответы с разбором моментов
   const box = h("section", { class: "card coach", "aria-labelledby": "coach-title" });
   const title = h("div", { class: "coach-title", id: "coach-title" }, "Разбор тренера");
 
   const show = (text, fresh) => {
-    const { main, steps } = parseCoach(text);
+    const { main, moments, steps } = parseCoach(text);
     let done = [];
     try { done = JSON.parse(safeLocal.get(`${key}:done`) || "[]"); } catch { /* битое значение */ }
     let i = 0;
@@ -964,6 +969,18 @@ function coachBlock(a) {
       title,
       main && seq(h("div", { class: "coach-label" }, "Главное")),
       main && seq(h("p", { class: "coach-main" }, main)),
+      moments.length > 0 && seq(h("div", { class: "coach-label" }, "Где ошибся")),
+      ...moments.map((m) => {
+        // Факты момента берём из движка (проверенные), от тренера только «Ошибка» и «Надо было»
+        const t = /^(\d{1,2}:\d{2})\s+(.+)$/.exec(m);
+        const ep = t && (a.episodes || []).find((e) => e.clock === t[1]);
+        const [err, todo] = t ? t[2].split(/\s*Надо было:\s*/) : [m];
+        return seq(h("div", { class: "coach-moment" },
+          t && h("time", {}, t[1]),
+          ep && h("p", { class: "coach-facts" }, ep.facts.join(", ")),
+          h("p", {}, err.replace(/^Ошибка:\s*/, "")),
+          todo && h("p", { class: "coach-todo" }, h("b", {}, "Надо было: "), todo)));
+      }),
       steps.length > 0 && seq(h("div", { class: "coach-label" }, "Задачи на следующую катку")),
       steps.length > 0 && list);
   };

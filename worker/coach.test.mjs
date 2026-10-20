@@ -25,7 +25,7 @@ const garbage = "Ну короче играй лучше";
 test("хороший ответ проходит", () => assert.deepEqual(problemsOf(normalize(good), prompt), []));
 
 test("старый плохой ответ отклоняется", () => {
-  const bad = normalize(`Главное: самая тяжёлая проблема — 62 ... к 20:00.\n\nПлан на следующую игру:\n— До 10:00 купи BKB.\n— Фарми 70 крипов.\n— Ставь варды.`);
+  const bad = normalize(`Главное: самая тяжёлая проблема — 62 ... к 20:00.\n\nПлан на следующую игру:\n— До 10:00 купи Manta.\n— Фарми 70 крипов.\n— Ставь варды.`);
   const reasons = problemsOf(bad, prompt).join(" | ");
   assert.match(reasons, /многоточия/);
   assert.match(reasons, /латиница/);
@@ -145,14 +145,14 @@ const reasons = (text) => problemsOf(normalize(text), prompt);
 test("problemsOf: формат", () => {
   assert.deepEqual(problemsOf("Привет\n" + good, prompt), ["формат"]);
   assert.deepEqual(problemsOf(good.replace("План на следующую игру:", "План:"), prompt), ["формат"]);
-  assert.deepEqual(problemsOf(good + "\n" + "а".repeat(1100), prompt), ["формат"]);
+  assert.deepEqual(problemsOf(good + "\n" + "а".repeat(1800), prompt), ["формат"]);
 });
 
 test("problemsOf: число пунктов", () => {
   assert.ok(reasons(good.replace(/\n— Собери[^\n]*/, "")).some((r) => /ровно три пункта/.test(r)));
   assert.ok(reasons(good + "\n— Ставь варды на линии.").some((r) => /ровно три пункта/.test(r)));
-  // без normalize пункт без тире тоже ловится
-  assert.ok(problemsOf(good.replace("— Добивай", "Добивай"), prompt).some((r) => /ровно три пункта/.test(r)));
+  // пункт без тире всё равно считается пунктом: normalize его выровняет
+  assert.ok(!problemsOf(good.replace("— Добивай", "Добивай"), prompt).some((r) => /ровно три пункта/.test(r)));
 });
 
 test("problemsOf: многоточие", () => {
@@ -290,15 +290,15 @@ test("ask: при формате в подсказке объяснение фо
   assert.match(calls[1].body.messages[1].content, /не тот формат или слишком длинно/);
 });
 
-test("ask: groq дважды плох, запасной gemini", async (t) => {
+test("ask: groq трижды плох, запасной gemini", async (t) => {
   t.after(restore);
-  const calls = mockFetch({ groq: [groqOk(garbage), groqOk(garbage)], gemini: [geminiOk(good)] });
+  const calls = mockFetch({ groq: [groqOk(garbage), groqOk(garbage), groqOk(garbage)], gemini: [geminiOk(good)] });
   assert.equal(await ask(both, prompt), normalize(good));
-  assert.deepEqual(calls.map((c) => c.who), ["groq", "groq", "gemini"]);
+  assert.deepEqual(calls.map((c) => c.who), ["groq", "groq", "groq", "gemini"]);
   // gemini получает чистую сводку, без жалоб на groq
-  assert.equal(calls[2].body.contents[0].parts[0].text, prompt);
-  assert.equal(calls[2].headers["x-goog-api-key"], "m");
-  assert.deepEqual(calls[2].body.generationConfig.thinkingConfig, { thinkingBudget: 0 });
+  assert.equal(calls[3].body.contents[0].parts[0].text, prompt);
+  assert.equal(calls[3].headers["x-goog-api-key"], "m");
+  assert.deepEqual(calls[3].body.generationConfig.thinkingConfig, { thinkingBudget: 0 });
 });
 
 test("ask: ошибка groq сразу переходит на gemini без повтора", async (t) => {
@@ -348,8 +348,8 @@ test("ask: мягкий ответ отдаётся, если лучшего н�
 test("ask: жёсткая ошибка не годится в запасной ответ", async (t) => {
   t.after(restore);
   const hard = good.replace("на линии,", "на линии…");
-  mockFetch({ groq: [groqOk(hard), groqOk(hard)], gemini: [geminiOk(hard)] });
-  await assert.rejects(ask(both, prompt), (e) => e.message === "no answer" && e.log.length === 3);
+  mockFetch({ groq: [groqOk(hard), groqOk(hard), groqOk(hard)], gemini: [geminiOk(hard)] });
+  await assert.rejects(ask(both, prompt), (e) => e.message === "no answer" && e.log.length === 4);
 });
 
 test("ask: все упали — ошибка со статусом и логом", async (t) => {
@@ -419,7 +419,7 @@ test("fetch: кривой JSON и сводка без героя — 400", async
 });
 
 test("fetch: слишком большая сводка — 413", async () => {
-  const res = await worker.fetch(req({ body: JSON.stringify({ hero: "x".repeat(7000) }) }), both);
+  const res = await worker.fetch(req({ body: JSON.stringify({ hero: "x".repeat(11000) }) }), both);
   assert.equal(res.status, 413);
 });
 
@@ -467,4 +467,60 @@ test("fetch: все провайдеры упали — 502, лог только
   assert.equal(res.status, 502);
   assert.equal(body.error, "Тренер перегружен, попробуй через минуту.");
   assert.equal(body.log.length, 2);
+});
+
+// ---------- моменты ----------
+
+const withEpisodes = buildPrompt({ ...raw, episodes: [
+  { clock: "18:38", kind: "death", facts: ["убил Tiny", "в командной драке", "обсов вашей команды на карте: 1", "за 2 минуты враги сломали: T2 на боте"] },
+  { clock: "31:08", kind: "death", facts: ["убил Enigma", "команда отставала на 8 444 золота"] },
+  { clock: "nope", kind: "death", facts: ["битое время"] },
+] });
+const momentsGood = `Главное: смерти в драках без видимости стоили команде вышек.
+
+Моменты:
+— 18:38 Ошибка: зашёл в драку почти без видимости, и команда отдала T2 на боте. Надо было: сначала поставить обс у входа в лес.
+— 31:08 Ошибка: умер, когда команда и так отставала. Надо было: стоять у вышки с командой.
+
+План на следующую игру:
+— Перед дракой ставь обс у входа в лес.
+— Добивай крипов на линии, пока не уйдёшь в лес.
+— Собери Black King Bar: враги ставят много оглушений.`;
+
+test("buildPrompt: моменты с валидным временем", () => {
+  assert.match(withEpisodes, /Ключевые моменты \(время: факты\):\n- 18:38 смерть: убил Tiny; в командной драке/);
+  assert.ok(!withEpisodes.includes("битое время"));
+});
+
+test("problemsOf: хороший ответ с моментами проходит", () => {
+  assert.deepEqual(problemsOf(normalize(momentsGood), withEpisodes), []);
+});
+
+test("problemsOf: моменты обязательны и с временем из сводки", () => {
+  const none = normalize(momentsGood.replace(/Моменты:\n(— [^\n]*\n)+\n/, ""));
+  assert.ok(problemsOf(none, withEpisodes).some((r) => /Моментах/.test(r)));
+  const wrongTime = normalize(momentsGood.replace("— 31:08", "— 32:00"));
+  assert.ok(problemsOf(wrongTime, withEpisodes).some((r) => /со своего времени/.test(r)));
+  const noLabels = normalize(momentsGood.replace("Ошибка: умер", "Умер"));
+  assert.ok(problemsOf(noLabels, withEpisodes).some((r) => /Ошибка:/.test(r)));
+});
+
+test("problemsOf: в моменте нельзя чужой предмет или цифру", () => {
+  // T2 на боте есть в фактах 18:38, но не 31:08
+  const alienItem = normalize(momentsGood.replace("стоять у вышки с командой", "защищать T2 на боте"));
+  assert.ok(problemsOf(alienItem, withEpisodes).some((r) => /31:08/.test(r)));
+  // предмет из сборки в «Надо было» можно, сокращение тоже
+  const buildItem = normalize(momentsGood.replace("стоять у вышки с командой", "собрать BKB и стоять с командой"));
+  assert.deepEqual(problemsOf(buildItem, withEpisodes), []);
+  // 8 444 есть в фактах 31:08, но не 18:38
+  const alienNum = normalize(momentsGood.replace("почти без видимости", "при отставании 8 444"));
+  assert.ok(problemsOf(alienNum, withEpisodes).some((r) => /18:38.*8/.test(r)));
+  const ownNum = normalize(momentsGood.replace("и так отставала", "отставала на 8 444"));
+  assert.deepEqual(problemsOf(ownNum, withEpisodes), []);
+});
+
+test("normalize: секция моментов сохраняется", () => {
+  const t = normalize(momentsGood.replace("— 18:38", "- 18:38"));
+  assert.match(t, /Моменты:\n— 18:38/);
+  assert.match(t, /План на следующую игру:\n— Перед дракой/);
 });

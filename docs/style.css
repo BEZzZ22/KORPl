@@ -514,6 +514,12 @@ details.timeline-box > summary { font-weight: 700; }
 .coach-label { margin-top: 4px; font-size: 13px; font-weight: 600; color: var(--muted); }
 .coach-label + .coach-main, .coach-label + .coach-steps { margin-top: -6px; }
 .coach-main { margin: 0; font-size: 19px; font-weight: 800; line-height: 1.35; color: var(--text); text-wrap: pretty; }
+.coach-moment { padding-left: 12px; border-left: 2px solid rgba(255, 106, 42, 0.45); font-size: 15px; line-height: 1.45; text-wrap: pretty; }
+.coach-moment p { margin: 0; }
+.coach-moment time { display: block; font-weight: 800; color: var(--ember); font-variant-numeric: tabular-nums; }
+.coach-moment .coach-facts { margin: 2px 0 6px; font-size: 13px; color: var(--muted); }
+.coach-moment .coach-todo { margin-top: 4px; }
+.coach-moment .coach-todo b { color: var(--gold); font-weight: 700; }
 .coach-steps { list-style: none; margin: 0; padding: 0; position: relative; }
 .coach-steps::before { content: ""; position: absolute; left: 10px; top: 16px; bottom: 16px; width: 1px; background: linear-gradient(180deg, var(--ember), rgba(255, 106, 42, 0.25)); }
 .coach-step {

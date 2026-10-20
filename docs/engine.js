@@ -216,6 +216,16 @@ export function tenths(x) {
   return `${sign}${Math.floor(n / 10)},${n % 10}`;
 }
 
+// npc_dota_goodguys_tower2_mid → «T2 на миде», ..._melee_rax_bot → «барак на боте»
+const LANE_RU = { top: "на топе", mid: "на миде", bot: "на боте" };
+function buildingName(key) {
+  const t = /tower(\d)(?:_(top|mid|bot))?/.exec(key);
+  if (t) return `T${t[1]}${t[2] ? ` ${LANE_RU[t[2]]}` : ""}`;
+  const r = /(melee|range)_rax_(top|mid|bot)/.exec(key);
+  if (r) return `барак ${LANE_RU[r[2]]}`;
+  return key.includes("fort") ? "трон" : "здание";
+}
+
 function enemyHalf(x, y, radiant) {
   const s = x + y;
   return radiant ? s > MAP_CENTER_SUM + RIVER_MARGIN : s < MAP_CENTER_SUM - RIVER_MARGIN;
@@ -578,6 +588,7 @@ class MatchAnalyzer {
       killers,
       phases: this.phases(),
       moments: this.moments(),
+      episodes: this.episodes(),
       pro_build: proBuild,
       compare,
       verdict: this.verdict(scores, overall),
@@ -2160,6 +2171,107 @@ class MatchAnalyzer {
       }
     }
     return out.sort((a, b) => a.time - b.time);
+  }
+
+  // ---------- эпизоды для тренера ----------
+
+  // Самые дорогие моменты игры (смерти и пропущенные драки) с проверенными фактами вокруг них:
+  // где умер, была ли видимость, нажаты ли кнопки, какой был перевес и что команда потеряла следом.
+  // Тренер по ним разбирает игру, а не пересказывает итоговые цифры
+  episodes(limit = 4) {
+    const p = this.p;
+    const idx = this.match.players.indexOf(p);
+    const objs = this.match.objectives || [];
+    const ownSide = p.isRadiant ? "goodguys" : "badguys";
+    const enemyTeam = p.isRadiant ? 3 : 2;
+    const lost = (t0, t1) => {
+      const out = [];
+      const fallen = objs.filter((o) => o.type === "building_kill" && typeof o.key === "string" && o.key.includes(ownSide) && o.time >= t0 && o.time <= t1);
+      const counts = new Map();
+      for (const o of fallen) counts.set(buildingName(o.key), (counts.get(buildingName(o.key)) || 0) + 1);
+      if (counts.size) out.push(`за 2 минуты враги сломали: ${[...counts].map(([name, n]) => (n > 1 ? `${name} ×${n}` : name)).join(", ")}`);
+      if (objs.some((o) => o.type === "CHAT_MESSAGE_ROSHAN_KILL" && o.team === enemyTeam && o.time >= t0 && o.time <= t1)) out.push("за 2 минуты враги забрали Рошана");
+      return out;
+    };
+    const swing = (t) => {
+      if (!this.teamAdv.length) return 0;
+      const m = Math.floor(t / 60);
+      return atMinute(this.teamAdv, Math.min(m + 2, this.teamAdv.length - 1)) - atMinute(this.teamAdv, m);
+    };
+    const lead = (t) => {
+      if (!this.teamAdv.length) return null;
+      const g = atMinute(this.teamAdv, Math.floor(t / 60));
+      if (Math.abs(g) < 2000) return "золото примерно поровну";
+      return g > 0 ? `команда вела на ${num(g)} золота` : `команда отставала на ${num(-g)} золота`;
+    };
+    // Обсы своей команды, живые в момент t: поставлен не раньше 6 минут назад и ещё не снят
+    const removed = new Map();
+    for (const a of this.allies) for (const w of a.obs_left_log || []) if ("ehandle" in w) removed.set(w.ehandle, w.time);
+    const wardsAt = (t) => sum(this.allies.map((a) => (a.obs_log || []).filter((w) =>
+      w.time <= t && t - w.time < 360 && !(removed.has(w.ehandle) && removed.get(w.ehandle) <= t)).length));
+    const fightAt = (t) => (this.match.teamfights || []).find((tf) => tf.start - 2 <= t && t <= tf.end + 2);
+    const allyDeathsNear = (t) => sum(this.allies.filter((a) => a !== p).map((a) =>
+      (a.deaths_log || []).filter((d) => d.time > t && d.time <= t + 30).length));
+
+    const out = [];
+    for (const d of p.deaths_log || []) {
+      const facts = [];
+      const killer = this.od.heroNameByKey(d.key);
+      const tf = fightAt(d.time);
+      if (killer === "башня") facts.push("убила вышка");
+      else if (!d.key.startsWith("npc_dota_hero_")) facts.push("убили крипы или нейтралы");
+      else facts.push(`убил ${killer}`);
+      facts.push(tf ? "в командной драке" : this.isSoloDeath(d.time) ? "один, рядом своих не было" : "в мелкой стычке");
+      if (tf) {
+        const pos = Object.entries((tf.players || [])[idx]?.deaths_pos || {}).flatMap(([x, ys]) => Object.keys(ys).map((y) => [parseFloat(x), parseFloat(y)]));
+        if (pos.length) facts.push(enemyHalf(pos[0][0], pos[0][1], p.isRadiant) ? "на вражеской половине карты" : "на своей половине карты");
+      }
+      const wards = wardsAt(d.time);
+      facts.push(wards ? `обсов вашей команды на карте: ${wards}` : "ни одного обса вашей команды на карте");
+      const note = this.deathNotes && this.deathNotes.get(d.time);
+      if (note) facts.push(note);
+      const ld = lead(d.time);
+      if (ld) facts.push(ld);
+      if (d.time_dead) facts.push(`лежал мёртвым ${d.time_dead} с`);
+      const after = allyDeathsNear(d.time);
+      if (after) facts.push(`следом за тобой умерло союзников: ${after}`);
+      const cost = lost(d.time, d.time + 120);
+      facts.push(...cost);
+      const sw = swing(d.time);
+      if (sw <= -1500) facts.push(`за 2 минуты команда потеряла ${num(-sw)} золота перевеса`);
+      const weight = 400 + (tf ? 0 : 300) + (note ? 400 : 0) + cost.length * 900 + after * 300 + Math.max(0, -sw) / 2 + (d.time_dead || 0) * 5;
+      out.push({ time: d.time, clock: mmss(d.time), kind: "death", facts, weight });
+    }
+    for (const tf of this.match.teamfights || []) {
+      const ps = tf.players || [];
+      const me = ps[idx];
+      if (!me) continue;
+      const tookPart = me.damage > 0 || me.healing > 0 || me.deaths > 0 || Object.keys(me.ability_uses || {}).length > 0;
+      const wasDead = (p.deaths_log || []).some((d) => d.time <= tf.start && tf.start <= d.time + (d.time_dead ?? 0));
+      if (tookPart || wasDead) continue;
+      const allyIdx = this.allies.map((a) => this.match.players.indexOf(a));
+      const enemyIdx = this.enemies.map((a) => this.match.players.indexOf(a));
+      const mine = sum(allyIdx.filter((i) => i < ps.length).map((i) => ps[i].deaths));
+      const theirs = sum(enemyIdx.filter((i) => i < ps.length).map((i) => ps[i].deaths));
+      if (mine < 2) continue;
+      const facts = [`драка без тебя: союзников погибло ${mine}, врагов ${theirs}`];
+      const lh = p.lh_t || [];
+      const m0 = Math.floor(tf.start / 60), m1 = Math.min(Math.ceil(tf.end / 60) + 1, lh.length - 1);
+      if (lh.length && m1 > m0) {
+        const got = (lh[m1] ?? 0) - (lh[m0] ?? 0);
+        facts.push(got > 0 ? `ты в это время добил ${got} крипов` : "ты в это время не фармил");
+      }
+      const ld = lead(tf.start);
+      if (ld) facts.push(ld);
+      const cost = lost(tf.start, tf.end + 120);
+      facts.push(...cost);
+      const sw = swing(tf.start);
+      if (sw <= -1500) facts.push(`за 2 минуты команда потеряла ${num(-sw)} золота перевеса`);
+      const weight = 500 + (mine - theirs) * 300 + cost.length * 900 + Math.max(0, -sw) / 2;
+      out.push({ time: tf.start, clock: mmss(tf.start), kind: "missed_fight", facts, weight });
+    }
+    return out.sort((a, b) => b.weight - a.weight).slice(0, limit)
+      .sort((a, b) => a.time - b.time).map(({ weight, ...e }) => e);
   }
 
   // ---------- оценки и итоги ----------
