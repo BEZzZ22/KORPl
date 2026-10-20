@@ -771,7 +771,7 @@ function scoreRing(score) {
 
 // ---------- тренер на Gemini (через воркер из worker/coach.js) ----------
 
-const COACH_URL = ""; // адрес воркера, ставится после деплоя; пока пусто, кнопки тренера нет
+const COACH_URL = "https://dotacoach.2007rggg.workers.dev"; // адрес воркера с тренером
 const COACH_DAILY = 5; // разборов тренера в день на устройство
 
 const safeLocal = {
