@@ -1409,7 +1409,7 @@ async function boot() {
     const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
       api("/constants/heroes"), api("/constants/items"), api("/constants/abilities", { timeout: 40000 }),
       api("/constants/item_ids"),
-      fetch("knowledge.json?v=12").then((r) => r.json()), fetch("texts.json?v=12").then((r) => r.json()),
+      fetch("knowledge.json?v=12").then((r) => r.json()), fetch("texts.json?v=13").then((r) => r.json()),
     ]);
     dictionary = createDictionary({ heroes, items, abilities });
     itemIds = ids;
