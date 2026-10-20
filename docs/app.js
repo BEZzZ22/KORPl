@@ -829,6 +829,8 @@ function analysisScreen(a) {
     content.replaceChildren(page);
     if (lens && lens.current() !== i) lens.place(i);
   };
+  a._select = (i) => { select(i); if (lens) lens.place(i); };
+  if (COACH_URL) rememberForCompare(a);
   TABS.forEach(([name]) => tabs.append(h("button", { class: "tab", role: "tab" }, name)));
   lens = glassBar(tabs, ".tab", { live: true, onPick: select });
   // Свайп по содержимому листает вкладки; графики со своим жестом не трогаем
@@ -909,16 +911,61 @@ function scoreRing(score) {
   );
 }
 
-// ---------- тренер на Gemini (через воркер из worker/coach.js) ----------
+// ---------- тренер на Opus (через воркер из worker/coach.js) ----------
 
 const COACH_URL = "https://dotacoach.2007rggg.workers.dev"; // адрес воркера с тренером
 const COACH_DAILY = 5; // разборов тренера в день на устройство
+const CHAT_DAILY = 40; // сообщений тренеру в день на устройство
 const COACH_TIMEOUT = 75000;
+const MEMORY_SIZE = 10; // прошлых разборов в памяти тренера
+const COMPARE_SIZE = 8; // каток, с которыми можно сравнить
 
 const safeLocal = {
   get(key) { try { return localStorage.getItem(key); } catch { return null; } },
   set(key, value) { try { localStorage.setItem(key, value); } catch { /* приватный режим */ } },
 };
+const localJson = (key, fallback) => { try { return JSON.parse(safeLocal.get(key) || "null") ?? fallback; } catch { return fallback; } };
+
+// Счётчик на день: [использовано, записать+1]
+function dailyCounter(name) {
+  const day = new Date().toISOString().slice(0, 10);
+  const used = safeLocal.get(`${name}_day`) === day ? Number(safeLocal.get(`${name}_n`) || 0) : 0;
+  return [used, () => { safeLocal.set(`${name}_day`, day); safeLocal.set(`${name}_n`, String(used + 1)); }];
+}
+
+// Запрос к воркеру. Ошибка с текстом воркера помечена fromCoach, остальные переводятся на русский
+async function postCoach(body) {
+  const ctrl = new AbortController();
+  // воркер в худшем случае ждёт Opus и запасные модели около минуты: дольше ждать нет смысла
+  const timer = setTimeout(() => ctrl.abort(), COACH_TIMEOUT);
+  try {
+    const res = await fetch(COACH_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: ctrl.signal });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw Object.assign(new Error(data.error || "Тренер сейчас недоступен."), { fromCoach: true });
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function coachError(e) {
+  // текст ошибки показываем только от воркера: у fetch он английский («Failed to fetch»)
+  if (e && e.fromCoach && e.message.length < 80) return e.message;
+  return e && e.name === "AbortError" ? "Тренер думал слишком долго. Попробуй ещё раз." : "Нет связи с тренером. Проверь интернет.";
+}
+
+// Память тренера: главные выводы прошлых разборов этого аккаунта, свежие первыми
+const memoryKey = (a) => `coach_mem:${(a.hist_self && a.hist_self.account) || "anon"}`;
+function pastReviews(a) {
+  return localJson(memoryKey(a), []).filter((m) => m.match !== a.facts.match_id).slice(0, 5)
+    .map((m) => ({ hero: m.hero, won: m.won, main: m.main }));
+}
+function rememberReview(a, main) {
+  if (!main) return;
+  const list = localJson(memoryKey(a), []).filter((m) => m.match !== a.facts.match_id);
+  list.unshift({ match: a.facts.match_id, hero: a.facts.hero, won: a.facts.won, main: main.slice(0, 240), t: Date.now() });
+  safeLocal.set(memoryKey(a), JSON.stringify(list.slice(0, MEMORY_SIZE)));
+}
 
 function coachPayload(a) {
   const s = a.summary || {}, f = a.facts;
@@ -930,6 +977,7 @@ function coachPayload(a) {
     plan: a.build_plan ? a.build_plan.missing.slice(0, 3).map((i) => ({ item: i.item, why: i.why })) : [],
     draft: a.draft ? a.draft.notes.slice(0, 2).map((n) => n.text) : [],
     episodes: (a.episodes || []).slice(0, 4).map((e) => ({ clock: e.clock, kind: e.kind, facts: e.facts })),
+    past: pastReviews(a),
   };
 }
 
@@ -951,10 +999,12 @@ function parseCoach(text) {
   return { main: main.join(" "), moments, steps };
 }
 
+// coach3: моменты с фактами о линии и размене; старые ответы писались по другим фактам и рядом с новыми врут
+const coachKey = (a) => `coach3:${a.facts.match_id}:${a.facts.slot}`;
+
 function coachBlock(a) {
   if (!COACH_URL) return null;
-  // coach3: моменты с фактами о линии и размене; старые ответы писались по другим фактам и рядом с новыми врут
-  const key = `coach3:${a.facts.match_id}:${a.facts.slot}`;
+  const key = coachKey(a);
   const box = h("section", { class: "card coach", "aria-labelledby": "coach-title" });
   const title = h("div", { class: "coach-title", id: "coach-title" }, "Разбор тренера");
 
@@ -987,51 +1037,184 @@ function coachBlock(a) {
         const t = /^(\d{1,2}:\d{2})\s+(.+)$/.exec(m);
         const ep = t && (a.episodes || []).find((e) => e.clock === t[1]);
         const [err, todo] = t ? t[2].split(/\s*Надо было:\s*/) : [m];
+        const more = t && h("button", { class: "coach-more", type: "button" }, "Спросить подробнее");
+        if (more) more.onclick = () => chatFor(a).ask(`Расскажи подробнее про ${t[1]}: что именно я сделал не так и как надо было сыграть?`);
         return seq(h("div", { class: "coach-moment" },
           t && h("time", {}, t[1]),
           ep && h("p", { class: "coach-facts" }, ep.facts.join("; ")),
           h("p", {}, err.replace(/^Ошибка:\s*/, "")),
-          todo && h("p", { class: "coach-todo" }, h("b", {}, "Надо было: "), todo)));
+          todo && h("p", { class: "coach-todo" }, h("b", {}, "Надо было: "), todo),
+          more));
       }),
       steps.length > 0 && seq(h("div", { class: "coach-label" }, "Задачи на следующую катку")),
       steps.length > 0 && list);
+    rememberReview(a, main);
   };
   const cached = safeLocal.get(key);
   if (cached) { show(cached, false); return box; }
 
   const ask = h("button", { class: "coach-btn", type: "button" }, "Разобрать с тренером");
   const note = h("p", { class: "coach-note small muted", role: "status" },
-    "Тренер разберёт ключевые моменты катки и даст три задачи на следующую.");
+    "Тренер разберёт ключевые моменты катки и даст три задачи на следующую. Потом можно задать ему вопросы.");
   ask.onclick = async () => {
-    const day = new Date().toISOString().slice(0, 10);
-    const used = safeLocal.get("coach_day") === day ? Number(safeLocal.get("coach_n") || 0) : 0;
+    const [used, spend] = dailyCounter("coach");
     if (used >= COACH_DAILY) { note.textContent = `Сегодня уже ${COACH_DAILY} разборов, это лимит. Завтра снова.`; return; }
     ask.disabled = true;
     ask.textContent = "Тренер смотрит катку…";
+    box.classList.add("coach-thinking");
     haptic("medium");
-    // воркер в худшем случае перебирает две нейросети около минуты (5 запросов по 12 с): дольше ждать нет смысла
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), COACH_TIMEOUT);
     try {
-      const res = await fetch(COACH_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(coachPayload(a)), signal: ctrl.signal });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.text) throw Object.assign(new Error(data.error || "Тренер сейчас недоступен."), { fromCoach: true });
-      safeLocal.set("coach_day", day);
-      safeLocal.set("coach_n", String(used + 1));
+      const data = await postCoach(coachPayload(a));
+      if (!data.text) throw Object.assign(new Error("Тренер сейчас недоступен."), { fromCoach: true });
+      if (!data.cached) spend();
       safeLocal.set(key, data.text);
       show(data.text, true);
     } catch (e) {
       ask.disabled = false;
       ask.textContent = "Попробовать ещё раз";
-      // текст ошибки показываем только от воркера: у fetch он английский («Failed to fetch»)
-      note.textContent = e && e.fromCoach && e.message.length < 80 ? e.message
-        : e && e.name === "AbortError" ? "Тренер думал слишком долго. Попробуй ещё раз." : "Нет связи с тренером. Проверь интернет.";
+      note.textContent = coachError(e);
     } finally {
-      clearTimeout(timer);
+      box.classList.remove("coach-thinking");
     }
   };
   box.append(title, ask, note);
   return box;
+}
+
+// ---------- чат с тренером ----------
+
+const chatKey = (a) => `chat1:${a.facts.match_id}:${a.facts.slot}`;
+const CHAT_KEEP = 30;
+
+// Готовые вопросы под эту катку: нажал — спросил, печатать не надо
+function chatSuggestions(a) {
+  const out = [];
+  const ep = (a.episodes || [])[0];
+  if (ep) out.push(`Что надо было делать на ${ep.clock}?`);
+  const killer = (a.killers || [])[0];
+  if (killer) out.push(`Что собирать против ${killer.hero}?`);
+  out.push(a.facts.won ? "За счёт чего мы выиграли?" : "Почему мы проиграли?");
+  out.push(`Как выигрывать линию на ${a.facts.hero}?`);
+  return out.slice(0, 4);
+}
+
+// Один чат на разбор: блок живёт в «Обзоре», спросить можно из любой вкладки
+function chatFor(a) {
+  if (!a._chat) a._chat = chatBlock(a);
+  return a._chat;
+}
+
+function chatBlock(a) {
+  let history = localJson(chatKey(a), []);
+  const list = h("div", { class: "chat-list", role: "log", "aria-live": "polite" });
+  const input = h("textarea", { class: "chat-input", rows: "1", maxlength: "400", placeholder: "Спроси тренера про эту катку", "aria-label": "Вопрос тренеру" });
+  const send = h("button", { class: "chat-send", type: "button", "aria-label": "Отправить" },
+    svg("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, svg("path", { d: "M5 12h13M13 6l6 6-6 6" })));
+  const note = h("p", { class: "chat-note small muted", role: "status" });
+  const chips = h("div", { class: "chat-chips" }, chatSuggestions(a).map((q) =>
+    h("button", { class: "chat-chip", type: "button", onclick: () => ask(q) }, q)));
+  let busy = false;
+  const bubble = (m) => h("div", { class: `chat-msg ${m.role}` }, m.text);
+  const draw = (typing = false) => {
+    const dots = typing ? [h("div", { class: "chat-msg assistant typing", "aria-label": "Тренер печатает" }, h("i"), h("i"), h("i"))] : [];
+    list.replaceChildren(...history.map(bubble), ...dots);
+    list.hidden = !history.length && !typing;
+  };
+  const grow = () => { input.style.height = "auto"; input.style.height = `${Math.min(input.scrollHeight, 120)}px`; };
+  input.addEventListener("input", grow);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(input.value); } });
+  send.onclick = () => ask(input.value);
+
+  async function ask(question) {
+    const q = String(question || "").trim().slice(0, 400);
+    if (!q || busy) return;
+    const [used, spend] = dailyCounter("chat");
+    if (used >= CHAT_DAILY) { note.textContent = `Сегодня уже ${CHAT_DAILY} вопросов, это лимит. Завтра снова.`; return; }
+    busy = true;
+    send.disabled = true;
+    note.textContent = "";
+    const before = history.slice(-10);
+    history = [...history, { role: "user", text: q }];
+    input.value = "";
+    grow();
+    draw(true);
+    haptic("light");
+    try {
+      const data = await postCoach({ mode: "chat", summary: coachPayload(a), coach: safeLocal.get(coachKey(a)) || "", history: before, question: q });
+      if (!data.text) throw Object.assign(new Error("Тренер сейчас недоступен."), { fromCoach: true });
+      spend();
+      history = [...history, { role: "assistant", text: data.text }].slice(-CHAT_KEEP);
+      safeLocal.set(chatKey(a), JSON.stringify(history));
+      haptic("medium");
+    } catch (e) {
+      // вопрос без ответа не храним: его можно задать снова
+      history = history.slice(0, -1);
+      input.value = q;
+      grow();
+      note.textContent = coachError(e);
+    } finally {
+      busy = false;
+      send.disabled = false;
+      draw();
+    }
+  }
+
+  draw();
+  const box = h("section", { class: "card chat", "aria-labelledby": "chat-title" },
+    h("div", { class: "coach-title", id: "chat-title" }, "Спроси тренера"),
+    h("p", { class: "small muted chat-hint" }, "Только про Доту и эту катку: моменты, сборку, линию, драки."),
+    list, chips, h("div", { class: "chat-row" }, input, send), note);
+  return {
+    box,
+    // Вопрос из другой вкладки или из момента: показать чат и спросить
+    ask(q) {
+      if (a._select) a._select(0);
+      requestAnimationFrame(() => box.scrollIntoView({ behavior: "smooth", block: "start" }));
+      ask(q);
+    },
+  };
+}
+
+// ---------- сравнение двух каток ----------
+
+const compareKey = (a) => `cmp:${(a.hist_self && a.hist_self.account) || "anon"}`;
+
+// Катка попадает в список для сравнения, как только её открыли
+function rememberForCompare(a) {
+  const list = localJson(compareKey(a), []).filter((x) => x.match !== a.facts.match_id);
+  list.unshift({ match: a.facts.match_id, hero: a.facts.hero, hero_id: a.facts.hero_id, won: a.facts.won, kda: a.facts.kda, t: Date.now(), payload: { ...coachPayload(a), past: [] } });
+  safeLocal.set(compareKey(a), JSON.stringify(list.slice(0, COMPARE_SIZE)));
+}
+
+function compareBlock(a) {
+  const others = localJson(compareKey(a), []).filter((x) => x.match !== a.facts.match_id);
+  if (!others.length) return null;
+  const out = h("div", { class: "compare-out", role: "status" });
+  const pick = async (other, btn) => {
+    const [used, spend] = dailyCounter("chat");
+    if (used >= CHAT_DAILY) { out.textContent = "На сегодня вопросов тренеру хватит. Завтра снова."; return; }
+    btn.disabled = true;
+    out.replaceChildren(h("div", { class: "chat-msg assistant typing" }, h("i"), h("i"), h("i")));
+    try {
+      const data = await postCoach({ mode: "compare", a: { ...coachPayload(a), past: [] }, b: other.payload });
+      spend();
+      out.replaceChildren(...String(data.text || "").split("\n").filter(Boolean).map((l) => h("p", {}, l)));
+    } catch (e) {
+      out.replaceChildren(h("p", { class: "error" }, coachError(e)));
+    } finally {
+      btn.disabled = false;
+    }
+  };
+  return h("details", { class: "card timeline-box compare" },
+    h("summary", {}, "Сравнить с другой каткой"),
+    h("p", { class: "small muted" }, "Тренер скажет, что ты делал по-другому. В списке катки, которые ты уже открывал."),
+    h("div", { class: "compare-list" }, ...others.map((o) => {
+      const btn = h("button", { class: `compare-item ${o.won ? "win" : "loss"}`, type: "button" },
+        heroImg(o.hero_id, "hero-img small"), h("span", { class: "grow" }, o.hero), h("span", { class: "muted" }, o.kda));
+      btn.onclick = () => { haptic(); pick(o, btn); };
+      return btn;
+    })),
+    out);
 }
 
 function overviewTab(a) {
@@ -1042,6 +1225,8 @@ function overviewTab(a) {
   return h("div", {},
     who && h("div", { class: "who" }, who, s.role_sure === false && h("span", { class: "muted" }, " · роль определена неточно")),
     coachBlock(a),
+    COACH_URL && chatFor(a).box,
+    COACH_URL && compareBlock(a),
     h("h2", {}, problems.length ? "Что было не так" : "Серьёзных ошибок нет"),
     ...problems.map((p, i) => h("div", { class: "card problem" },
       h("div", { class: "problem-num" }, String(i + 1)),
@@ -1185,8 +1370,17 @@ function phasesTab(a) {
     )),
     a.moments.length > 0 && h("details", { class: "card timeline-box" },
       h("summary", {}, "Хронология"),
-      h("div", { class: "timeline" }, ...a.moments.map((m) =>
-        h("div", { class: `moment ${m.severity}` }, h("time", {}, m.clock), m.text)))),
+      COACH_URL && h("p", { class: "small muted" }, "Нажми на смерть или драку — тренер разберёт её подробно."),
+      h("div", { class: "timeline" }, ...a.moments.map((m) => {
+        // Смерти и пропущенные драки можно отдать тренеру на разбор
+        if (!COACH_URL || (m.severity !== BAD && m.severity !== WARN)) {
+          return h("div", { class: `moment ${m.severity}` }, h("time", {}, m.clock), m.text);
+        }
+        return h("button", {
+          class: `moment ${m.severity} askable`, type: "button",
+          onclick: () => { haptic(); chatFor(a).ask(`Разбери момент ${m.clock}: ${m.text}. Что я сделал не так и как надо было?`); },
+        }, h("time", {}, m.clock), h("span", {}, m.text));
+      }))),
   );
 }
 
