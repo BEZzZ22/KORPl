@@ -693,3 +693,22 @@ body { background: transparent; }
 .leader-row.me .grow b { color: var(--aegis); }
 .leader-remove { width: 32px; height: 32px; padding: 0; border-radius: 10px; color: var(--muted); background: rgba(255, 255, 255, 0.05); box-shadow: none; font-size: 18px; }
 .friend-add { margin-top: 12px; }
+
+/* ---------- реплей: позиции ---------- */
+.mm-heat { fill: var(--aegis); opacity: .28; }
+.mm-path { fill: none; stroke: rgba(242, 85, 90, 0.75); stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 2 1.4; }
+.replay-card { display: flex; flex-direction: column; gap: 10px; }
+.replay-btn { width: 100%; }
+.zones { display: flex; flex-direction: column; gap: 8px; }
+.zone-row { display: grid; grid-template-columns: 72px 1fr 40px; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
+.zone-row b { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+.zone-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: rgba(255, 255, 255, 0.06); }
+.zone-bar i { display: block; height: 100%; }
+.zone-bar i.own, .lg-zone.own { background: var(--radiant) !important; }
+.zone-bar i.river, .lg-zone.river { background: var(--river) !important; }
+.zone-bar i.enemy, .lg-zone.enemy { background: var(--dire) !important; }
+.legend .lg-zone { border-radius: 3px; }
+.death-row { display: flex; align-items: center; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.death-row time { font: 700 13px/1 var(--display); font-variant-numeric: tabular-nums; }
+.death-row.alone .grow { color: var(--dire); font-weight: 700; }
+.death-row b { font-weight: 700; color: var(--muted); }

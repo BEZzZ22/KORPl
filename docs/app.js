@@ -2,7 +2,7 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric,
   CATEGORIES, BAD, WARN, GOOD,
-} from "./engine.js?v=18";
+} from "./engine.js?v=19";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -930,11 +930,11 @@ async function matchScreen(matchId, slot, accountId, attempt = 0) {
   }
   if (!player) { notYourMatch(); return; }
 
-  const [pro, bench, matchups] = await Promise.all([proItems(player.hero_id), heroBench(player.hero_id), heroMatchups(player.hero_id)]);
+  const [pro, bench, matchups, replay] = await Promise.all([proItems(player.hero_id), heroBench(player.hero_id), heroMatchups(player.hero_id), fetchReplay(matchId)]);
   if (stale(seq)) return;
   let a;
   try {
-    a = analyze(match, player, dictionary, knowledge, texts, pro, bench, norms, matchups);
+    a = analyze(match, player, dictionary, knowledge, texts, pro, bench, norms, matchups, replay);
   } catch (e) {
     // иначе на необычном матче вечно крутится «Призываю матч...»
     console.error(e);
@@ -1981,6 +1981,73 @@ function minimap(points, { label }) {
     ...points);
 }
 
+// ---------- реплей: позиции героев (GitHub Actions разбирает, файл лежит в ветке replays) ----------
+
+const REPLAY_RAW = "https://raw.githubusercontent.com/BEZzZ22/KORPl/replays/r";
+const replayCache = new Map();
+
+// Файл позиций, если реплей уже разобран; нет файла или сети — null, разбор идёт без него
+async function fetchReplay(matchId) {
+  if (replayCache.has(matchId)) return replayCache.get(matchId);
+  let data = null;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    const res = await fetch(`${REPLAY_RAW}/${matchId}.json`, { signal: ctrl.signal });
+    clearTimeout(timer);
+    data = res.ok ? await res.json() : null;
+  } catch { data = null; }
+  if (data) replayCache.set(matchId, data);
+  return data;
+}
+
+function replayBlock(a) {
+  const r = a.replay;
+  if (!r) {
+    const status = h("p", { class: "small muted", role: "status" }, "Тренер увидит, где ты стоял и кто был рядом в каждой смерти. Реплей разбирается 10–30 минут.");
+    const btn = h("button", { type: "button", class: "replay-btn" }, "Разобрать реплей по позициям");
+    btn.onclick = async () => {
+      btn.disabled = true;
+      haptic("medium");
+      try {
+        const data = await postCoach({ mode: "replay", match_id: a.facts.match_id, initData: (tg && tg.initData) || "" });
+        status.textContent = data.status === "done"
+          ? "Реплей уже разобран: открой матч заново."
+          : tg && tg.initData ? "В очереди. Бот напишет, когда будет готово." : "В очереди. Загляни сюда через полчаса.";
+      } catch (e) {
+        btn.disabled = false;
+        status.textContent = coachError(e);
+      }
+    };
+    return h("div", {}, h("h2", {}, "Позиции по реплею"), h("div", { class: "card replay-card" }, btn, status));
+  }
+  const dots = r.heat.map((p) => svg("circle", { cx: mapX(p[0]).toFixed(1), cy: mapY(p[1]).toFixed(1), r: 1.6, class: "mm-heat" }));
+  const deaths = r.deaths.map((d) => svg("g", {},
+    d.path.length > 1 && svg("polyline", { class: "mm-path", points: d.path.map((p) => `${mapX(p[0]).toFixed(1)},${mapY(p[1]).toFixed(1)}`).join(" ") }),
+    svg("g", { class: "mm-death", transform: `translate(${mapX(d.x).toFixed(1)} ${mapY(d.y).toFixed(1)})` },
+      svg("title", {}, `смерть ${mmss(d.t)}`), svg("path", { d: "M-2.6 -2.6 L2.6 2.6 M-2.6 2.6 L2.6 -2.6" }))));
+  const zoneRow = (label, z) => z && h("div", { class: "zone-row" }, h("span", {}, label),
+    h("div", { class: "zone-bar" },
+      h("i", { class: "own", "data-pct": Math.round(z.own * 100) }), h("i", { class: "river", "data-pct": Math.round(z.river * 100) }), h("i", { class: "enemy", "data-pct": Math.round(z.enemy * 100) })),
+    h("b", {}, `${Math.round(z.enemy * 100)}%`));
+  const alone = r.deaths.filter((d) => d.allies_near === 0).length;
+  return h("div", {},
+    h("h2", {}, "Где ты был"),
+    h("div", { class: "card map-card" },
+      minimap(dots, { label: "Тепловая карта твоих позиций" }),
+      h("div", { class: "zones" }, zoneRow("Линия", r.zones.lane), zoneRow("Мидгейм", r.zones.mid), zoneRow("Лейт", r.zones.late)),
+      h("div", { class: "legend" }, h("span", {}, h("i", { class: "lg-zone own" }), "своя половина"), h("span", {}, h("i", { class: "lg-zone river" }), "река"),
+        h("span", {}, h("i", { class: "lg-zone enemy" }), "чужая, % справа"))),
+    r.deaths.length > 0 && h("h2", {}, "Перед каждой смертью"),
+    r.deaths.length > 0 && h("div", { class: "card map-card" },
+      minimap(deaths, { label: `Пути за 20 секунд до смертей: ${r.deaths.length}` }),
+      h("p", { class: "small muted" }, `Линия — где ты шёл последние 20 секунд. Один, без своих в радиусе 1 500: ${alone} из ${r.deaths.length}.`),
+      ...r.deaths.map((d) => h("div", { class: `death-row ${d.allies_near ? "" : "alone"}` },
+        h("time", {}, mmss(d.t)),
+        h("span", { class: "grow" }, d.allies_near ? `рядом своих ${d.allies_near}` : `один${d.nearest_ally ? `, ближайший свой в ${num(d.nearest_ally)}` : ""}`),
+        h("b", {}, `врагов ${d.enemies_near}`)))));
+}
+
 function mapTab(a) {
   const m = a.map || { deaths: [], wards: [] };
   const deathDots = m.deaths.map((d) => svg("g", { class: "mm-death", transform: `translate(${mapX(d.x).toFixed(1)} ${mapY(d.y).toFixed(1)})` },
@@ -1996,6 +2063,7 @@ function mapTab(a) {
   const dewarded = m.wards.filter((w) => w.dewarded).length;
   const deep = m.wards.filter((w) => w.enemy_half).length;
   return h("div", {},
+    replayBlock(a),
     h("h2", {}, "Где умирал в драках"),
     h("div", { class: "card map-card" },
       m.deaths.length ? minimap(deathDots, { label: `Смерти в драках на карте: ${m.deaths.length}` }) : h("p", { class: "muted" }, "В больших драках ты не умирал."),

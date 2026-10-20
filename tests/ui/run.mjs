@@ -109,6 +109,20 @@ function coach(body) {
   return { text: COACH_TEXT };
 }
 
+// Синтетический реплей: Свет ходит у себя внизу слева, ты гуляешь по карте, Тьма сверху справа
+const REPLAY = (() => {
+  const n = Math.ceil((match.duration + 90) / 2) + 1;
+  const pos = {};
+  for (const p of match.players) {
+    const base = p.isRadiant ? [95, 95] : [160, 160];
+    pos[p.player_slot] = Array.from({ length: n }, (_, i) => {
+      const t = i / 40 + p.player_slot;
+      const wander = p === ME ? 34 : 12;
+      return [Math.round((base[0] + Math.sin(t) * wander + (p === ME ? 20 : 0)) * 10) / 10, Math.round((base[1] + Math.cos(t * 1.3) * wander + (p === ME ? 20 : 0)) * 10) / 10];
+    });
+  }
+  return { v: 1, step: 2, start: -90, end: match.duration, pos };
+})();
 const PLACEHOLDER = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
 
 const errors = [];
@@ -139,6 +153,9 @@ async function handleRoute(route) {
   if (url.hostname.endsWith("workers.dev")) {
     if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*", "Access-Control-Allow-Methods": "POST" } });
     return route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(coach(route.request().postData())) });
+  }
+  if (url.hostname === "raw.githubusercontent.com") {
+    return url.pathname.endsWith(`/r/${match.match_id}.json`) ? route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(REPLAY) }) : route.fulfill({ status: 404, body: "" });
   }
   if (url.hostname === "telegram.org") return route.fulfill({ status: 200, contentType: "text/javascript", body: "" });
   if (/steamstatic\.com$/.test(url.hostname)) return route.fulfill({ status: 200, contentType: "image/png", body: PLACEHOLDER });
