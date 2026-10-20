@@ -139,19 +139,6 @@ def parse_match_id(text: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def hero_keyboard(match: dict) -> InlineKeyboardMarkup:
-    def button(p):
-        return InlineKeyboardButton(
-            text=od.hero_name(p["hero_id"]), callback_data=f"a:{match['match_id']}:{p['player_slot']}"
-        )
-
-    radiant = [p for p in match["players"] if p["isRadiant"]]
-    dire = [p for p in match["players"] if not p["isRadiant"]]
-    rows = [[button(r), button(d)] for r, d in zip(radiant, dire)]
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Свет", callback_data="noop"),
-                                                  InlineKeyboardButton(text="Тьма", callback_data="noop")]] + rows)
-
-
 # ---------- команды ----------
 
 async def set_app_button(message: Message, account_id: int | None):
@@ -305,13 +292,6 @@ async def on_recent_pick(callback: CallbackQuery):
                        account_id=db.get_account(callback.from_user.id))
 
 
-@router.callback_query(F.data.regexp(r"^a:\d{7,11}:\d{1,3}$"))
-async def on_hero_pick(callback: CallbackQuery):
-    await callback.answer()
-    _, match_id, slot = callback.data.split(":")
-    await run_analysis(callback.message, callback.from_user.id, int(match_id), slot=int(slot))
-
-
 @router.callback_query()
 async def on_bad_callback(callback: CallbackQuery):
     await callback.answer("Кнопка устарела")
@@ -319,21 +299,23 @@ async def on_bad_callback(callback: CallbackQuery):
 
 # ---------- разбор ----------
 
-async def run_analysis(message: Message, user_id: int, match_id: int,
-                       account_id: int | None = None, slot: int | None = None):
+async def run_analysis(message: Message, user_id: int, match_id: int, account_id: int | None):
     refusal = guard.try_start(user_id)
     if refusal:
         await message.answer(refusal)
         return
     try:
-        await analyze_match(message, user_id, match_id, account_id, slot)
+        await analyze_match(message, user_id, match_id, account_id)
     except OpenDotaError:
         await message.answer(OPENDOTA_DOWN)
     finally:
         guard.finish(user_id)
 
 
-async def analyze_match(message: Message, user_id: int, match_id: int, account_id: int | None, slot: int | None):
+async def analyze_match(message: Message, user_id: int, match_id: int, account_id: int | None):
+    if not account_id:
+        await message.answer("Я разбираю только твои игры. Сначала привяжи аккаунт: <code>/me Friend ID</code>")
+        return
     await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
     match = await od.match(match_id)
     if not match:
@@ -348,14 +330,13 @@ async def analyze_match(message: Message, user_id: int, match_id: int, account_i
         )
         return
 
-    player = None
-    if slot is not None:
-        player = next((p for p in match["players"] if p["player_slot"] == slot), None)
-    elif account_id:
-        player = next((p for p in match["players"] if p.get("account_id") == account_id), None)
-
+    player = next((p for p in match["players"] if p.get("account_id") == account_id), None)
     if not player:
-        await message.answer("За кого показать разбор?", reply_markup=hero_keyboard(match))
+        await message.answer(
+            "Тебя нет в этом матче, а чужие игры я не разбираю. "
+            "Если это твоя игра, возможно, в ней скрыт твой профиль: включи в Доте "
+            "Настройки → Социальное → «Открыть доступ к данным матчей»."
+        )
         return
 
     pro_items, hero_bench, matchups = await asyncio.gather(

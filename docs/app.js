@@ -512,32 +512,28 @@ async function matchScreen(matchId, slot, accountId, attempt = 0) {
   }
 
   let player = null;
-  if (slot != null) player = match.players.find((p) => p.player_slot === slot);
   if (!player && accountId) player = match.players.find((p) => p.account_id === accountId);
   if (!player) {
     const saved = Number(await storage.get("account_id"));
     if (stale(seq)) return;
     if (saved) player = match.players.find((p) => p.account_id === saved);
   }
-  if (!player) { heroPicker(match); return; }
+  if (!player) { notYourMatch(); return; }
 
   const [pro, bench, matchups] = await Promise.all([proItems(player.hero_id), heroBench(player.hero_id), heroMatchups(player.hero_id)]);
   if (stale(seq)) return;
   analysisScreen(analyze(match, player, dictionary, knowledge, texts, pro, bench, norms, matchups));
 }
 
-function heroPicker(match) {
-  const button = (p) => h("button", { onclick: () => { haptic(); go(matchScreen, match.match_id, p.player_slot); } },
-    img(dictionary.heroImage(p.hero_id), null, ""), dictionary.heroName(p.hero_id));
-  const radiant = match.players.filter((p) => p.isRadiant);
-  const dire = match.players.filter((p) => !p.isRadiant);
+// Разбираем только свои игры: либо аккаунт не привязан, либо тебя нет в матче
+async function notYourMatch() {
+  const saved = Number(await storage.get("account_id"));
   render(
-    h("h1", {}, "За кого разбор?"),
-    h("p", { class: "muted" }, "Тебя нет в этом матче или аккаунт не привязан. Выбери героя."),
-    h("div", { class: "picker" },
-      h("div", { class: "side win-text" }, "Свет"), h("div", { class: "side loss-text" }, "Тьма"),
-      ...radiant.flatMap((r, i) => [button(r), dire[i] ? button(dire[i]) : h("span")]),
-    ),
+    h("h1", {}, saved ? "Это не твоя игра" : "Привяжи аккаунт"),
+    h("p", { class: "muted" }, saved
+      ? "Тебя нет в этом матче, а чужие игры я не разбираю. Если игра твоя, в ней мог быть скрыт профиль: включи в Доте Настройки → Социальное → «Открыть доступ к данным матчей»."
+      : "Я разбираю только твои игры. Укажи Friend ID или Steam ID."),
+    saved ? h("button", { onclick: () => navRoot("home", homeScreen) }, "На главную") : accountForm(),
   );
 }
 
