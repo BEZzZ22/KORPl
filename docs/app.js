@@ -1312,7 +1312,8 @@ function parseCoach(text) {
 }
 
 // coach3: моменты с фактами о линии и размене; старые ответы писались по другим фактам и рядом с новыми врут
-const coachKey = (a) => `coach3:${a.facts.match_id}:${a.facts.slot}`;
+// с разобранным реплеем у тренера другие факты: отдельный ответ
+const coachKey = (a) => `coach3:${a.facts.match_id}:${a.facts.slot}${a.replay ? ":r" : ""}`;
 
 function coachBlock(a) {
   if (!COACH_URL) return null;
