@@ -20,7 +20,7 @@ const STEAM_CDN = "https://cdn.cloudflare.steamstatic.com";
 const STEAM64_OFFSET = 76561197960265728n;
 const PARSE_POLL_MS = 15000;
 const PARSE_POLL_MAX = 20;
-const BG_COLOR = "#070404";
+const BG_COLOR = "#08090c";
 const DAMAGE_TYPES = { Physical: "физический", Magical: "магический", Pure: "чистый" };
 const PHASE_LABEL = { good: "выиграна", even: "ровно", bad: "проиграна" };
 const TURBO_MODE = 23;
@@ -87,9 +87,49 @@ function heroImg(heroId, cls = "hero-img") {
 }
 
 function scoreColor(score) {
-  if (score >= 7) return "var(--gold)";
+  if (score >= 7) return "var(--radiant)";
   if (score >= 5) return "var(--warn)";
-  return "var(--bad)";
+  return "var(--dire)";
+}
+
+const reducedMotion = () => Boolean(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
+
+// 3D: плита наклоняется за пальцем, по ней бежит блик, картинка внутри едет в обратную сторону (параллакс)
+function tilt(el, max = 6) {
+  if (!el || reducedMotion()) return el;
+  el.classList.add("tilt");
+  el.append(h("span", { class: "glare", "aria-hidden": "true" }));
+  let raf = 0;
+  const set = (px, py, on) => {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      el.style.setProperty("--ry", `${((px - 0.5) * 2 * max).toFixed(2)}deg`);
+      el.style.setProperty("--rx", `${((0.5 - py) * 2 * max).toFixed(2)}deg`);
+      el.style.setProperty("--px", `${((0.5 - px) * 16).toFixed(1)}px`);
+      el.style.setProperty("--py", `${((0.5 - py) * 12).toFixed(1)}px`);
+      el.style.setProperty("--gx", `${(px * 100).toFixed(1)}%`);
+      el.style.setProperty("--gy", `${(py * 100).toFixed(1)}%`);
+      el.style.setProperty("--go", on ? "1" : "0");
+    });
+  };
+  const move = (e) => {
+    const r = el.getBoundingClientRect();
+    const px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
+    if (px >= 0 && px <= 1 && py >= 0 && py <= 1) set(px, py, true);
+  };
+  const reset = () => { el.classList.remove("tilting"); set(0.5, 0.5, false); };
+  el.addEventListener("pointerdown", (e) => { el.classList.add("tilting"); move(e); });
+  el.addEventListener("pointermove", (e) => { if (e.pointerType === "mouse" || el.classList.contains("tilting")) { el.classList.add("tilting"); move(e); } });
+  for (const type of ["pointerup", "pointerleave", "pointercancel"]) el.addEventListener(type, reset);
+  return el;
+}
+
+// Оценка: золотой медальон, заполненный по кругу на score из 10
+function medal(score) {
+  const el = h("div", { class: "medal", role: "img", "aria-label": `Оценка ${score.toFixed(1)} из 10` },
+    h("b", {}, score.toFixed(1)), h("small", {}, "из 10"));
+  el.style.setProperty("--p", String(Math.max(0, Math.min(100, score * 10))));
+  return el;
 }
 
 function haptic(type = "light") {
@@ -392,7 +432,9 @@ async function homeScreen() {
     h("div", { class: "card" },
       h("div", { class: "row" }, h("div", { class: "grow" }, matchInput), h("button", { onclick: openMatch }, "Разобрать")),
     ),
-    h("button", { class: "ghost draft-entry", type: "button", onclick: () => { haptic(); go(draftScreen); } }, "Драфт перед игрой: кого пикнуть и что собирать"),
+    h("button", { class: "draft-entry", type: "button", onclick: () => { haptic(); go(draftScreen); } },
+      h("span", { class: "de-icon", "aria-hidden": "true" }, svg("svg", { viewBox: "0 0 24 24" }, svg("path", { d: "M12 3 4 7v5c0 5 3.4 7.6 8 9 4.6-1.4 8-4 8-9V7l-8-4ZM9 12l2 2 4-4" }))),
+      h("div", { class: "grow" }, h("b", {}, "Драфт перед игрой"), h("span", {}, "Кого пикнуть и что собирать"))),
   ];
   if (!account) {
     render(...nodes, accountForm());
@@ -551,6 +593,7 @@ async function profileScreen() {
     weakHeroesBlock(heroes),
     h("button", { class: "ghost", onclick: () => { storage.set("account_id", ""); navRoot("home", homeScreen); } }, "Сменить аккаунт"),
   );
+  tilt(app.querySelector(".profile-card") && app.querySelector(".profile-card").parentElement);
 }
 
 // Тренд по последним играм: свежие 10 против предыдущих 10 (по данным recentMatches)
@@ -815,14 +858,14 @@ function freshMatchCard(m, account) {
   const won = (m.player_slot < 128) === m.radiant_win;
   const ago = Math.max(1, Math.round((Date.now() / 1000 - m.start_time - (m.duration || 0)) / 60));
   const when = ago < 60 ? `${ago} ${plural(ago, "минуту", "минуты", "минут")} назад` : `${Math.round(ago / 60)} ${plural(Math.round(ago / 60), "час", "часа", "часов")} назад`;
-  return h("button", { class: `fresh-match ${won ? "win" : "loss"}`, type: "button", onclick: () => { haptic("medium"); go(matchScreen, m.match_id, null, Number(account)); } },
+  return tilt(h("button", { class: `fresh-match ${won ? "win" : "loss"}`, type: "button", onclick: () => { haptic("medium"); go(matchScreen, m.match_id, null, Number(account)); } },
     h("div", { class: "fresh-label" }, "Последняя катка"),
     h("div", { class: "row" },
       heroImg(m.hero_id, "hero-img fresh-img"),
       h("div", { class: "grow" },
         h("div", { class: "fresh-hero" }, dictionary.heroName(m.hero_id)),
         h("div", { class: "small muted" }, `${won ? "Победа" : "Поражение"} · ${m.kills}/${m.deaths}/${m.assists} · ${when}`))),
-    h("div", { class: "fresh-cta" }, "Разобрать"));
+    h("div", { class: "fresh-cta" }, "Разобрать")));
 }
 
 function matchListItem(m, account) {
@@ -985,7 +1028,7 @@ function analysisScreen(a) {
             h("span", { class: `badge ${f.won ? "win" : "loss"}` }, f.won ? "Победа" : "Поражение"),
             ` позиция ${f.position} · ${f.duration}`),
         ),
-        h("div", { class: "hero-ring" }, scoreRing(a.overall)),
+        h("div", { class: "hero-ring" }, medal(a.overall)),
       ),
       h("div", { class: "hero-body" },
         h("div", { class: "verdict" }, a.verdict),
@@ -1003,6 +1046,7 @@ function analysisScreen(a) {
     content,
   );
   select(0);
+  tilt(app.querySelector(".hero-head"));
   lens.place(0, true);
 }
 
@@ -1032,62 +1076,84 @@ function drawWrapped(ctx, text, x, y, width, lineHeight, maxLines) {
   return y + shown.length * lineHeight;
 }
 
-// Карточка 1080×1920 для истории: герой, итог, оценка, цифры и главный вывод тренера
+// Карточка 1080×1920 для истории в стиле приложения: ночная карта (свет баз в углах, река),
+// герой, итог, золотой медальон оценки, цифры и главный вывод тренера
 async function renderCard(a) {
   const f = a.facts;
   const W = 1080, H = 1920, P = 96;
+  const C = { ink: "#08090c", text: "#eceae4", muted: "#8a8f9c", aegis: "#e8c27a", radiant: "#4fd1a5", dire: "#f2555a" };
   const canvas = document.createElement("canvas");
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext("2d");
-  try { await Promise.all(["800 120px Manrope", "600 48px Manrope"].map((s) => document.fonts.load(s))); } catch { /* системный шрифт */ }
-  const font = (w, s) => `${w} ${s}px Manrope, -apple-system, "Segoe UI", sans-serif`;
-  const bg = ctx.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0, "#150a08"); bg.addColorStop(1, "#040303");
-  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
-  const glow = ctx.createRadialGradient(W * 0.7, 260, 20, W * 0.7, 260, 900);
-  glow.addColorStop(0, f.won ? "rgba(255,140,60,0.45)" : "rgba(215,38,61,0.45)"); glow.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H);
+  try { await Promise.all(["700 120px Unbounded", "800 48px Manrope", "600 40px Manrope"].map((s) => document.fonts.load(s))); } catch { /* системный шрифт */ }
+  const display = (s) => `700 ${s}px Unbounded, Manrope, -apple-system, sans-serif`;
+  const sans = (w, s) => `${w} ${s}px Manrope, -apple-system, "Segoe UI", sans-serif`;
+  const glow = (x, y, r, color) => {
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, color); g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  };
+  ctx.fillStyle = C.ink; ctx.fillRect(0, 0, W, H);
+  glow(W * 0.95, 120, 1000, "rgba(242,85,90,0.30)");
+  glow(80, H - 80, 1100, "rgba(79,209,165,0.26)");
+  ctx.save();
+  ctx.translate(W / 2, H / 2); ctx.rotate(Math.PI / 5);
+  const river = ctx.createLinearGradient(-W, 0, W, 0);
+  river.addColorStop(0, "rgba(90,143,214,0)"); river.addColorStop(0.5, "rgba(90,143,214,0.16)"); river.addColorStop(1, "rgba(90,143,214,0)");
+  ctx.fillStyle = river; ctx.fillRect(-W * 1.2, -110, W * 2.4, 220);
+  ctx.restore();
 
-  ctx.fillStyle = "#8f817a"; ctx.font = font(600, 40);
-  ctx.fillText("Разбор катки", P, 200);
-  ctx.fillStyle = "#e9bd63"; ctx.font = font(800, 130);
-  drawWrapped(ctx, f.hero, P, 350, W - 2 * P, 140, 2);
-  ctx.font = font(700, 48);
-  ctx.fillStyle = f.won ? "#e9bd63" : "#ff4d4d";
-  ctx.fillText(`${f.won ? "Победа" : "Поражение"} · ${f.duration}`, P, 470);
+  ctx.fillStyle = C.muted; ctx.font = sans(700, 40);
+  ctx.fillText("Разбор катки", P, 210);
+  ctx.fillStyle = C.text; ctx.font = display(f.hero.length > 12 ? 92 : 120);
+  const afterName = drawWrapped(ctx, f.hero, P, 360, W - 2 * P, f.hero.length > 12 ? 104 : 132, 2);
 
-  // Оценка: большое число и дуга
-  const cx = W - P - 150, cy = 700, r = 140;
-  ctx.lineWidth = 26; ctx.lineCap = "round";
+  // плашка итога
+  const pill = `${f.won ? "Победа" : "Поражение"} · ${f.duration}`;
+  ctx.font = sans(800, 44);
+  const pw = ctx.measureText(pill).width + 64;
+  ctx.fillStyle = f.won ? C.radiant : C.dire;
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(P, afterName - 30, pw, 84, 42); else ctx.rect(P, afterName - 30, pw, 84);
+  ctx.fill();
+  ctx.fillStyle = f.won ? "#062a1e" : "#2b0507"; ctx.fillText(pill, P + 32, afterName + 26);
+
+  // медальон оценки
+  const cx = W / 2, cy = 900, r = 210;
+  ctx.lineWidth = 34; ctx.lineCap = "round";
   ctx.strokeStyle = "rgba(255,255,255,0.08)"; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
-  const arc = ctx.createLinearGradient(cx - r, cy - r, cx + r, cy + r);
-  arc.addColorStop(0, "#ffb36b"); arc.addColorStop(0.55, "#ff3b2a"); arc.addColorStop(1, "#b3122b");
-  ctx.strokeStyle = arc; ctx.beginPath(); ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * a.overall) / 10); ctx.stroke();
-  ctx.fillStyle = "#f2eadf"; ctx.font = font(800, 110); ctx.textAlign = "center";
-  ctx.fillText(a.overall.toFixed(1), cx, cy + 38);
-  ctx.font = font(600, 34); ctx.fillStyle = "#8f817a"; ctx.fillText("из 10", cx, cy + 92);
-  ctx.textAlign = "left";
+  const ring = ctx.createLinearGradient(cx - r, cy - r, cx + r, cy + r);
+  ring.addColorStop(0, "#f6dda4"); ring.addColorStop(0.5, C.aegis); ring.addColorStop(1, "#b98a3e");
+  ctx.strokeStyle = ring; ctx.beginPath(); ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * a.overall) / 10); ctx.stroke();
+  const disc = ctx.createRadialGradient(cx - 60, cy - 70, 10, cx, cy, r - 20);
+  disc.addColorStop(0, "#2c2f3a"); disc.addColorStop(1, "#11131a");
+  ctx.fillStyle = disc; ctx.beginPath(); ctx.arc(cx, cy, r - 26, 0, Math.PI * 2); ctx.fill();
+  ctx.textAlign = "center";
+  ctx.fillStyle = C.text; ctx.font = display(150); ctx.fillText(a.overall.toFixed(1), cx, cy + 50);
+  ctx.fillStyle = C.muted; ctx.font = sans(700, 36); ctx.fillText("оценка из 10", cx, cy + 112);
 
-  const stats = [["KDA", f.kda], ["GPM", String(f.gpm)], ["XPM", String(f.xpm)]];
-  stats.forEach(([label, value], i) => {
-    const y = 600 + i * 120;
-    ctx.fillStyle = "#8f817a"; ctx.font = font(600, 34); ctx.fillText(label, P, y);
-    ctx.fillStyle = "#f2eadf"; ctx.font = font(800, 64); ctx.fillText(value, P, y + 62);
+  // цифры в три колонки
+  [["KDA", f.kda], ["GPM", String(f.gpm)], ["XPM", String(f.xpm)]].forEach(([label, value], i) => {
+    const x = P + ((W - 2 * P) / 3) * (i + 0.5);
+    ctx.fillStyle = C.text; ctx.font = display(58); ctx.fillText(value, x, 1250);
+    ctx.fillStyle = C.muted; ctx.font = sans(700, 32); ctx.fillText(label, x, 1300);
   });
+  ctx.textAlign = "left";
 
   const coach = safeLocal.get(coachKey(a));
   const main = (coach && parseCoach(coach).main) || a.verdict;
-  ctx.fillStyle = "rgba(255,255,255,0.06)"; ctx.fillRect(P, 1000, W - 2 * P, 2);
-  ctx.fillStyle = "#8f817a"; ctx.font = font(600, 38); ctx.fillText(coach ? "Тренер говорит" : "Вердикт", P, 1090);
-  ctx.fillStyle = "#f2eadf"; ctx.font = font(700, 56);
-  let y = drawWrapped(ctx, main, P, 1180, W - 2 * P, 74, 6);
-  const top = ((a.summary || {}).problems || [])[0];
-  if (top) {
-    ctx.fillStyle = "#ff9a3d"; ctx.font = font(700, 44);
-    drawWrapped(ctx, `Главная ошибка: ${top.title}`, P, y + 50, W - 2 * P, 58, 2);
-  }
-  ctx.fillStyle = "#8f817a"; ctx.font = font(600, 40);
-  ctx.fillText(`Разбери свою катку: @${BOT_USERNAME}`, P, H - 140);
+  ctx.fillStyle = C.aegis; ctx.font = sans(800, 38); ctx.fillText(coach ? "Тренер говорит" : "Вердикт", P, 1420);
+  ctx.fillStyle = C.text; ctx.font = sans(700, 52);
+  drawWrapped(ctx, main, P, 1500, W - 2 * P, 68, 4);
+
+  // подпись с медальоном-знаком
+  const sx = P + 34, sy = H - 150;
+  const sig = ctx.createLinearGradient(sx - 34, sy - 34, sx + 34, sy + 34);
+  sig.addColorStop(0, "#f6dda4"); sig.addColorStop(1, "#b98a3e");
+  ctx.fillStyle = sig; ctx.beginPath(); ctx.arc(sx, sy, 34, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = C.ink; ctx.beginPath(); ctx.arc(sx, sy, 22, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = C.text; ctx.font = sans(800, 40); ctx.fillText("Разбери свою катку", P + 92, sy - 6);
+  ctx.fillStyle = C.muted; ctx.font = sans(700, 34); ctx.fillText(`@${BOT_USERNAME}`, P + 92, sy + 38);
   return canvas.toDataURL("image/png");
 }
 
@@ -1142,23 +1208,6 @@ function shareMatch(a) {
 
 function stat(value, label) {
   return h("div", { class: "stat" }, h("b", {}, value), h("span", {}, label));
-}
-
-function scoreRing(score) {
-  const r = 28, c = 2 * Math.PI * r;
-  return svg("svg", { class: "ring", width: 72, height: 72, viewBox: "0 0 72 72", "aria-label": `Оценка ${score} из 10` },
-    svg("defs", {}, svg("linearGradient", { id: "fire", x1: 0, y1: 0, x2: 1, y2: 1 },
-      svg("stop", { offset: "0%", "stop-color": "#ffb36b" }),
-      svg("stop", { offset: "55%", "stop-color": "#ff3b2a" }),
-      svg("stop", { offset: "100%", "stop-color": "#b3122b" }))),
-    svg("circle", { cx: 36, cy: 36, r: 33, fill: "rgba(7,4,4,0.75)" }),
-    svg("circle", { cx: 36, cy: 36, r, fill: "none", stroke: "rgba(255,255,255,0.08)", "stroke-width": 6 }),
-    svg("circle", {
-      cx: 36, cy: 36, r, fill: "none", stroke: "url(#fire)", "stroke-width": 6, "stroke-linecap": "round",
-      "stroke-dasharray": `${(score / 10) * c} ${c}`, transform: "rotate(-90 36 36)",
-    }),
-    svg("text", { x: 36, y: 42, "text-anchor": "middle", "font-size": 18 }, score.toFixed(1)),
-  );
 }
 
 // ---------- тренер на Opus (через воркер из worker/coach.js) ----------
@@ -1357,7 +1406,7 @@ function chatFor(a) {
 function chatBlock(a) {
   let history = localJson(chatKey(a), []);
   const list = h("div", { class: "chat-list", role: "log", "aria-live": "polite" });
-  const input = h("textarea", { class: "chat-input", rows: "1", maxlength: "400", placeholder: "Спроси тренера про эту катку", "aria-label": "Вопрос тренеру" });
+  const input = h("textarea", { class: "chat-input", rows: "1", maxlength: "400", placeholder: "Спроси про эту катку", "aria-label": "Вопрос тренеру" });
   const send = h("button", { class: "chat-send", type: "button", "aria-label": "Отправить" },
     svg("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, svg("path", { d: "M5 12h13M13 6l6 6-6 6" })));
   const note = h("p", { class: "chat-note small muted", role: "status" });
@@ -1810,8 +1859,8 @@ function buildTab(a) {
 
 function chartsTab(a) {
   const t = a.timeline;
-  const series = [{ values: t.player, color: "#ff6a2a", label: t.hero, glow: true }];
-  if (t.opponent) series.push({ values: t.opponent, color: "#9b3b5a", label: t.opponent_name });
+  const series = [{ values: t.player, color: "#e8c27a", label: t.hero, glow: true }];
+  if (t.opponent) series.push({ values: t.opponent, color: "#9d8cff", label: t.opponent_name });
   return h("div", {},
     h("p", { class: "small muted" }, "Веди пальцем по графику, чтобы увидеть значения на каждой минуте."),
     h("h2", {}, "Нетворс против оппонента"),
@@ -1819,14 +1868,14 @@ function chartsTab(a) {
     t.team_gold_adv.length > 0 && h("h2", {}, "Преимущество команды"),
     t.team_gold_adv.length > 0 && h("div", { class: "card" }, areaChart(t.team_gold_adv)),
     h("h2", {}, "Добито крипов"),
-    h("div", { class: "card" }, lineChart([{ values: t.last_hits, color: "#e6b65c" }], {})),
+    h("div", { class: "card" }, lineChart([{ values: t.last_hits, color: "#e8c27a" }], {})),
   );
 }
 
 function legend(series, deaths) {
   return h("div", { class: "legend" },
     ...series.map((s) => h("span", {}, h("i", { "data-color": s.color }), s.label)),
-    deaths && h("span", {}, h("i", { "data-color": "#ff2a2a" }), "твои смерти"),
+    deaths && h("span", {}, h("i", { "data-color": "#f2555a" }), "твои смерти"),
   );
 }
 
@@ -1853,9 +1902,9 @@ function chartFrame(values, len, { zero = false, unit = "" } = {}) {
 function makeInteractive(frame, series, { deaths = [], valueFmt = (v) => num(v) } = {}) {
   const { chart, x, y, W, H, L, R, T, B } = frame;
   const len = Math.max(...series.map((s) => s.values.length));
-  const guide = svg("line", { y1: T, y2: H - B, stroke: "#e6b65c", "stroke-width": 1, "stroke-dasharray": "3 3", opacity: 0 });
-  const dots = series.map((s) => svg("circle", { r: 4, fill: s.color, stroke: "#070404", "stroke-width": 2, opacity: 0 }));
-  const box = svg("rect", { rx: 6, fill: "rgba(7,4,4,0.92)", stroke: "rgba(255,96,48,0.45)", opacity: 0 });
+  const guide = svg("line", { y1: T, y2: H - B, stroke: "#e8c27a", "stroke-width": 1, "stroke-dasharray": "3 3", opacity: 0 });
+  const dots = series.map((s) => svg("circle", { r: 4, fill: s.color, stroke: "#08090c", "stroke-width": 2, opacity: 0 }));
+  const box = svg("rect", { rx: 8, fill: "rgba(13,15,20,0.94)", stroke: "rgba(232,194,122,0.4)", opacity: 0 });
   const lines = [svg("text", { class: "tt tt-title" })].concat(series.map(() => svg("text", { class: "tt" })), [svg("text", { class: "tt tt-death" })]);
   const tip = svg("g", { "pointer-events": "none" }, guide, ...dots, box, ...lines);
   chart.append(tip);
@@ -1926,8 +1975,8 @@ function lineChart(series, { markers = [], unit = "" } = {}) {
     const i = Math.min(Math.floor(t / 60), base.length - 1);
     const cx = x(Math.min(t / 60, base.length - 1)), cy = y(base[i]);
     chart.append(
-      svg("line", { x1: cx - 3.5, y1: cy - 3.5, x2: cx + 3.5, y2: cy + 3.5, stroke: "#ff2a2a", "stroke-width": 2 }),
-      svg("line", { x1: cx - 3.5, y1: cy + 3.5, x2: cx + 3.5, y2: cy - 3.5, stroke: "#ff2a2a", "stroke-width": 2 }),
+      svg("line", { x1: cx - 3.5, y1: cy - 3.5, x2: cx + 3.5, y2: cy + 3.5, stroke: "#f2555a", "stroke-width": 2 }),
+      svg("line", { x1: cx - 3.5, y1: cy + 3.5, x2: cx + 3.5, y2: cy - 3.5, stroke: "#f2555a", "stroke-width": 2 }),
     );
   }
   return makeInteractive(frame, series, { deaths: markers });
@@ -1940,11 +1989,11 @@ function areaChart(values) {
   const last = values.length - 1;
   const area = (clamped) => `${pathOf(clamped, x, y)} L${x(last).toFixed(1)},${y(0).toFixed(1)} L${x(0).toFixed(1)},${y(0).toFixed(1)} Z`;
   chart.append(
-    svg("path", { d: area(values.map((v) => Math.max(v, 0))), fill: "#ff8a3d", "fill-opacity": 0.55 }),
-    svg("path", { d: area(values.map((v) => Math.min(v, 0))), fill: "#b3122b", "fill-opacity": 0.75 }),
-    svg("line", { x1: x(0), x2: x(last), y1: y(0), y2: y(0), stroke: "#9b8576", "stroke-width": 1 }),
+    svg("path", { d: area(values.map((v) => Math.max(v, 0))), fill: "#4fd1a5", "fill-opacity": 0.45 }),
+    svg("path", { d: area(values.map((v) => Math.min(v, 0))), fill: "#f2555a", "fill-opacity": 0.55 }),
+    svg("line", { x1: x(0), x2: x(last), y1: y(0), y2: y(0), stroke: "#5d6270", "stroke-width": 1 }),
   );
-  return makeInteractive(frame, [{ values, color: "#ff8a3d", label: "команда" }], { valueFmt: (v) => (v > 0 ? "+" : "") + num(v) });
+  return makeInteractive(frame, [{ values, color: "#e8c27a", label: "команда" }], { valueFmt: (v) => (v > 0 ? "+" : "") + num(v) });
 }
 
 // Ширины полосок и цвета легенды выставляем из JS: CSP запрещает inline-стили в разметке
@@ -1995,6 +2044,8 @@ async function boot() {
     if (tg.isVersionAtLeast && tg.isVersionAtLeast("7.7") && tg.disableVerticalSwipes) tg.disableVerticalSwipes();
   }
   if (!booted) {
+    // фон «ночная карта»: свет баз в углах и река
+    document.body.prepend(h("div", { class: "backdrop", "aria-hidden": "true" }, h("i", { class: "radiant" }), h("i", { class: "dire" }), h("i", { class: "river" })));
     buildTabbar();
     // Офлайн-кэш: открытые разборы и справочники работают без сети
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});

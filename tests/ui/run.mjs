@@ -139,7 +139,7 @@ async function shot(name, { full = true } = {}) {
   if (only && !only.has(name)) return;
   await page.waitForTimeout(350);
   const file = join(OUT, `${String(shots.length + 1).padStart(2, "0")}-${name}.png`);
-  await page.screenshot({ path: file, fullPage: full });
+  await page.screenshot({ path: file, fullPage: full && !process.env.UI_VIEWPORT });
   shots.push(file);
 }
 // После каждого шага: на экране не должно быть служебного мусора вроде «undefined» или «NaN»
