@@ -1040,7 +1040,7 @@ const histKda = (m) => (m.kills + m.assists) / Math.max(1, m.deaths);
 const HIST_ROWS = [
   ["GPM", (m) => m.gold_per_min, false, (v) => String(Math.round(v))],
   ["XPM", (m) => m.xp_per_min, false, (v) => String(Math.round(v))],
-  ["Крипов в минуту", (m) => (m.last_hits * 60) / m.duration, false, (v) => v.toFixed(1)],
+  ["Крипов в минуту", (m) => (m.last_hits == null ? NaN : (m.last_hits * 60) / m.duration), false, (v) => v.toFixed(1)],
   ["Смерти", (m) => m.deaths, true, (v) => (Number.isInteger(v) ? String(v) : v.toFixed(1))],
   ["KDA", histKda, false, (v) => v.toFixed(1)],
 ];
@@ -1055,6 +1055,7 @@ function historyRows(self, pool) {
   const rows = HIST_ROWS.map(([label, f, lowerBetter, fmt]) => {
     const v = f(self);
     const vals = pool.map(f).filter(Number.isFinite).sort((x, y) => x - y);
+    if (!Number.isFinite(v) || vals.length < HIST_MIN) return null; // у OpenDota бывают пустые поля
     const med = quantile(vals, 0.5), q1 = quantile(vals, 0.25), q3 = quantile(vals, 0.75);
     const better = vals.filter((x) => (lowerBetter ? v < x : v > x)).length;
     const good = lowerBetter ? v < q1 : v > q3, bad = lowerBetter ? v > q3 : v < q1;
@@ -1092,7 +1093,7 @@ function historyBlock(a) {
     } else {
       const { rows, verdict } = historyRows(self, pool);
       body[0] = h("summary", {}, "Обычно у тебя", h("span", { class: "muted" }, ` · ${verdict.toLowerCase().replace(/\.$/, "")}`));
-      body.push(...rows,
+      body.push(...rows.filter(Boolean),
         h("div", { class: "small muted" }, `${verdict} Медиана ${pool.length} ${plural(pool.length, "прошлой игры", "прошлых игр", "прошлых игр")} ${sample} → эта игра. Турбо и игры короче 10 минут не считаю.`));
     }
     box.replaceChildren(...body);
