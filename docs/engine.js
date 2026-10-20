@@ -93,6 +93,8 @@ const SUPPORT_SKIP_METRICS = new Set(["gold_per_min", "last_hits_per_min", "towe
 const MAP_CENTER_SUM = 256;
 const RIVER_MARGIN = 12;
 const EARLY_DEATH_TIME = 180;
+const LANING_END = 600; // до 10-й минуты смерть на линии: размены, а не «ходил один по карте»
+const RUNE_FIGHT_END = 90; // смерть в первые полторы минуты — драка за руну, а не линия
 const LATE_GAME_TIME = 35 * 60;
 
 // Ранги: [именительный, родительный, родительный мн.]
@@ -620,14 +622,14 @@ class MatchAnalyzer {
     if (Object.keys(this.rank).length < 3) return null;
     const pct = (k) => (this.rank[k] ? this.rank[k].pct : null);
     const p = this.p;
-    const early = (p.deaths_log || []).filter((d) => d.time < 600).length;
+    const early = (p.deaths_log || []).filter((d) => d.time < LANING_END).length;
     const earlyPct = [70, 50, 25, 10][Math.min(early, 3)];
     let lanePct = null;
     if (this.opponent && this.minutes >= 10) {
       const diff = atMinute(p.networth_t, 10) - atMinute(this.opponent.networth_t, 10);
       lanePct = Math.max(0, Math.min(100, 50 + diff / 40));
     }
-    const solo = (p.deaths_log || []).filter((d) => d.time >= 600 && this.isSoloDeath(d.time)).length;
+    const solo = (p.deaths_log || []).filter((d) => d.time >= LANING_END && this.isSoloDeath(d.time)).length;
     const have = proBuild.slice(0, 5).filter((b) => b.owned).length;
     const cats = {
       [LANE]: [pct("lh10"), earlyPct, lanePct],
@@ -824,7 +826,7 @@ class MatchAnalyzer {
     if (firstDeath && firstDeath.time < EARLY_DEATH_TIME) {
       this.add(LANE, WARN, "surv_early_death", "surv_early_death_tip", { time: mmss(firstDeath.time) });
     }
-    const early = (p.deaths_log || []).filter((d) => d.time < 600);
+    const early = (p.deaths_log || []).filter((d) => d.time < LANING_END);
     if (early.length >= 2) {
       const n = early.length;
       this.add(LANE, BAD, "lane_deaths", "lane_deaths_tip", {
@@ -833,7 +835,7 @@ class MatchAnalyzer {
       const killers = [...new Set(early.map((d) => this.od.heroNameByKey(d.key)))].join(", ");
       this.issue("lane_deaths", n * 450, "Фидил на лайне",
         `${n} ${deathsWord(n)} до 10-й минуты (${early.map((d) => mmss(d.time)).join(", ")}), убивали: ${killers}` +
-          (early[0].time < 90 ? ". Первая — ещё в файте за руну на старте" : ""),
+          (early[0].time < RUNE_FIGHT_END ? ". Первая — ещё в файте за руну на старте" : ""),
         "Пока не видишь всех врагов на миникарте, стой за своей крип-волной. Не лезь в трейд первым без преимущества по ХП и мане — так ты фидишь");
     }
   }
@@ -995,7 +997,7 @@ class MatchAnalyzer {
       const tookPart = me.damage > 0 || me.healing > 0 || me.deaths > 0 || Object.keys(me.ability_uses || {}).length > 0;
       const wasDead = dead.some(([s, e]) => s <= tf.start && tf.start <= e);
       const allyDeaths = sum(allyIdx.filter((i) => i < players.length).map((i) => players[i].deaths));
-      if (!tookPart && !wasDead && allyDeaths >= 2) result.push([tf.start, allyDeaths]);
+      if (!tookPart && !wasDead && allyDeaths >= 2) result.push([tf.start, allyDeaths, tf]);
     }
     return result;
   }
@@ -1011,6 +1013,7 @@ class MatchAnalyzer {
   isSoloDeath(t) {
     if (this.inFight(t)) return false;
     const near = (x) => Math.abs(x - t) <= 20;
+    if ((this.p.kills_log || []).some((k) => near(k.time) && k.key.startsWith("npc_dota_hero_"))) return false;
     for (const a of this.allies) {
       if (a !== this.p && (a.deaths_log || []).some((d) => near(d.time))) return false;
       if ((a.kills_log || []).some((k) => near(k.time) && k.key.startsWith("npc_dota_hero_"))) return false;
@@ -1032,7 +1035,7 @@ class MatchAnalyzer {
       this.add(SURVIVAL, GOOD, n === 0 ? "surv_no_deaths" : "surv_deaths_good", null, { n, deaths_word: deathsWord(n) });
     }
 
-    const solo = deaths.filter((d) => d.time >= 600 && this.isSoloDeath(d.time));
+    const solo = deaths.filter((d) => d.time >= LANING_END && this.isSoloDeath(d.time));
     if (solo.length >= 2) {
       const k = solo.length;
       this.add(SURVIVAL, BAD, "surv_solo", "surv_solo_tip",
@@ -1921,8 +1924,11 @@ class MatchAnalyzer {
   // Выиграли драку с перевесом, а Рошана не взяли и вышки не сломали
   checkRoshanFollowup() {
     const objs = this.match.objectives || [];
-    const kills = objs.filter((o) => o.type === "CHAT_MESSAGE_ROSHAN_KILL").map((o) => o.time).sort((a, b) => a - b);
+    const roshans = objs.filter((o) => o.type === "CHAT_MESSAGE_ROSHAN_KILL").sort((a, b) => a.time - b.time);
+    const kills = roshans.map((o) => o.time);
     const myTeam = this.p.isRadiant ? 2 : 3;
+    // Респаун считаем от любого убийства, а «взяли» — только своей командой
+    const ours = roshans.filter((o) => o.team === myTeam).map((o) => o.time);
     const enemyBuilding = this.p.isRadiant ? "badguys" : "goodguys";
     const buildingFalls = objs.filter((o) => o.type === "building_kill" && typeof o.key === "string" && o.key.includes(enemyBuilding)).map((o) => o.time);
     const allyIdx = this.allies.map((a) => this.match.players.indexOf(a));
@@ -1937,7 +1943,7 @@ class MatchAnalyzer {
       const lastRosh = kills.filter((t) => t <= tf.end).pop();
       if (lastRosh !== undefined && tf.end - lastRosh < ROSHAN_RESPAWN_MIN) continue;
       const until = tf.end + ROSHAN_FOLLOW_WINDOW;
-      if (kills.some((t) => t >= tf.start && t <= until)) continue;
+      if (ours.some((t) => t >= tf.start && t <= until)) continue;
       if (buildingFalls.some((t) => t >= tf.end && t <= until)) continue;
       missed.push(tf.start);
     }
@@ -2184,9 +2190,13 @@ class MatchAnalyzer {
     const objs = this.match.objectives || [];
     const ownSide = p.isRadiant ? "goodguys" : "badguys";
     const enemyTeam = p.isRadiant ? 3 : 2;
-    const lost = (t0, t1) => {
+    // lane у OpenDota географический: 1 низ, 2 мид, 3 верх (4 и 5 — лес)
+    const myLane = { 1: "bot", 2: "mid", 3: "top" }[p.lane];
+    // На стадии линий смерть в миду не связана с вышкой на боте: берём только свою линию
+    const lost = (t0, t1, laneOnly = false) => {
       const out = [];
-      const fallen = objs.filter((o) => o.type === "building_kill" && typeof o.key === "string" && o.key.includes(ownSide) && o.time >= t0 && o.time <= t1);
+      const fallen = objs.filter((o) => o.type === "building_kill" && typeof o.key === "string" && o.key.includes(ownSide) && o.time >= t0 && o.time <= t1
+        && (!laneOnly || (myLane && o.key.endsWith(`_${myLane}`))));
       const counts = new Map();
       for (const o of fallen) counts.set(buildingName(o.key), (counts.get(buildingName(o.key)) || 0) + 1);
       if (counts.size) out.push(`за 2 минуты враги сломали: ${[...counts].map(([name, n]) => (n > 1 ? `${name} ×${n}` : name)).join(", ")}`);
@@ -2208,7 +2218,7 @@ class MatchAnalyzer {
     const removed = new Map();
     for (const a of this.allies) for (const w of a.obs_left_log || []) if ("ehandle" in w) removed.set(w.ehandle, w.time);
     const wardsAt = (t) => sum(this.allies.map((a) => (a.obs_log || []).filter((w) =>
-      w.time <= t && t - w.time < 360 && !(removed.has(w.ehandle) && removed.get(w.ehandle) <= t)).length));
+      w.time <= t && t - w.time < OBSERVER_LIFETIME && !(removed.has(w.ehandle) && removed.get(w.ehandle) <= t)).length));
     const fightAt = (t) => (this.match.teamfights || []).find((tf) => tf.start - 2 <= t && t <= tf.end + 2);
     const allyDeathsNear = (t) => sum(this.allies.filter((a) => a !== p).map((a) =>
       (a.deaths_log || []).filter((d) => d.time > t && d.time <= t + 30).length));
@@ -2218,10 +2228,20 @@ class MatchAnalyzer {
       const facts = [];
       const killer = this.od.heroNameByKey(d.key);
       const tf = fightAt(d.time);
-      if (killer === "башня") facts.push("убила вышка");
-      else if (!d.key.startsWith("npc_dota_hero_")) facts.push("убили крипы или нейтралы");
-      else facts.push(`убил ${killer}`);
-      facts.push(tf ? "в командной драке" : this.isSoloDeath(d.time) ? "один, рядом своих не было" : "в мелкой стычке");
+      const laning = !tf && d.time < LANING_END;
+      if (killer === "башня") facts.push("тебя убила вышка");
+      else if (!d.key.startsWith("npc_dota_hero_")) facts.push("тебя убили крипы или нейтралы");
+      else facts.push(`тебя убил ${killer}`);
+      const alone = !tf && !laning && this.isSoloDeath(d.time);
+      if (tf) facts.push("в командной драке");
+      else if (d.time < RUNE_FIGHT_END) facts.push("драка за руну на старте, до выхода на линии");
+      else if (laning) facts.push(myLane ? `стадия линий, твоя линия: ${{ bot: "низ", mid: "мид", top: "верх" }[myLane]}` : "стадия линий");
+      else facts.push(alone ? "один, рядом своих не было" : "в мелкой стычке");
+      // На линии важно, кто убил: оппонент по линии (проигран размен) или пришёл ганг (нужна видимость)
+      const killerP = laning && myLane && d.time >= RUNE_FIGHT_END ? this.enemies.find((e) => this.od.heroKey(e.hero_id) === d.key) : null;
+      if (killerP) facts.push(killerP.lane === p.lane ? "убийца стоял на твоей линии" : "ганг: убийца пришёл не с твоей линии");
+      const traded = (p.kills_log || []).filter((k) => k.key.startsWith("npc_dota_hero_") && Math.abs(k.time - d.time) <= 20);
+      if (traded.length) facts.push(`размен: ты тоже убил ${[...new Set(traded.map((k) => this.od.heroNameByKey(k.key)))].join(", ")}`);
       if (tf) {
         const pos = Object.entries((tf.players || [])[idx]?.deaths_pos || {}).flatMap(([x, ys]) => Object.keys(ys).map((y) => [parseFloat(x), parseFloat(y)]));
         if (pos.length) facts.push(enemyHalf(pos[0][0], pos[0][1], p.isRadiant) ? "на вражеской половине карты" : "на своей половине карты");
@@ -2233,27 +2253,21 @@ class MatchAnalyzer {
       const ld = lead(d.time);
       if (ld) facts.push(ld);
       if (d.time_dead) facts.push(`лежал мёртвым ${d.time_dead} с`);
-      const after = allyDeathsNear(d.time);
+      // на линиях союзник, умерший через 20 с на другой линии, к этой смерти отношения не имеет
+      const after = laning ? 0 : allyDeathsNear(d.time);
       if (after) facts.push(`следом за тобой умерло союзников: ${after}`);
-      const cost = lost(d.time, d.time + 120);
+      const cost = lost(d.time, d.time + 120, laning);
       facts.push(...cost);
       const sw = swing(d.time);
       if (sw <= -1500) facts.push(`за 2 минуты команда потеряла ${num(-sw)} золота перевеса`);
-      const weight = 400 + (tf ? 0 : 300) + (note ? 400 : 0) + cost.length * 900 + after * 300 + Math.max(0, -sw) / 2 + (d.time_dead || 0) * 5;
+      const weight = 400 + (alone ? 300 : 0) - (traded.length ? 250 : 0) + (note ? 400 : 0) + cost.length * 900 + after * 300 + Math.max(0, -sw) / 2 + (d.time_dead || 0) * 5;
       out.push({ time: d.time, clock: mmss(d.time), kind: "death", facts, weight });
     }
-    for (const tf of this.match.teamfights || []) {
+    const enemyIdx = this.enemies.map((a) => this.match.players.indexOf(a));
+    // драка на чужой линии до 10-й минуты не «пропущена»: игрок стоял на своей
+    for (const [, mine, tf] of this.missedFights().filter(([t]) => t >= LANING_END)) {
       const ps = tf.players || [];
-      const me = ps[idx];
-      if (!me) continue;
-      const tookPart = me.damage > 0 || me.healing > 0 || me.deaths > 0 || Object.keys(me.ability_uses || {}).length > 0;
-      const wasDead = (p.deaths_log || []).some((d) => d.time <= tf.start && tf.start <= d.time + (d.time_dead ?? 0));
-      if (tookPart || wasDead) continue;
-      const allyIdx = this.allies.map((a) => this.match.players.indexOf(a));
-      const enemyIdx = this.enemies.map((a) => this.match.players.indexOf(a));
-      const mine = sum(allyIdx.filter((i) => i < ps.length).map((i) => ps[i].deaths));
       const theirs = sum(enemyIdx.filter((i) => i < ps.length).map((i) => ps[i].deaths));
-      if (mine < 2) continue;
       const facts = [`драка без тебя: союзников погибло ${mine}, врагов ${theirs}`];
       const lh = p.lh_t || [];
       const m0 = Math.floor(tf.start / 60), m1 = Math.min(Math.ceil(tf.end / 60) + 1, lh.length - 1);

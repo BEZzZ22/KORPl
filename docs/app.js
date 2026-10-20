@@ -1,7 +1,7 @@
 // Telegram Mini App: разбор матча Dota 2 внутри Телеграма.
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, CATEGORIES, BAD, WARN, GOOD,
-} from "./engine.js?v=14";
+} from "./engine.js?v=15";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -553,7 +553,7 @@ async function profileScreen() {
 
 // Тренд по последним играм: свежие 10 против предыдущих 10 (по данным recentMatches)
 function trendBlock(recent) {
-  const pool = recent.filter((m) => m.duration > 600 && m.game_mode !== 23);
+  const pool = recent.filter((m) => m.duration > 600 && m.game_mode !== TURBO_MODE);
   if (pool.length < 12) return null;
   const fresh = pool.slice(0, Math.floor(pool.length / 2)), old = pool.slice(Math.floor(pool.length / 2));
   const avg = (list, f) => list.reduce((s, m) => s + f(m), 0) / list.length;
@@ -739,7 +739,7 @@ async function matchScreen(matchId, slot, accountId, attempt = 0) {
     return;
   }
   if (!match || !match.players) {
-    errorScreen("Такого матча нет. Проверь ID.", () => go(homeScreen));
+    errorScreen("Такого матча нет. Проверь ID.", () => navRoot("home", homeScreen));
     return;
   }
   if (!isParsed(match)) {
@@ -768,7 +768,15 @@ async function matchScreen(matchId, slot, accountId, attempt = 0) {
 
   const [pro, bench, matchups] = await Promise.all([proItems(player.hero_id), heroBench(player.hero_id), heroMatchups(player.hero_id)]);
   if (stale(seq)) return;
-  const a = analyze(match, player, dictionary, knowledge, texts, pro, bench, norms, matchups);
+  let a;
+  try {
+    a = analyze(match, player, dictionary, knowledge, texts, pro, bench, norms, matchups);
+  } catch (e) {
+    // иначе на необычном матче вечно крутится «Призываю матч...»
+    console.error(e);
+    errorScreen("Не смог разобрать этот матч: у OpenDota в нём необычные данные.", () => navRoot("home", homeScreen));
+    return;
+  }
   // для блока «Обычно у тебя»: сырые цифры этой игры и чей аккаунт
   a.hist_self = { account: player.account_id, duration: match.duration, kills: player.kills, deaths: player.deaths,
     assists: player.assists, gold_per_min: player.gold_per_min, xp_per_min: player.xp_per_min, last_hits: player.last_hits };
@@ -777,7 +785,9 @@ async function matchScreen(matchId, slot, accountId, attempt = 0) {
 
 // Разбираем только свои игры: либо аккаунт не привязан, либо тебя нет в матче
 async function notYourMatch() {
+  const seq = navSeq;
   const saved = Number(await storage.get("account_id"));
+  if (stale(seq)) return;
   render(
     h("h1", {}, saved ? "Это не твоя игра" : "Привяжи аккаунт"),
     h("p", { class: "muted" }, saved
@@ -903,6 +913,7 @@ function scoreRing(score) {
 
 const COACH_URL = "https://dotacoach.2007rggg.workers.dev"; // адрес воркера с тренером
 const COACH_DAILY = 5; // разборов тренера в день на устройство
+const COACH_TIMEOUT = 75000;
 
 const safeLocal = {
   get(key) { try { return localStorage.getItem(key); } catch { return null; } },
@@ -942,7 +953,8 @@ function parseCoach(text) {
 
 function coachBlock(a) {
   if (!COACH_URL) return null;
-  const key = `coach2:${a.facts.match_id}:${a.facts.slot}`; // coach2: ответы с разбором моментов
+  // coach3: моменты с фактами о линии и размене; старые ответы писались по другим фактам и рядом с новыми врут
+  const key = `coach3:${a.facts.match_id}:${a.facts.slot}`;
   const box = h("section", { class: "card coach", "aria-labelledby": "coach-title" });
   const title = h("div", { class: "coach-title", id: "coach-title" }, "Разбор тренера");
 
@@ -977,7 +989,7 @@ function coachBlock(a) {
         const [err, todo] = t ? t[2].split(/\s*Надо было:\s*/) : [m];
         return seq(h("div", { class: "coach-moment" },
           t && h("time", {}, t[1]),
-          ep && h("p", { class: "coach-facts" }, ep.facts.join(", ")),
+          ep && h("p", { class: "coach-facts" }, ep.facts.join("; ")),
           h("p", {}, err.replace(/^Ошибка:\s*/, "")),
           todo && h("p", { class: "coach-todo" }, h("b", {}, "Надо было: "), todo)));
       }),
@@ -989,7 +1001,7 @@ function coachBlock(a) {
 
   const ask = h("button", { class: "coach-btn", type: "button" }, "Разобрать с тренером");
   const note = h("p", { class: "coach-note small muted", role: "status" },
-    "Тренер выберет главное из разбора и даст три задачи на следующую катку.");
+    "Тренер разберёт ключевые моменты катки и даст три задачи на следующую.");
   ask.onclick = async () => {
     const day = new Date().toISOString().slice(0, 10);
     const used = safeLocal.get("coach_day") === day ? Number(safeLocal.get("coach_n") || 0) : 0;
@@ -997,10 +1009,13 @@ function coachBlock(a) {
     ask.disabled = true;
     ask.textContent = "Тренер смотрит катку…";
     haptic("medium");
+    // воркер в худшем случае перебирает две нейросети около минуты (5 запросов по 12 с): дольше ждать нет смысла
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), COACH_TIMEOUT);
     try {
-      const res = await fetch(COACH_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(coachPayload(a)) });
+      const res = await fetch(COACH_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(coachPayload(a)), signal: ctrl.signal });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.text) throw new Error(data.error || "Тренер сейчас недоступен.");
+      if (!res.ok || !data.text) throw Object.assign(new Error(data.error || "Тренер сейчас недоступен."), { fromCoach: true });
       safeLocal.set("coach_day", day);
       safeLocal.set("coach_n", String(used + 1));
       safeLocal.set(key, data.text);
@@ -1008,7 +1023,11 @@ function coachBlock(a) {
     } catch (e) {
       ask.disabled = false;
       ask.textContent = "Попробовать ещё раз";
-      note.textContent = e && e.message && e.message.length < 80 ? e.message : "Тренер сейчас недоступен.";
+      // текст ошибки показываем только от воркера: у fetch он английский («Failed to fetch»)
+      note.textContent = e && e.fromCoach && e.message.length < 80 ? e.message
+        : e && e.name === "AbortError" ? "Тренер думал слишком долго. Попробуй ещё раз." : "Нет связи с тренером. Проверь интернет.";
+    } finally {
+      clearTimeout(timer);
     }
   };
   box.append(title, ask, note);
@@ -1363,7 +1382,7 @@ function lineChart(series, { markers = [], unit = "" } = {}) {
   const base = series[0].values;
   for (const t of markers) {
     const i = Math.min(Math.floor(t / 60), base.length - 1);
-    const cx = x(t / 60), cy = y(base[i]);
+    const cx = x(Math.min(t / 60, base.length - 1)), cy = y(base[i]);
     chart.append(
       svg("line", { x1: cx - 3.5, y1: cy - 3.5, x2: cx + 3.5, y2: cy + 3.5, stroke: "#ff2a2a", "stroke-width": 2 }),
       svg("line", { x1: cx - 3.5, y1: cy + 3.5, x2: cx + 3.5, y2: cy - 3.5, stroke: "#ff2a2a", "stroke-width": 2 }),
@@ -1418,8 +1437,11 @@ function startParams() {
   };
 }
 
+// Один раз за запуск: повтор boot после ошибки сети не должен второй раз собирать панель и вешать «Назад»
+let booted = false;
+
 async function boot() {
-  if (tg) {
+  if (!booted && tg) {
     tg.ready();
     tg.expand();
     if (tg.isVersionAtLeast && tg.isVersionAtLeast("6.1")) {
@@ -1430,7 +1452,8 @@ async function boot() {
     // Иначе свайп по графику сворачивает приложение вместо подсказки
     if (tg.isVersionAtLeast && tg.isVersionAtLeast("7.7") && tg.disableVerticalSwipes) tg.disableVerticalSwipes();
   }
-  buildTabbar();
+  if (!booted) buildTabbar();
+  booted = true;
   loading("Разжигаю огонь...");
   try {
     const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
