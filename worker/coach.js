@@ -71,7 +71,7 @@ export function buildPrompt(raw) {
   lines.push(`Герой: ${clip(raw.hero, 40)}. Роль: ${clip(raw.role, 40)}. Ранг: ${clip(raw.rank, 30) || "неизвестен"}.`);
   lines.push(`Итог: ${raw.won ? "победа" : "поражение"}, KDA ${clip(raw.kda, 20)}, длительность ${duration(raw.duration)}.`);
   const list = (title, arr, n, each) => {
-    const rows = (Array.isArray(arr) ? arr : []).slice(0, n).map(each).filter(Boolean);
+    const rows = (Array.isArray(arr) ? arr : []).map(each).filter(Boolean).slice(0, n);
     if (rows.length) lines.push(`${title}:\n${rows.map((r) => `- ${r}`).join("\n")}`);
   };
   list("Главные проблемы (по важности)", raw.problems, 3, (p) =>
@@ -170,7 +170,9 @@ export function problemsOf(text, prompt) {
   if (/не видно, что решил/i.test(main)) bad.push("отписка в «Главном»");
   if (bullets.some((b) => /\d+:\d+/.test(b) && /куп|собер|возьми/i.test(b))) bad.push("время покупки предмета");
   const hasItems = /Сборка под эту катку:/.test(prompt);
-  if (!hasItems && /куп|собер/i.test(joined.replace(/вард|обс|сентр/gi, "")) && !/(куп|собер)\S*\s+(вард|обс|сентр)/i.test(joined)) bad.push("предметы, которых нет в сводке");
+  // покупка вардов в одном пункте не прикрывает выдуманный предмет в другом
+  const buysItem = (b) => /куп|собер/i.test(b) && !/(куп|собер)\S*\s+(вард|обс|сентр)/i.test(b);
+  if (!hasItems && bullets.some(buysItem)) bad.push("предметы, которых нет в сводке");
   if (/смерт|умир/i.test(prompt) && !/смерт|умир|умра|сейв|погиб|кнопк|драк/i.test(joined)) bad.push("ни один пункт не про смерти и драки");
   if (bullets.some((b) => !/[.!?»)]$/.test(b))) bad.push("ответ оборван");
   if (new Set(bullets.map((b) => b.slice(0, 25))).size < bullets.length) bad.push("пункты повторяются");
