@@ -23,6 +23,10 @@ class OpenDotaError(Exception):
     """OpenDota недоступна или ответила ошибкой."""
 
 
+class ClientRequestError(Exception):
+    """OpenDota ответила 4xx: запрос неверный, повторять бессмысленно."""
+
+
 class OpenDota:
     def __init__(self):
         self.session: aiohttp.ClientSession | None = None
@@ -39,7 +43,8 @@ class OpenDota:
         self._hero_bench: dict[int, tuple[float, dict]] = {}
 
     async def start(self):
-        self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
+        if self.session is None:
+            self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
         heroes = await self._request("GET", "/constants/heroes")
         # Компактные справочники для движка разбора (engine_cli.mjs)
         self.constants = {
@@ -74,8 +79,12 @@ class OpenDota:
                         return None
                     if resp.status == 429 or resp.status >= 500:
                         raise OpenDotaError(f"HTTP {resp.status}")
-                    resp.raise_for_status()
+                    if resp.status >= 400:
+                        # Повтор ошибку клиента не исправит: сразу отдаём её наверх
+                        raise ClientRequestError(f"HTTP {resp.status}")
                     return await resp.json()
+            except ClientRequestError as e:
+                raise OpenDotaError(f"{method} {path}: {e}") from e
             except (aiohttp.ClientError, asyncio.TimeoutError, OpenDotaError) as e:
                 log.warning("OpenDota %s %s failed (attempt %d): %s", method, path, attempt + 1, e)
                 await asyncio.sleep(2**attempt)

@@ -1,7 +1,7 @@
 // Telegram Mini App: разбор матча Dota 2 внутри Телеграма.
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, CATEGORIES, BAD, WARN, GOOD,
-} from "./engine.js?v=7";
+} from "./engine.js?v=8";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -31,6 +31,9 @@ const app = document.getElementById("app");
 let dictionary = null, knowledge = null, texts = null, itemIds = null, norms = {}, glossary = [];
 let pollTimer = null;
 let section = "home", lastAnalysis = null, tabbar = null;
+// Растёт при каждом переходе: экран, догрузившийся после ухода с него, не перерисовывает чужой
+let navSeq = 0;
+const stale = (seq) => seq !== navSeq;
 const proCache = new Map();
 // Подсказки графиков прячутся по тапу вне графика: один общий обработчик на документ
 const chartHiders = new Set();
@@ -163,6 +166,7 @@ const navStack = [];
 const backSupported = () => Boolean(tg && tg.BackButton && tg.isVersionAtLeast && tg.isVersionAtLeast("6.1"));
 
 function go(screen, ...args) {
+  navSeq++;
   if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
   navStack.push([screen, args]);
   if (backSupported()) navStack.length > 1 ? tg.BackButton.show() : tg.BackButton.hide();
@@ -228,7 +232,9 @@ function errorScreen(message, retry) {
 
 async function homeScreen() {
   section = "home";
+  const seq = navSeq;
   const account = await storage.get("account_id");
+  if (stale(seq)) return;
   const matchInput = h("input", { inputmode: "numeric", placeholder: "ID матча или ссылка", "aria-label": "ID матча" });
   const openMatch = () => {
     const m = /(?<!\d)(\d{7,11})(?!\d)/.exec(matchInput.value);
@@ -255,7 +261,7 @@ async function homeScreen() {
   render(...nodes,
     h("div", { class: "row" },
       h("h2", { class: "grow" }, "Последние игры"),
-      h("button", { class: "ghost", onclick: () => { storage.set("account_id", ""); go(homeScreen); } }, "Сменить"),
+      h("button", { class: "ghost", onclick: () => { storage.set("account_id", ""); navRoot("home", homeScreen); } }, "Сменить"),
     ),
     list,
   );
@@ -281,12 +287,15 @@ function accountForm() {
     const id = toAccountId(input.value);
     if (!id) { status.textContent = "Это не похоже на Friend ID."; return; }
     status.textContent = "Проверяю...";
+    const seq = navSeq;
     try {
       const player = await api(`/players/${id}`);
+      if (stale(seq)) return;
       if (!player || !player.profile) { status.textContent = "OpenDota не знает такой аккаунт."; return; }
       storage.set("account_id", String(id));
       haptic("medium");
-      go(homeScreen);
+      if (section === "profile") navRoot("profile", profileScreen);
+      else navRoot("home", homeScreen);
     } catch {
       status.textContent = "OpenDota не отвечает. Попробуй ещё раз.";
     }
@@ -322,7 +331,9 @@ function rankPip(tier) {
 
 async function profileScreen() {
   section = "profile";
+  const seq = navSeq;
   const account = await storage.get("account_id");
+  if (stale(seq)) return;
   if (!account) {
     render(h("div", { class: "page-head" }, h("h1", {}, "Профиль")),
       h("p", { class: "muted" }, "Привяжи аккаунт — покажу ранг, форму и любимых героев."), accountForm());
@@ -338,13 +349,14 @@ async function profileScreen() {
       api(`/players/${account}/heroes`),
     ]);
   } catch {
-    errorScreen("OpenDota не отвечает.", profileScreen);
+    if (!stale(seq)) errorScreen("OpenDota не отвечает.", () => navRoot("profile", profileScreen));
     return;
   }
+  if (stale(seq)) return;
   if (!player || !player.profile) {
     render(h("div", { class: "page-head" }, h("h1", {}, "Профиль")),
       h("div", { class: "card muted" }, "OpenDota потерял этот аккаунт. Привяжи заново."),
-      h("button", { class: "ghost", onclick: () => { storage.set("account_id", ""); go(homeScreen); } }, "Сменить аккаунт"));
+      h("button", { class: "ghost", onclick: () => { storage.set("account_id", ""); navRoot("home", homeScreen); } }, "Сменить аккаунт"));
     return;
   }
 
@@ -423,10 +435,13 @@ function matchListItem(m, account) {
 
 async function matchScreen(matchId, slot, accountId, attempt = 0) {
   if (attempt === 0) loading("Призываю матч...");
+  const seq = navSeq;
   let match;
   try {
     match = await api(`/matches/${matchId}`);
+    if (stale(seq)) return;
   } catch {
+    if (stale(seq)) return;
     errorScreen("OpenDota не отвечает.", () => go(matchScreen, matchId, slot, accountId));
     return;
   }
@@ -454,11 +469,13 @@ async function matchScreen(matchId, slot, accountId, attempt = 0) {
   if (!player && accountId) player = match.players.find((p) => p.account_id === accountId);
   if (!player) {
     const saved = Number(await storage.get("account_id"));
+    if (stale(seq)) return;
     if (saved) player = match.players.find((p) => p.account_id === saved);
   }
   if (!player) { heroPicker(match); return; }
 
   const [pro, bench] = await Promise.all([proItems(player.hero_id), heroBench(player.hero_id)]);
+  if (stale(seq)) return;
   analysisScreen(analyze(match, player, dictionary, knowledge, texts, pro, bench, norms));
 }
 

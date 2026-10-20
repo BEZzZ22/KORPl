@@ -275,3 +275,53 @@ def test_no_raw_placeholders_anywhere(match, od):
         chunks += [x for p in a.summary["problems"] for x in (p["title"], p["fact"], p["action"])] + [a.summary["goal"]]
         for chunk in chunks:
             assert not any(b in chunk for b in bad), chunk
+
+
+def test_split_message_keeps_tags_and_entities():
+    long_block = "\n".join(f"<b>строка {i}</b> " + "слово " * 30 for i in range(40))
+    chunks = report.split_message(f"<b>Заголовок</b>\n\n{long_block}", limit=1000)
+    assert len(chunks) > 1
+    for c in chunks:
+        assert len(c) <= 1000
+        assert c.count("<b>") == c.count("</b>")
+    ai = "&lt;" + "а&amp;б " * 400
+    for c in report.split_message(ai, limit=500):
+        assert len(c) <= 500
+        assert c.count("&") == c.count(";"), c[-20:]
+
+
+def test_blocklist_remembers_id_after_username_change(monkeypatch, tmp_path):
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    import bot
+
+    monkeypatch.setattr(bot, "BLOCKED_USERNAMES", {"blocked"})
+    monkeypatch.setattr(bot, "db", Storage(tmp_path / "b.db"))
+    mw = bot.BlocklistMiddleware()
+
+    async def call(username):
+        handler, event = AsyncMock(return_value="ok"), SimpleNamespace(answer=AsyncMock())
+        return await mw(handler, event, {"event_from_user": SimpleNamespace(id=42, username=username)})
+
+    assert asyncio.run(call("Blocked")) is None
+    assert asyncio.run(call("new_nick")) is None  # сменил ник — всё равно в блоке
+    bot.db.close()
+
+
+def test_ai_quota_refund(tmp_path):
+    db = Storage(tmp_path / "q.db")
+    assert db.take_ai_quota(1, 1)
+    assert not db.take_ai_quota(1, 1)
+    db.refund_ai_quota(1)
+    assert db.take_ai_quota(1, 1)
+    db.close()
+
+
+def test_ai_prompt_has_names_not_ids(match, od):
+    import coach_ai
+
+    prompt = coach_ai.build_prompt(run(match, match["players"][2], od))
+    assert "enemy_names" in prompt and "Clinkz" in prompt
+    assert '"enemies"' not in prompt and "Мелкие ошибки с точным временем" in prompt

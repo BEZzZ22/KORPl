@@ -46,8 +46,13 @@ WEBAPP_URL = os.getenv("WEBAPP_URL", "").rstrip("/")
 MESSAGE_INTERVAL = 1.0  # не чаще одного сообщения в секунду от одного человека
 ANALYSIS_COOLDOWN = 10.0  # и не чаще одного разбора в 10 секунд
 
+MAX_PARALLEL_ANALYSES = 3  # больше одновременных разборов не тянем: каждый — отдельный процесс Node
+STARTUP_RETRIES = 6
+
 MATCH_ID_RE = re.compile(r"(?<!\d)(\d{7,11})(?!\d)")
 MAX_ACCOUNT_ID = 2**32 - 1
+OPENDOTA_DOWN = "OpenDota сейчас не отвечает. Попробуй через минуту."
+
 
 router = Router()
 # Бот работает только в личке: в группах его могли бы спамить чужие люди
@@ -56,6 +61,7 @@ router.callback_query.filter(F.message.chat.type == ChatType.PRIVATE)
 
 od = OpenDota()
 db: Storage | None = None
+engine_slots = asyncio.Semaphore(MAX_PARALLEL_ANALYSES)
 
 
 class BlocklistMiddleware(BaseMiddleware):
@@ -63,13 +69,22 @@ class BlocklistMiddleware(BaseMiddleware):
 
     async def __call__(self, handler, event, data):
         user = data.get("event_from_user")
-        if user and user.username and user.username.lower() in BLOCKED_USERNAMES:
+        if user and self.blocked(user):
             if isinstance(event, CallbackQuery):
                 await event.answer(BLOCKED_MESSAGE[:200], show_alert=True)
             else:
                 await event.answer(escape(BLOCKED_MESSAGE))
             return None
         return await handler(event, data)
+
+    @staticmethod
+    def blocked(user) -> bool:
+        if user.username and user.username.lower() in BLOCKED_USERNAMES:
+            # Запоминаем id: после смены ника блок останется
+            if db is not None:
+                db.block(user.id)
+            return True
+        return db is not None and db.is_blocked(user.id)
 
 
 class ThrottleMiddleware(BaseMiddleware):
@@ -188,7 +203,11 @@ async def cmd_me(message: Message, command: CommandObject):
         await message.answer("Это не похоже на Steam ID или Friend ID.")
         return
 
-    player = await od.player(account_id)
+    try:
+        player = await od.player(account_id)
+    except OpenDotaError:
+        await message.answer(OPENDOTA_DOWN)
+        return
     if not player:
         await message.answer("OpenDota не знает такой аккаунт. Проверь ID.")
         return
@@ -216,7 +235,11 @@ async def cmd_last(message: Message):
     account_id = await require_account(message, message.from_user.id)
     if not account_id:
         return
-    matches = await od.recent_matches(account_id)
+    try:
+        matches = await od.recent_matches(account_id)
+    except OpenDotaError:
+        await message.answer(OPENDOTA_DOWN)
+        return
     if not matches:
         await no_matches(message, account_id)
         return
@@ -228,7 +251,11 @@ async def cmd_recent(message: Message):
     account_id = await require_account(message, message.from_user.id)
     if not account_id:
         return
-    matches = (await od.recent_matches(account_id))[:5]
+    try:
+        matches = (await od.recent_matches(account_id))[:5]
+    except OpenDotaError:
+        await message.answer(OPENDOTA_DOWN)
+        return
     if not matches:
         await no_matches(message, account_id)
         return
@@ -242,7 +269,10 @@ async def cmd_recent(message: Message):
 
 
 async def no_matches(message: Message, account_id: int):
-    await od.refresh_player(account_id)
+    try:
+        await od.refresh_player(account_id)
+    except OpenDotaError:
+        pass  # не страшно: просто попросим включить доступ к матчам
     await message.answer(
         "Не нашёл матчей. Проверь, что в Доте включено: Настройки → Социальное → "
         "«Открыть доступ к данным матчей». Я попросил OpenDota обновить профиль, попробуй через пару минут."
@@ -298,7 +328,7 @@ async def run_analysis(message: Message, user_id: int, match_id: int,
     try:
         await analyze_match(message, user_id, match_id, account_id, slot)
     except OpenDotaError:
-        await message.answer("OpenDota сейчас не отвечает. Попробуй через минуту.")
+        await message.answer(OPENDOTA_DOWN)
     finally:
         guard.finish(user_id)
 
@@ -330,7 +360,8 @@ async def analyze_match(message: Message, user_id: int, match_id: int, account_i
 
     pro_items, hero_bench = await asyncio.gather(od.pro_items(player["hero_id"]), od.hero_bench(player["hero_id"]))
     try:
-        result = await asyncio.to_thread(analysis.analyze, match, player, od, pro_items, hero_bench)
+        async with engine_slots:
+            result = await asyncio.to_thread(analysis.analyze, match, player, od, pro_items, hero_bench)
     except analysis.EngineError:
         log.exception("Engine error")
         await message.answer("Не получилось разобрать матч: сломался движок анализа. Попробуй позже.")
@@ -359,7 +390,8 @@ async def send_ai_review(message: Message, user_id: int, result: analysis.Analys
     try:
         text = await coach_ai.analyze(result)
     except Exception:
-        log.exception("Claude API error")
+        log.exception("AI coach error")
+        db.refund_ai_quota(user_id)
         await message.answer("ИИ-тренер сейчас недоступен, но разбор по цифрам выше в силе.")
         return
     # Ответ модели экранируем, чтобы он не сломал HTML-разметку
@@ -385,7 +417,15 @@ async def main():
     if not token:
         raise SystemExit("Нет BOT_TOKEN. Создай файл .env по примеру .env.example")
     db = Storage(DB_PATH)
-    await od.start()
+    for attempt in range(STARTUP_RETRIES):
+        try:
+            await od.start()
+            break
+        except OpenDotaError:
+            if attempt == STARTUP_RETRIES - 1:
+                raise
+            log.warning("OpenDota не ответила при старте, жду и пробую снова")
+            await asyncio.sleep(10 * (attempt + 1))
 
     bot = Bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     await bot.set_my_commands([

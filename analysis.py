@@ -79,8 +79,11 @@ def num(n: int | float) -> str:
     return ("-" if n < 0 else "") + f"{abs(n):,}".replace(",", " ")
 
 
+FINDING_FIELDS = Finding.__dataclass_fields__.keys()
+
+
 def from_engine(data: dict) -> Analysis:
-    findings = [Finding(**f) for f in data.pop("findings", [])]
+    findings = [Finding(**{k: v for k, v in f.items() if k in FINDING_FIELDS}) for f in data.pop("findings", [])]
     known = Analysis.__dataclass_fields__.keys()
     return Analysis(findings=findings, **{k: v for k, v in data.items() if k in known})
 
@@ -101,4 +104,7 @@ def analyze(match: dict, player: dict, od: OpenDota, pro_items: dict[str, int] |
         raise EngineError(f"движок разбора не запустился: {e}") from e
     if proc.returncode != 0:
         raise EngineError(proc.stderr.strip()[:500] or f"код {proc.returncode}")
-    return from_engine(json.loads(proc.stdout))
+    try:
+        return from_engine(json.loads(proc.stdout))
+    except (ValueError, TypeError) as e:
+        raise EngineError(f"движок вернул непонятный ответ: {e}") from e

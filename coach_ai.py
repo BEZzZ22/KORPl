@@ -19,6 +19,7 @@ SYSTEM = """Ты опытный тренер по Dota 2. Тебе дают ст
 Правила:
 - Учитывай героя, позицию, оппонента по линии и вражеский пик. Советы должны быть про этого героя в этом матче, а не общие.
 - Свяжи ошибки между собой: например, проигранная линия -> поздний предмет -> смерти в драках.
+- Разбирай мелкие ошибки как тренер по реплею: называй минуту и что именно надо было нажать или сделать в этот момент.
 - Оцени сборку предметов против вражеского пика: чего не хватало, что было лишним.
 - Опирайся только на данные. Не выдумывай события, которых в них нет.
 - Пиши по-русски, просто и по делу, как друг, который шарит. Без мата и без воды.
@@ -41,14 +42,27 @@ def enabled() -> bool:
     return provider() is not None
 
 
+# Номера героев модели ни о чём не говорят, вместо них передаём имена
+HIDDEN_FACTS = {"allies", "enemies", "hero_id", "lane_opponent_id", "slot", "benchmarks_percentile"}
+
+
 def build_prompt(a: Analysis) -> str:
-    findings = [f"[{f.category}] {f.text}" for f in a.findings]
+    facts = {k: v for k, v in a.facts.items() if k not in HIDDEN_FACTS}
+    s = a.summary or {}
+    problems = [f"{p['title']}: {p['fact']}" for p in s.get("problems", [])]
+    micro = [f"[{f.category}] {f.text}" for f in a.findings if f.kind == "micro"]
+    findings = [f"[{f.category}] {f.text}" for f in a.findings if f.kind != "micro"]
     return (
+        f"Роль: {s.get('role') or '?'}, ранг: {s.get('rank') or 'неизвестен'}\n"
         "Статистика игрока:\n"
-        + json.dumps(a.facts, ensure_ascii=False, indent=1)
+        + json.dumps(facts, ensure_ascii=False, indent=1)
         + "\n\nОценки по разделам (1-10): "
         + json.dumps(a.scores, ensure_ascii=False)
-        + "\n\nНайденные автоматикой ошибки и плюсы:\n"
+        + "\n\nГлавные проблемы (по убыванию цены в золоте):\n"
+        + "\n".join(f"- {x}" for x in problems or ["нет"])
+        + "\n\nМелкие ошибки с точным временем:\n"
+        + "\n".join(f"- {x}" for x in micro or ["нет"])
+        + "\n\nОстальные находки автоматики:\n"
         + "\n".join(f"- {x}" for x in findings or ["нет"])
     )
 

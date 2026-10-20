@@ -1074,7 +1074,7 @@ class MatchAnalyzer {
     } else if (this.core && dewards >= 3) {
       this.add(VISION, GOOD, "vision_dewards_good", null, { n: dewards });
     }
-    if (this.pos === 2 && this.minutes >= 20 && !this.dominant) {
+    if (this.pos === 2 && this.minutes >= 20 && !this.dominant && !this.missedEarlyPowerRunes()) {
       const runes = p.rune_pickups ?? 0;
       if (runes < this.minutes / 5) this.add(VISION, WARN, "vision_runes", "vision_runes_tip", { n: runes });
     }
@@ -1363,8 +1363,6 @@ class MatchAnalyzer {
     }
   }
 
-  // ---------- сравнение с другими игроками на герое ----------
-
   // ---------- мелкие ошибки: конкретные моменты со временем ----------
 
   checkMicro() {
@@ -1424,10 +1422,15 @@ class MatchAnalyzer {
     this.micro(LANE, WARN, "micro_core_denies", { dn_text: dnText });
   }
 
-  checkMidRunes() {
+  // Мидер без единой руны силы до 12:00 (по логу рун)
+  missedEarlyPowerRunes() {
     const log = this.p.runes_log;
-    if (this.pos !== 2 || !this.roleSure || this.dominant || !Array.isArray(log) || this.duration < 900) return;
-    if (log.some((r) => r.time <= 735 && POWER_RUNES.has(String(r.key)))) return;
+    if (this.pos !== 2 || !this.roleSure || this.dominant || !Array.isArray(log) || this.duration < 900) return false;
+    return !log.some((r) => r.time <= 735 && POWER_RUNES.has(String(r.key)));
+  }
+
+  checkMidRunes() {
+    if (!this.missedEarlyPowerRunes()) return;
     this.micro(LANE, WARN, "micro_mid_runes");
     this.issue("mid_runes", 400, "Мид без рун",
       "До 12:00 ты не взял ни одной руны силы — а они появляются на 6:00, 8:00, 10:00 и 12:00",
@@ -1439,9 +1442,12 @@ class MatchAnalyzer {
     const lh = this.p.lh_t || [];
     if (!this.core || !this.roleSure || this.dominant || this.minutes < 21 || lh.length < 21) return;
     const dead = this.deadMinuteSet(), busy = this.fightMinutes();
+    // Простои уже разобраны отдельной проверкой «АФК», второй раз их не считаем
+    const idle = this.idleWindows();
+    const isIdle = (m) => idle.some(([s, e]) => s <= m - 1 && m - 1 < e);
     let free = 0, gained = 0;
     for (let m = 11; m <= 20; m++) {
-      if (dead.has(m - 1) || busy.has(m - 1)) continue;
+      if (dead.has(m - 1) || busy.has(m - 1) || isIdle(m)) continue;
       free++;
       gained += lh[m] - lh[m - 1];
     }
@@ -1513,7 +1519,7 @@ class MatchAnalyzer {
   checkFightButtons() {
     const idx = this.match.players.indexOf(this.p);
     const unused = [], silent = [];
-    const usedAt = {};
+    const usedAt = {}, insideUses = {};
     for (const tf of this.match.teamfights || []) {
       const me = (tf.players || [])[idx];
       if (!me) continue;
@@ -1527,7 +1533,10 @@ class MatchAnalyzer {
         }
         if (!Object.keys(me.ability_uses || {}).length && !Object.keys(items || {}).length && !(me.damage > 0)) silent.push(t);
       }
-      for (const key of Object.keys(items || {})) usedAt[key] = tf.end;
+      for (const [key, n] of Object.entries(items || {})) {
+        usedAt[key] = tf.end;
+        insideUses[key] = (insideUses[key] || 0) + n;
+      }
     }
 
     const byItem = new Map();
@@ -1536,7 +1545,10 @@ class MatchAnalyzer {
       const item = this.od.itemName(key);
       const times = ts.slice(0, 3).map(mmss).join(", ");
       const n = ts.length;
-      this.micro(FIGHTS, key === "black_king_bar" || n >= 2 ? BAD : WARN, "micro_unused_item",
+      // Нажатия вне больших драк по времени не видны: предмет мог быть в откате после стычки
+      const outside = ((this.p.item_uses || {})[key] || 0) > (insideUses[key] || 0);
+      const severe = (key === "black_king_bar" || n >= 2) && !(outside && n < 2);
+      this.micro(FIGHTS, severe ? BAD : WARN, "micro_unused_item",
         { item, times, n, times_word: timesWord(n) });
       for (const t of ts) this.deathNotes.set(t, `${item} так и не нажат`);
       this.issue(`unused_${key}`, n * 500, `Не нажал ${item} в файтах`,
@@ -1605,6 +1617,8 @@ class MatchAnalyzer {
       `На ${mmss(bt)} выкупился за ~${num(cost)} золота и умер через ${dt - bt} ${plural(dt - bt, "секунду", "секунды", "секунд")}`,
       "Перед байбеком посмотри на карту: сколько врагов живо и успеешь ли ты вообще что-то сделать. Если файт уже проигран — копи на следующий");
   }
+
+  // ---------- сравнение с другими игроками на герое ----------
 
   benchValue(key, percentile) {
     for (const row of this.heroBench[key] || []) if (Math.abs(row.percentile - percentile) < 1e-9) return row.value;
@@ -1811,6 +1825,8 @@ class MatchAnalyzer {
       lane_opponent_id: this.opponent ? this.opponent.hero_id : null,
       allies: this.allies.filter((a) => a !== p).map((a) => a.hero_id),
       enemies: this.enemies.map((e) => e.hero_id),
+      ally_names: this.allies.filter((a) => a !== p).map((a) => this.od.heroName(a.hero_id)),
+      enemy_names: this.enemies.map((e) => this.od.heroName(e.hero_id)),
       benchmarks_percentile: this.bench,
     };
   }

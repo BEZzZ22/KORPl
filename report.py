@@ -202,16 +202,33 @@ def full_report(a: Analysis) -> str:
 
 
 def split_message(text: str, limit: int = 4000) -> list[str]:
-    """Режет длинный текст по абзацам, чтобы не порвать HTML-теги."""
+    """Режет длинный текст по абзацам, а слишком длинный абзац — по строкам, чтобы не порвать HTML-теги."""
     chunks, current = [], ""
-    for block in text.split("\n\n"):
-        candidate = f"{current}\n\n{block}" if current else block
+
+    def push(piece: str, sep: str):
+        nonlocal current
+        candidate = f"{current}{sep}{piece}" if current else piece
         if len(candidate) <= limit:
             current = candidate
-            continue
+            return
         if current:
             chunks.append(current)
-        current = block[:limit]
+        current = piece
+
+    for block in text.split("\n\n"):
+        if len(block) <= limit:
+            push(block, "\n\n")
+            continue
+        for i, line in enumerate(block.split("\n")):
+            # Одна строка длиннее лимита бывает только у текста без разметки (ответ ИИ), его можно резать
+            while len(line) > limit:
+                cut = limit
+                amp = line.rfind("&", 0, cut)
+                if amp > 0 and line.find(";", amp, cut) == -1:
+                    cut = amp  # не разрываем &amp; и другие сущности
+                push(line[:cut], "\n" if i else "\n\n")
+                line = line[cut:]
+            push(line, "\n" if i else "\n\n")
     if current:
         chunks.append(current)
     return chunks

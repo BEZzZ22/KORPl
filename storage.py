@@ -19,6 +19,9 @@ class Storage:
                 count INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (tg_id, day)
             );
+            CREATE TABLE IF NOT EXISTS blocked (
+                tg_id INTEGER PRIMARY KEY
+            );
             """
         )
         self.db.commit()
@@ -48,6 +51,22 @@ class Storage:
         )
         self.db.commit()
         return True
+
+    def refund_ai_quota(self, tg_id: int):
+        """Возвращает списанный ИИ-разбор, если модель не ответила."""
+        self.db.execute(
+            "UPDATE ai_usage SET count = MAX(count - 1, 0) WHERE tg_id = ? AND day = ?",
+            (tg_id, date.today().isoformat()),
+        )
+        self.db.commit()
+
+    def block(self, tg_id: int):
+        """Запоминает id заблокированного: смена ника блок не снимает."""
+        self.db.execute("INSERT OR IGNORE INTO blocked (tg_id) VALUES (?)", (tg_id,))
+        self.db.commit()
+
+    def is_blocked(self, tg_id: int) -> bool:
+        return self.db.execute("SELECT 1 FROM blocked WHERE tg_id = ?", (tg_id,)).fetchone() is not None
 
     def close(self):
         self.db.close()
