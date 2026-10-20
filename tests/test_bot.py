@@ -248,7 +248,7 @@ def test_micro_ward_gap_for_support(match, od):
 
 def test_micro_buyback_ignores_last_minutes(match, od):
     def buyback_findings(player):
-        return [f for f in micro(run(match, player, od)) if "байбек" in f.text.lower() or "выкупился" in f.text.lower()]
+        return [f for f in micro(run(match, player, od)) if "выкуп" in f.text.lower() or "выкупился" in f.text.lower()]
 
     assert buyback_findings(match["players"][0])  # Tusk выкупился на 35:20 и умер через 23 с
     assert not buyback_findings(match["players"][5])  # Tiny выкупался в финальной драке у трона

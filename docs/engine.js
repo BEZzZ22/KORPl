@@ -326,7 +326,8 @@ export function createDictionary({ heroes, items, abilities }) {
       if (key === "null" || key === "") return "Автоатаки";
       if (key in abilityInfo) return abilityInfo[key].dname;
       if (key in items) return od.itemName(key);
-      return key;
+      // Неизвестный скилл: «drow_ranger_multishot» -> «Drow Ranger Multishot»
+      return key.includes("_") ? key.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ") : key;
     },
     sourceType(key) {
       if (key === "null" || key === "") return "Physical";
@@ -703,7 +704,7 @@ class MatchAnalyzer {
     if (g.startsWith("killer_")) return `Цель на следующую катку: заранее купить защиту против самого опасного врага`;
     if (g === "lane_gaps") return "Цель на следующую катку: на лайне ни одной минуты без ластхита";
     if (g === "mid_runes") return "Цель на следующую катку: забрать минимум 2 руны силы до 12:00";
-    if (g === "buyback_wasted") return "Цель на следующую катку: байбек только когда файт ещё можно выиграть";
+    if (g === "buyback_wasted") return "Цель на следующую катку: выкуп только когда файт ещё можно выиграть";
     return "Цель на следующую катку: исправить главную ошибку выше";
   }
 
@@ -762,9 +763,9 @@ class MatchAnalyzer {
       if (this.rankCheck("lh10", { tipKey: "lane_lh_bad_tip", roastKey: "lane_lh_bad_roast" })) {
         const r = this.rank.lh10;
         if (r.pct < 25) {
-          this.issue("lane_farm", Math.max(0, r.median - lh10) * 45, "Мало ласт хитов на лайне",
-            `${lh10} ласт хит${plural(lh10, "", "а", "ов")} к 10:00 — хуже, чем у ${100 - r.pct}% ${ROLE_GEN_PLURAL[pos]} на ранге ${RANKS[this.bracket][0]} (обычно ${Math.round(r.median)})`,
-            "Перед каткой 5 минут ластхитить в демке. На лайне бей крипа только на ласт хит, не пушь волну просто так");
+          this.issue("lane_farm", Math.max(0, r.median - lh10) * 45, "Мало ластхитов на лайне",
+            `${lh10} ластхит${plural(lh10, "", "а", "ов")} к 10:00 — хуже, чем у ${100 - r.pct}% ${ROLE_GEN_PLURAL[pos]} на ранге ${RANKS[this.bracket][0]} (обычно ${Math.round(r.median)})`,
+            "Перед каткой 5 минут ластхитить в демке. На лайне бей крипа только на ластхит, не пушь волну просто так");
         }
       } else {
         const target = LH_TARGET_10[pos];
@@ -779,7 +780,7 @@ class MatchAnalyzer {
       if (diff <= -1000) {
         this.add(LANE, BAD, "lane_lost", "lane_lost_tip", { opp: this.oppName, gold: num(-diff) });
         this.issue("lane_lost", -diff * 0.8, `Слил лайн против ${this.oppName}`,
-          `К 10:00 ${this.oppName} обогнал тебя по нетворсу (стоимость шмота и золота) на ${num(-diff)}`,
+          `К 10:00 ты отстал от ${this.oppName} по нетворсу (стоимость шмота и золота) на ${num(-diff)}`,
           `Пересмотри первые 10 минут реплея: где ты проигрывал трейды (размены ударами) с ${this.oppName} и почему терял ХП`);
       }
       else if (diff >= 1000) this.add(LANE, GOOD, "lane_won", null, { opp: this.oppName, gold: num(diff) });
@@ -832,7 +833,7 @@ class MatchAnalyzer {
       if (idle.length) {
         const mins = sum(idle.map(([s, e]) => e - s));
         this.issue("idle", mins * (p.gold_per_min || 300) * 0.8, "АФК: ни фарма, ни файтов",
-          `${idle.map(([s, e]) => `${mmss(s * 60)}–${mmss(e * 60)}`).join(", ")}: ни ласт хитов, ни золота, ни файтов`,
+          `${idle.map(([s, e]) => `${mmss(s * 60)}–${mmss(e * 60)}`).join(", ")}: ни ластхитов, ни золота, ни файтов`,
           "Нет файта — фарми по кругу: волна, кемп, волна. Заранее решай, куда идёшь после текущей волны");
       }
       if (this.pos === 1 && this.minutes >= 25 && p.last_hits > 0) {
@@ -1011,7 +1012,7 @@ class MatchAnalyzer {
       if (r.pct < 25) {
         this.issue("dead_time", (r.value - r.median) * this.duration * ((p.gold_per_min || 300) / 60), "Слишком долго лежал мёртвым",
           `Ты пролежал мёртвым ${mmss(p.life_state_dead)} (${Math.round(r.value * 100)}% катки), у ${ROLE_GEN_PLURAL[this.pos]} на ранге ${RANKS[this.bracket][0]} обычно ${Math.round(r.median * 100)}%`,
-          "Каждая смерть после 20-й минуты — минута без игры. Выходи из файта, когда ХП меньше трети и нет сейва (BKB, форс, байбек)");
+          "Каждая смерть после 20-й минуты — минута без игры. Выходи из файта, когда ХП меньше трети и нет сейва (BKB, форс, выкуп)");
       }
     } else if (deadShare >= 0.15) {
       this.add(SURVIVAL, BAD, "surv_dead_time", "surv_dead_time_tip", { time: mmss(p.life_state_dead), pct: pyRound(deadShare * 100) });
@@ -1261,9 +1262,9 @@ class MatchAnalyzer {
       const how = k.sources.slice(0, 2).map((s) => s.name).join(" и ");
       const action = [k.tips[0], k.counters.length ? `Купи ${k.counters.slice(0, 2).join(" или ")}` : ""]
         .filter(Boolean).join(". ");
-      this.issue(`killer_${k.key}`, n * 380, `${k.hero} тебя фармил`,
+      this.issue(`killer_${k.key}`, n * 380, `Частые смерти от ${k.hero}`,
         `${n} ${deathsWord(n)} от ${k.hero}${how ? `, в основном ${how}` : ""}`,
-        action || `Держись дальше от ${k.hero} и не выходи к нему один`,
+        action || `Держись дальше от ${k.hero} и не выходи один против этого героя`,
         k.counters.length
           ? `Цель на следующую катку: ${k.counters[0]} к 20-й минуте, если снова против ${k.hero}`
           : `Цель на следующую катку: не больше одной смерти от ${k.hero}`);
@@ -1446,7 +1447,7 @@ class MatchAnalyzer {
     this.issue("lane_gaps", n * 150, "Пустые минуты на лайне",
       `${n} ${plural(n, "минута", "минуты", "минут")} лайна без единого ластхита: ${times}. Ты был жив и не дрался — крипы умирали без тебя`,
       this.pos === 3
-        ? "Если тебя зонят от волны — не стой в стороне: тяни крипов на себя, бери хард-ластхит или фарми малый кемп рядом с лайном"
+        ? "Если тебя зонят от волны — не стой в стороне: тяни крипов на себя, бери ластхит или фарми малый кемп рядом с лайном"
         : "Каждые 20–30 секунд будь у волны. Если не пускают — отведи волну к своей вышке (пул саппорта, агро крипов), но не стой без дела");
   }
 
@@ -1602,7 +1603,7 @@ class MatchAnalyzer {
       for (const t of silent) if (!this.deathNotes.has(t)) this.deathNotes.set(t, "ни одной кнопки не прожато");
       this.issue("silent_deaths", n * 300, "Умирал, не нажав ни одной кнопки",
         `${n} ${timesWord(n)} в драке тебя убили раньше, чем ты прожал хоть один скилл или предмет (${times})`,
-        "Тебя ловят первым, ещё до начала файта: держись за крипами и героями с бОльшим ХП, а скиллы прожимай с дистанции, а не после захода врага",
+        "Тебя ловят первым, ещё до начала файта: держись за крипами и героями с большим запасом ХП, а скиллы прожимай с дистанции, а не после захода врага",
         "Цель на следующую катку: в каждом файте успеть прожать главный скилл");
     }
   }
@@ -1635,7 +1636,7 @@ class MatchAnalyzer {
       "Цель на следующую катку: ни разу не умереть первым в драке");
   }
 
-  // Байбек, после которого умер почти сразу
+  // Выкуп, после которого умер почти сразу
   checkBuybacks() {
     const deaths = this.p.deaths_log || [];
     const wasted = [];
@@ -1649,10 +1650,10 @@ class MatchAnalyzer {
     const [bt, dt] = wasted[0];
     const cost = Math.round(200 + (atMinute(this.p.networth_t, Math.floor(bt / 60)) || 0) / 13);
     this.micro(SURVIVAL, WARN, "micro_buyback_wasted", { time: mmss(bt), sec: dt - bt, gold: num(cost) });
-    for (const [b, d] of wasted) this.deathNotes.set(d, `через ${d - b} с после байбека`);
-    this.issue("buyback_wasted", cost * wasted.length, "Байбек в пустоту",
+    for (const [b, d] of wasted) this.deathNotes.set(d, `через ${d - b} с после выкупа`);
+    this.issue("buyback_wasted", cost * wasted.length, "Выкуп в пустоту",
       `На ${mmss(bt)} выкупился за ~${num(cost)} золота и умер через ${dt - bt} ${plural(dt - bt, "секунду", "секунды", "секунд")}`,
-      "Перед байбеком посмотри на карту: сколько врагов живо и успеешь ли ты вообще что-то сделать. Если файт уже проигран — копи на следующий");
+      "Перед выкупом посмотри на карту: сколько врагов живо и успеешь ли ты вообще что-то сделать. Если файт уже проигран — копи на следующий");
   }
 
   // ---------- методика Хана: бенчмарки и привычки ----------
@@ -1904,7 +1905,7 @@ class MatchAnalyzer {
         const fightsText = fights.total
           ? `в ${fights.took} из ${fights.total} ${plural(fights.total, "файта", "файтов", "файтов")}`
           : "файтов почти не было";
-        const wardsText = wards ? `${wards} ${plural(wards, "обс", "обса", "обсов")}` : "ни одного обса";
+        const wardsText = wards ? `${wards} ${plural(wards, "обс", "обса", "обсов")}` : "ноль обсов";
         text = this.say(`phase_sup_${verdict}`, {
           fights_text: fightsText, deaths_text: deathsText, wards_text: wardsText,
           nw_text: `Команда за этот отрезок: ${signed(teamDelta)} золота.`,
