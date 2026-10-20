@@ -139,3 +139,11 @@ test("словарь: список героев по алфавиту", () => {
   assert.ok(list.length > 100);
   assert.ok(list.every((h, i) => i === 0 || list[i - 1].name.localeCompare(h.name) <= 0));
 });
+
+test("хронология: смерть на линии подписана линией и разменом, а не «поймали одного»", () => {
+  const a = run(earlyOnly(), "Beastmaster");
+  const lane = a.moments.filter((m) => m.time < 600 && m.severity === "bad");
+  assert.ok(lane.length >= 2);
+  for (const m of lane) assert.doesNotMatch(m.text, /соло|одного|без команды|без союзников/);
+  assert.ok(lane.some((m) => /\(размен\)/.test(m.text)));
+});

@@ -1,7 +1,7 @@
 // Telegram Mini App: разбор матча Dota 2 внутри Телеграма.
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, CATEGORIES, BAD, WARN, GOOD,
-} from "./engine.js?v=16";
+} from "./engine.js?v=17";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -1100,7 +1100,10 @@ async function renderCard(a) {
   ctx.translate(W / 2, H / 2); ctx.rotate(Math.PI / 5);
   const river = ctx.createLinearGradient(-W, 0, W, 0);
   river.addColorStop(0, "rgba(90,143,214,0)"); river.addColorStop(0.5, "rgba(90,143,214,0.16)"); river.addColorStop(1, "rgba(90,143,214,0)");
-  ctx.fillStyle = river; ctx.fillRect(-W * 1.2, -110, W * 2.4, 220);
+  // мягкие края реки: размытие там, где браузер его умеет, иначе просто бледная полоса
+  ctx.filter = "blur(36px)";
+  ctx.fillStyle = river; ctx.fillRect(-W * 1.2, -90, W * 2.4, 180);
+  ctx.filter = "none";
   ctx.restore();
 
   ctx.fillStyle = C.muted; ctx.font = sans(700, 40);
@@ -2056,7 +2059,7 @@ async function boot() {
     const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
       api("/constants/heroes"), api("/constants/items"), api("/constants/abilities", { timeout: 40000 }),
       api("/constants/item_ids"),
-      fetch("knowledge.json?v=12").then((r) => r.json()), fetch("texts.json?v=13").then((r) => r.json()),
+      fetch("knowledge.json?v=12").then((r) => r.json()), fetch("texts.json?v=14").then((r) => r.json()),
     ]);
     dictionary = createDictionary({ heroes, items, abilities });
     itemIds = ids;

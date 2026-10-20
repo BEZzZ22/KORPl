@@ -643,3 +643,5 @@ details.timeline-box > summary { font-weight: 800; }
 .draft-entry::after { content: ""; margin-left: auto; width: 8px; height: 8px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(-45deg); }
 /* фон body перекрывал свет баз (z-index: -1): фон держит html */
 body { background: transparent; }
+.draft-pick { width: 100%; align-items: stretch; }
+.draft-pick span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

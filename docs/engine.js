@@ -2154,9 +2154,12 @@ class MatchAnalyzer {
       let key;
       if (killer === "башня") key = "moment_death_tower";
       else if (!d.key.startsWith("npc_dota_hero_")) key = "moment_death_creeps";
+      // До 10:00 вне драки — это линия, а не «поймали одного»
+      else if (!this.inFight(d.time) && d.time < LANING_END) key = "moment_death_lane";
       else key = this.isSoloDeath(d.time) ? "moment_death_solo" : "moment_death_fight";
+      const traded = (p.kills_log || []).some((k) => k.key.startsWith("npc_dota_hero_") && Math.abs(k.time - d.time) <= 20);
       const note = this.deathNotes && this.deathNotes.get(d.time);
-      add(d.time, BAD, this.say(key, { killer }, String(d.time)) + (note ? ` — ${note}` : ""));
+      add(d.time, BAD, this.say(key, { killer }, String(d.time)) + (traded ? " (размен)" : "") + (note ? ` — ${note}` : ""));
     }
     for (const x of p.purchase_log || []) {
       if (this.isFinalItem(x.key) && this.od.itemCost(x.key) >= 2000) {
