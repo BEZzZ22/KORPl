@@ -1,7 +1,7 @@
 // Офлайн-кэш приложения. Свои файлы — сначала сеть (обновления приходят сразу), без сети — из кэша.
 // Разобранный матч OpenDota уже не меняется: отдаём из кэша мгновенно. Справочники — из кэша с фоновым обновлением.
-const APP = "app-v1";
-const DATA = "opendota-v1";
+const APP = "app-v2";
+const DATA = "opendota-v2";
 const MATCHES_KEEP = 40;
 
 self.addEventListener("install", () => self.skipWaiting());
@@ -16,8 +16,9 @@ async function networkFirst(req, cacheName) {
   const cache = await caches.open(cacheName);
   try {
     const res = await fetch(req);
-    if (res.ok) cache.put(req, res.clone());
-    return res;
+    if (res.ok) { cache.put(req, res.clone()); return res; }
+    // OpenDota отвечает 429/5xx при нагрузке: старая копия лучше ошибки
+    return (await cache.match(req)) || res;
   } catch (err) {
     const hit = await cache.match(req);
     if (hit) return hit;

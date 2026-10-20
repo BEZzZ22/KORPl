@@ -92,7 +92,13 @@ function coach(body) {
   const raw = JSON.parse(body || "{}");
   if (raw.mode === "chat") return { text: `По сводке: ${String(raw.question).slice(0, 40)} — держи дистанцию от Tiny и ставь обс перед дракой.`, offtopic: false };
   if (raw.mode === "compare") return { text: "Разница: в лучшей катке ты меньше умирал.\n— Меньше смертей до 10:00.\n— Больше обсов.\n— Раньше BKB." };
-  if (raw.mode === "card") return { url: "https://coach.example/card/000000000000000000000000.png" };
+  if (raw.mode === "card") {
+    // тот же предел, что у воркера (MAX_CARD_BYTES)
+    const bytes = Math.floor(String(raw.image || raw.png || "").replace(/^data:image\/(png|jpeg);base64,/, "").length * 0.75);
+    cardSizes.push(bytes);
+    if (bytes > 700000) errors.push(`карточка ${bytes} байт больше предела воркера 700000`);
+    return { url: "https://coach.example/card/000000000000000000000000.png" };
+  }
   if (raw.mode === "watch") return { ok: true };
   return { text: COACH_TEXT };
 }
@@ -100,6 +106,7 @@ function coach(body) {
 const PLACEHOLDER = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
 
 const errors = [];
+const cardSizes = [];
 const browser = await chromium.launch({ headless: !process.env.UI_HEADED });
 const context = await browser.newContext({
   viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true, locale: "ru-RU", serviceWorkers: "block",
@@ -112,7 +119,9 @@ await context.addInitScript(([acc, other]) => {
     if (!localStorage.getItem(`cmp:${acc}`)) localStorage.setItem(`cmp:${acc}`, JSON.stringify([other]));
   } catch { /* */ }
 }, [ACCOUNT, { match: 1, hero: "Invoker", hero_id: 74, won: true, kda: "12/3/9", t: 0, payload: { hero: "Invoker", won: true, kda: "12/3/9", duration: "41:02" } }]);
-await context.route("**/*", async (route) => {
+let netDown = false; // офлайн-проверка: все запросы рвутся, как без сети
+async function handleRoute(route) {
+  if (netDown) return route.abort("internetdisconnected");
   const url = new URL(route.request().url());
   if (url.origin === BASE) return route.continue();
   if (url.hostname === "api.opendota.com") {
@@ -127,7 +136,8 @@ await context.route("**/*", async (route) => {
   if (/steamstatic\.com$/.test(url.hostname)) return route.fulfill({ status: 200, contentType: "image/png", body: PLACEHOLDER });
   if (/fonts\.(googleapis|gstatic)\.com$/.test(url.hostname)) return process.env.UI_OFFLINE ? route.abort() : route.continue();
   return route.abort();
-});
+}
+await context.route("**/*", handleRoute);
 
 const page = await context.newPage();
 page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
@@ -165,6 +175,12 @@ await step("share", async () => {
   await page.locator(".share").click();
   await page.waitForSelector(".sheet-preview img", { timeout: 15000 });
   await shot("share", { full: false });
+  // загрузка картинки в воркер: размер не должен упираться в предел
+  await page.locator(".sheet-btn").first().click();
+  await page.waitForFunction(() => !document.querySelector(".sheet-status-busy"), null, { timeout: 2000 }).catch(() => {});
+  for (let i = 0; i < 40 && !cardSizes.length; i++) await page.waitForTimeout(100);
+  if (!cardSizes.length) throw new Error("карточка не ушла в воркер");
+  console.log(`карточка: ${cardSizes[0]} байт`);
   await page.locator(".sheet-close").click();
   await page.waitForSelector(".sheet-backdrop", { state: "detached", timeout: 5000 });
 });
@@ -232,6 +248,27 @@ await step("hero", async () => {
   await page.waitForSelector(".page-head", { timeout: 10000 });
   await shot("hero");
 });
+
+// Офлайн: с живым service worker открыть приложение, потом без сети — главная должна открыться из кэша
+if (!only || only.has("offline")) {
+  const ctx2 = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "allow", colorScheme: "dark", reducedMotion: "reduce" });
+  await ctx2.addInitScript((acc) => { try { localStorage.setItem("account_id", String(acc)); } catch { /* */ } }, ACCOUNT);
+  await ctx2.route("**/*", handleRoute);
+  const p2 = await ctx2.newPage();
+  await step("offline", async () => {
+    await p2.goto(`${BASE}/index.html`);
+    await p2.waitForSelector(".match-item", { timeout: 15000 });
+    await p2.evaluate(() => navigator.serviceWorker.ready);
+    // второй заход уже под контролем service worker: он складывает ответы в кэш
+    await p2.reload();
+    await p2.waitForSelector(".match-item", { timeout: 15000 });
+    netDown = true;
+    await ctx2.setOffline(true);
+    await p2.reload();
+    await p2.waitForSelector(".match-item", { timeout: 15000 });
+  });
+  await ctx2.close();
+}
 
 await browser.close();
 server.close();

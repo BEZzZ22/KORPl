@@ -244,6 +244,7 @@ test("карточка: PNG сохраняется и отдаётся по сс
   const kv = fakeKV();
   const e = { ...env, COACH_KV: kv };
   const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]).toString("base64");
+  const jpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 1]).toString("base64");
   const { url } = await (await worker.fetch(req({ mode: "card", png: `data:image/png;base64,${png}` }), e)).json();
   assert.match(url, /^https:\/\/coach\.example\/card\/[0-9a-f]{24}\.png$/);
   const img = await worker.fetch(new Request(url), e);
@@ -265,7 +266,7 @@ test("problemsOf: вода в «Надо было» и план из одних 
 ${plan}`);
   const plan = "— Держи хп выше половины на линии.\n— Отходи к вышке после размена.\n— Собери Black King Bar: враги ставят много оглушений.";
   assert.deepEqual(problemsOf(answer("отойти к вышке, когда хп упало ниже половины.", plan), p), []);
-  assert.ok(problemsOf(answer("играть аккуратнее у вышки.", plan), p).some((r) => /вода «аккуратнее»/.test(r)));
+  assert.ok(problemsOf(answer("играть аккуратнее у вышки.", plan), p).some((r) => /вода «[^»]*аккуратнее»/.test(r)));
   const buys = "— Купи Black King Bar.\n— Собери Black King Bar раньше.\n— Отходи к вышке после размена.";
   assert.ok(problemsOf(answer("отойти к вышке.", buys), p).some((r) => /план из покупок/.test(r)));
 });
@@ -302,4 +303,29 @@ test("Claude: зависший без единого байта запрос п�
 
 test("normalize: хвост «Self-check: …» от Opus срезается", () => {
   assert.equal(normalize(`${good}\n\nSelf-check: формат выдержан, числа из сводки.`), normalize(good));
+});
+
+test("problemsOf: «внимательно смотри на миникарту» — действие, а не вода", async () => {
+  const { problemsOf } = await import("./coach.js");
+  const p = buildPrompt({ ...raw, episodes: [{ clock: "6:18", kind: "death", facts: ["тебя убил Tiny", "стадия линий, твоя линия: мид"] }] });
+  const t = normalize(`Главное: смерть на линии стоила темпа.
+
+Моменты:
+— 6:18 Ошибка: проиграл размен на линии. Надо было: внимательно смотреть на миникарту и отойти к вышке.
+
+План на следующую игру:
+— Держи хп выше половины на линии.
+— Отходи к вышке после размена.
+— Собери Black King Bar: враги ставят много оглушений.`);
+  assert.deepEqual(problemsOf(t, p), []);
+});
+
+test("карточка: JPEG тоже принимается и отдаётся как image/jpeg", async () => {
+  const kv = fakeKV();
+  const e = { ...env, COACH_KV: kv };
+  const jpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 1]).toString("base64");
+  const { url } = await (await worker.fetch(req({ mode: "card", image: `data:image/jpeg;base64,${jpg}` }), e)).json();
+  assert.match(url, /\/card\/[0-9a-f]{24}\.jpg$/);
+  const img = await worker.fetch(new Request(url), e);
+  assert.equal(img.headers.get("Content-Type"), "image/jpeg");
 });

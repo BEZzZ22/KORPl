@@ -297,7 +297,7 @@ const CLAIMS = [
 ];
 
 // Общие слова вместо действия
-const WATER = /аккуратн\S*|осторожн\S*|внимательн\S*|играй лучше|играть лучше|будь умнее|избега\S* (лишних )?(драк|смерт)\S*|^не умирай|меньше умирай|избегать драк без фарма/;
+const WATER = /аккуратнее|осторожнее|внимательнее|будь внимател\S*|(играй|играть) (аккуратн|осторожн)\S*|играй лучше|играть лучше|будь умнее|избега\S* (лишних )?(драк|смерт)\S*|^не умирай|меньше умирай|избегать драк без фарма/;
 
 // Проверка ответа по сводке: возвращает список причин отказа (пусто: годится)
 export function problemsOf(text, prompt) {
@@ -609,6 +609,7 @@ export async function checkWatches(env, now = Date.now()) {
 }
 
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47];
+const JPEG_MAGIC = [0xff, 0xd8, 0xff];
 
 // ---------- маршруты ----------
 
@@ -631,13 +632,15 @@ async function handlePost(request, env, ctx, origin) {
     if (!env.COACH_KV) return reply(500, { error: "Карточки не настроены." }, origin);
     const limited = throttle(ip, Date.now(), CARD_PER_IP_PER_HOUR, "card", CARD_PER_DAY);
     if (limited) return reply(429, { error: limited }, origin);
-    const b64 = String(raw.png || "").replace(/^data:image\/png;base64,/, "");
+    // картинка приходит как data URL (JPEG от приложения, PNG тоже принимаем)
+    const b64 = String(raw.image || raw.png || "").replace(/^data:image\/(png|jpeg);base64,/, "");
     let bytes;
     try { bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)); } catch { return reply(400, { error: "Не картинка." }, origin); }
-    if (bytes.length > MAX_CARD_BYTES || !PNG_MAGIC.every((x, i) => bytes[i] === x)) return reply(400, { error: "Не картинка." }, origin);
+    const ext = PNG_MAGIC.every((x, i) => bytes[i] === x) ? "png" : JPEG_MAGIC.every((x, i) => bytes[i] === x) ? "jpg" : null;
+    if (bytes.length > MAX_CARD_BYTES || !ext) return reply(400, { error: "Не картинка." }, origin);
     const id = (await sha256(b64)).slice(0, 24);
-    await env.COACH_KV.put(`card:${id}`, bytes, { expirationTtl: CARD_TTL });
-    return reply(200, { url: `${new URL(request.url).origin}/card/${id}.png` }, origin);
+    await env.COACH_KV.put(`card:${id}.${ext}`, bytes, { expirationTtl: CARD_TTL });
+    return reply(200, { url: `${new URL(request.url).origin}/card/${id}.${ext}` }, origin);
   }
 
   if (mode === "watch") {
@@ -697,11 +700,12 @@ export default {
     if (request.method === "GET") {
       const url = new URL(request.url);
       // Картинка карточки для истории и скачивания: открывается без Origin
-      const card = /^\/card\/([0-9a-f]{24})\.png$/.exec(url.pathname);
+      const card = /^\/card\/([0-9a-f]{24})\.(png|jpg)$/.exec(url.pathname);
       if (card && env.COACH_KV) {
-        const bytes = await env.COACH_KV.get(`card:${card[1]}`, "arrayBuffer");
+        const bytes = await env.COACH_KV.get(`card:${card[1]}.${card[2]}`, "arrayBuffer");
         if (!bytes) return new Response("Нет такой карточки", { status: 404 });
-        return new Response(bytes, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400", "Access-Control-Allow-Origin": "*" } });
+        const type = card[2] === "png" ? "image/png" : "image/jpeg";
+        return new Response(bytes, { headers: { "Content-Type": type, "Cache-Control": "public, max-age=86400", "Access-Control-Allow-Origin": "*" } });
       }
       if (url.pathname === "/stats") return new Response(JSON.stringify(await usageStats(env), null, 1), { headers: { "Content-Type": "application/json; charset=utf-8" } });
     }

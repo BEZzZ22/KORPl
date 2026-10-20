@@ -1137,8 +1137,13 @@ async function renderCard(a) {
 
   // цифры в три колонки
   [["KDA", f.kda], ["GPM", String(f.gpm)], ["XPM", String(f.xpm)]].forEach(([label, value], i) => {
-    const x = P + ((W - 2 * P) / 3) * (i + 0.5);
-    ctx.fillStyle = C.text; ctx.font = display(58); ctx.fillText(value, x, 1250);
+    const col = (W - 2 * P) / 3;
+    const x = P + col * (i + 0.5);
+    // длинный KDA вроде 14/12/30 не должен заезжать на соседнюю колонку
+    let size = 58;
+    ctx.font = display(size);
+    while (size > 30 && ctx.measureText(value).width > col - 24) ctx.font = display(size -= 4);
+    ctx.fillStyle = C.text; ctx.fillText(value, x, 1250);
     ctx.fillStyle = C.muted; ctx.font = sans(700, 32); ctx.fillText(label, x, 1300);
   });
   ctx.textAlign = "left";
@@ -1157,7 +1162,8 @@ async function renderCard(a) {
   ctx.fillStyle = C.ink; ctx.beginPath(); ctx.arc(sx, sy, 22, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = C.text; ctx.font = sans(800, 40); ctx.fillText("Разбери свою катку", P + 92, sy - 6);
   ctx.fillStyle = C.muted; ctx.font = sans(700, 34); ctx.fillText(`@${BOT_USERNAME}`, P + 92, sy + 38);
-  return canvas.toDataURL("image/png");
+  // JPEG: тот же вид в несколько раз легче PNG (плавные градиенты PNG жмёт плохо)
+  return canvas.toDataURL("image/jpeg", 0.9);
 }
 
 // Шторка «Поделиться»: картинка в историю, сохранить картинку или ссылка в чат
@@ -1175,7 +1181,7 @@ function shareMatch(a) {
     if (cardUrl) return cardUrl;
     if (!dataUrl) throw Object.assign(new Error("Картинка ещё рисуется, секунду."), { fromCoach: true });
     status.textContent = "Готовлю картинку...";
-    const data = await postCoach({ mode: "card", png: dataUrl });
+    const data = await postCoach({ mode: "card", image: dataUrl });
     cardUrl = data.url;
     status.textContent = "";
     return cardUrl;
