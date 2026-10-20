@@ -403,6 +403,7 @@ async function profileScreen() {
       h("div", { class: "form-strip" }, ...dots),
       h("div", { class: "small muted" }, `${recent.filter((m) => (m.player_slot < 128) === m.radiant_win).length} побед из ${recent.length}`),
     ),
+    trendBlock(recent),
     topHeroes.length > 0 && h("h2", {}, "Любимые герои"),
     topHeroes.length > 0 && h("div", { class: "card" }, ...topHeroes.map((hx) => {
       const wr = hx.games ? Math.round((hx.win / hx.games) * 100) : 0;
@@ -416,8 +417,42 @@ async function profileScreen() {
         h("div", { class: `wr ${wr >= 50 ? "win-text" : "loss-text"}` }, `${wr}%`),
       );
     })),
+    weakHeroesBlock(heroes),
     h("button", { class: "ghost", onclick: () => { storage.set("account_id", ""); navRoot("home", homeScreen); } }, "Сменить аккаунт"),
   );
+}
+
+// Тренд по последним играм: свежие 10 против предыдущих 10 (по данным recentMatches)
+function trendBlock(recent) {
+  const pool = recent.filter((m) => m.duration > 600 && m.game_mode !== 23);
+  if (pool.length < 12) return null;
+  const fresh = pool.slice(0, Math.floor(pool.length / 2)), old = pool.slice(Math.floor(pool.length / 2));
+  const avg = (list, f) => list.reduce((s, m) => s + f(m), 0) / list.length;
+  const rows = [
+    ["Смертей за игру", (m) => m.deaths, true, (v) => v.toFixed(1)],
+    ["GPM", (m) => m.gold_per_min, false, (v) => String(Math.round(v))],
+    ["Крипов в минуту", (m) => (m.last_hits * 60) / m.duration, false, (v) => v.toFixed(1)],
+    ["Ассистов за игру", (m) => m.assists, false, (v) => v.toFixed(1)],
+  ].map(([label, f, lowerBetter, fmt]) => {
+    const a = avg(fresh, f), b = avg(old, f);
+    const delta = lowerBetter ? b - a : a - b;
+    const still = Math.abs(a - b) <= Math.abs(b) * 0.05;
+    const cls = still ? "muted" : delta > 0 ? "win-text" : "loss-text";
+    const mark = still ? "≈" : delta > 0 ? "▲" : "▼";
+    return h("div", { class: "score-row" }, h("span", {}, label), h("span", { class: "muted" }, `${fmt(b)} → ${fmt(a)}`), h("b", { class: cls }, mark));
+  });
+  return h("div", {}, h("h2", {}, "Тренд"), h("div", { class: "card" }, ...rows,
+    h("div", { class: "small muted" }, `Последние ${fresh.length} игр против предыдущих ${old.length}`)));
+}
+
+// Герои с низким винрейтом за всё время — на них стоит меньше играть или разобрать отдельно
+function weakHeroesBlock(heroes) {
+  const weak = (heroes || []).filter((hx) => hx.games >= 8 && hx.win / hx.games <= 0.4)
+    .sort((a, b) => b.games - a.games).slice(0, 3);
+  if (!weak.length) return null;
+  return h("div", {}, h("h2", {}, "Не заходят"),
+    h("div", { class: "card" }, ...weak.map((hx) => h("div", { class: "problem-fact" },
+      `${dictionary.heroName(hx.hero_id)}: ${Math.round((hx.win / hx.games) * 100)}% побед за ${hx.games} игр. Пока лучше не пикай его в рейтинг.`))));
 }
 
 function matchEmpty() {
