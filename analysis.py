@@ -101,8 +101,9 @@ def analyze(match: dict, player: dict, od: OpenDota, pro_items: dict[str, int] |
         "constants": od.constants,
     })
     try:
+        # encoding явно: на Windows по умолчанию cp1251, а движок пишет кириллицу в UTF-8
         proc = subprocess.run([NODE, str(ENGINE_CLI)], input=payload, capture_output=True, text=True,
-                              timeout=ENGINE_TIMEOUT, check=False)
+                              encoding="utf-8", timeout=ENGINE_TIMEOUT, check=False)
     except (OSError, subprocess.TimeoutExpired) as e:
         raise EngineError(f"движок разбора не запустился: {e}") from e
     if proc.returncode != 0:
