@@ -272,8 +272,12 @@ function toAccountId(raw) {
 
 const cloud = () => Boolean(tg && tg.CloudStorage && tg.isVersionAtLeast && tg.isVersionAtLeast("6.9"));
 
+// CloudStorage пишет асинхронно: чтение сразу после записи отдавало старое значение
+// (сменённый аккаунт не менялся, привязку приходилось вводить дважды). Свежие значения держим в памяти.
+const memStore = new Map();
 const storage = {
   get(key) {
+    if (memStore.has(key)) return Promise.resolve(memStore.get(key));
     return new Promise((resolve) => {
       if (cloud()) {
         tg.CloudStorage.getItem(key, (err, value) => resolve(err ? null : value || null));
@@ -283,8 +287,12 @@ const storage = {
     });
   },
   set(key, value) {
-    if (cloud()) { tg.CloudStorage.setItem(key, value); return; }
-    try { localStorage.setItem(key, value); } catch { /* приватный режим */ }
+    memStore.set(key, value || null);
+    return new Promise((resolve) => {
+      if (cloud()) { tg.CloudStorage.setItem(key, value, () => resolve()); return; }
+      try { localStorage.setItem(key, value); } catch { /* приватный режим */ }
+      resolve();
+    });
   },
 };
 
@@ -424,7 +432,8 @@ function accountForm() {
       const player = await api(`/players/${id}`);
       if (stale(seq)) return;
       if (!player || !player.profile) { status.textContent = "OpenDota не знает такой аккаунт."; return; }
-      storage.set("account_id", String(id));
+      await storage.set("account_id", String(id));
+      if (stale(seq)) return;
       haptic("medium");
       if (section === "profile") navRoot("profile", profileScreen);
       else navRoot("home", homeScreen);
