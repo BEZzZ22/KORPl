@@ -683,3 +683,13 @@ body { background: transparent; }
 .week-match { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 10px; text-align: left; color: var(--text); font: 700 14px/1.2 var(--sans);
   border-radius: var(--r-md); background: rgba(8, 9, 12, 0.45); box-shadow: none; }
 .week-match:active { transform: scale(.98); filter: none; }
+
+/* ---------- друзья ---------- */
+.leaderboard { display: flex; flex-direction: column; }
+.leader-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.leader-row:last-child { border-bottom: 0; }
+.leader-row .grow { display: flex; flex-direction: column; gap: 2px; }
+.leader-row > b { font: 700 16px/1 var(--display); font-variant-numeric: tabular-nums; }
+.leader-row.me .grow b { color: var(--aegis); }
+.leader-remove { width: 32px; height: 32px; padding: 0; border-radius: 10px; color: var(--muted); background: rgba(255, 255, 255, 0.05); box-shadow: none; font-size: 18px; }
+.friend-add { margin-top: 12px; }

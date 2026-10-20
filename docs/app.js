@@ -579,6 +579,7 @@ async function profileScreen() {
     ),
     trendBlock(recent),
     ...progressBlocks(account),
+    friendsBlock(account),
     topHeroes.length > 0 && h("h2", {}, "Любимые герои"),
     topHeroes.length > 0 && h("div", { class: "card" }, ...topHeroes.map((hx) => {
       const wr = hx.games ? Math.round((hx.win / hx.games) * 100) : 0;
@@ -1003,7 +1004,7 @@ function analysisScreen(a) {
   };
   a._select = (i) => { select(i); if (lens) lens.place(i); };
   if (COACH_URL) rememberForCompare(a);
-  if (a._goalResult === undefined) a._goalResult = trackProgress(a);
+  if (a._goalResult === undefined) { a._goalResult = trackProgress(a); if (a.hist_self) syncSoon(a.hist_self.account); }
   TABS.forEach(([name]) => tabs.append(h("button", { class: "tab", role: "tab" }, name)));
   lens = glassBar(tabs, ".tab", { live: true, onPick: select });
   // Свайп по содержимому листает вкладки; графики со своим жестом не трогаем
@@ -1649,6 +1650,106 @@ function weekMatch(label, m, account) {
     h("b", {}, dictionary.heroName(m.hero_id)), h("span", { class: "small muted" }, `${m.kills}/${m.deaths}/${m.assists}`));
 }
 
+// ---------- синхронизация с сервером и друзья ----------
+
+const friendsKey = (acc) => `friends:${acc}`;
+const friendsRemovedKey = (acc) => `friends_removed:${acc}`;
+let syncTimer = 0, syncing = null;
+
+// История, задачи, память тренера и друзья живут на сервере (воркер, KV) и сливаются с локальными.
+// Работает только внутри Телеграма: сервер узнаёт пользователя по подписанной initData
+async function syncProfile(account) {
+  if (!COACH_URL || !tg || !tg.initData || !account) return false;
+  if (syncing) return syncing;
+  syncing = (async () => {
+    const data = {
+      account_id: Number(account),
+      progress: localJson(progKey(account), []),
+      goal: localJson(goalKey(account), null),
+      goal_hist: localJson(goalHistKey(account), []),
+      memory: localJson(`coach_mem:${account}`, []),
+      friends: localJson(friendsKey(account), []),
+      removed_friends: localJson(friendsRemovedKey(account), []),
+    };
+    const res = await postCoach({ mode: "sync", initData: tg.initData, data });
+    const d = res && res.data;
+    if (!d) return false;
+    safeLocal.set(progKey(account), JSON.stringify([...d.progress].sort((x, y) => x.t - y.t)));
+    if (d.goal) safeLocal.set(goalKey(account), JSON.stringify(d.goal));
+    safeLocal.set(goalHistKey(account), JSON.stringify(d.goal_hist));
+    safeLocal.set(`coach_mem:${account}`, JSON.stringify(d.memory));
+    safeLocal.set(friendsKey(account), JSON.stringify(d.friends));
+    safeLocal.set(friendsRemovedKey(account), "[]");
+    return true;
+  })().catch(() => false).finally(() => { syncing = null; });
+  return syncing;
+}
+
+// После разбора — не сразу, а пачкой: несколько открытых подряд каток уйдут одним запросом
+function syncSoon(account) {
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => syncProfile(account), 4000);
+}
+
+const leaderCache = new Map();
+
+// Друзья: Friend ID, рейтинг по последним 20 играм (винрейт, KDA, GPM) вместе с тобой
+function friendsBlock(account) {
+  const friends = localJson(friendsKey(account), []);
+  const input = h("input", { inputmode: "numeric", placeholder: "Friend ID друга", "aria-label": "Friend ID друга" });
+  const status = h("p", { class: "small muted", role: "status" });
+  const board = h("div", { class: "leaderboard" }, h("div", { class: "center" }, h("div", { class: "spinner" })));
+  const seq = navSeq;
+  const add = async () => {
+    const id = toAccountId(input.value);
+    if (!id || String(id) === String(account)) { status.textContent = "Это не похоже на Friend ID друга."; return; }
+    if (friends.some((f) => f.account_id === id)) { status.textContent = "Он уже в списке."; return; }
+    status.textContent = "Ищу...";
+    try {
+      const p = await api(`/players/${id}`);
+      if (stale(seq)) return;
+      if (!p || !p.profile) { status.textContent = "OpenDota не знает такой аккаунт."; return; }
+      const list = [...friends, { account_id: id, name: p.profile.personaname || `#${id}`, t: Date.now() }];
+      safeLocal.set(friendsKey(account), JSON.stringify(list));
+      haptic("medium");
+      syncProfile(account);
+      navRoot("profile", profileScreen);
+    } catch { status.textContent = "OpenDota не отвечает. Попробуй ещё раз."; }
+  };
+  const remove = (id) => {
+    safeLocal.set(friendsKey(account), JSON.stringify(friends.filter((f) => f.account_id !== id)));
+    safeLocal.set(friendsRemovedKey(account), JSON.stringify([...localJson(friendsRemovedKey(account), []), id]));
+    syncProfile(account);
+    navRoot("profile", profileScreen);
+  };
+  (async () => {
+    const people = [{ account_id: Number(account), name: "Ты", me: true }, ...friends];
+    const rows = [];
+    // по одному: OpenDota режет частые запросы
+    for (const f of people) {
+      if (!leaderCache.has(f.account_id)) leaderCache.set(f.account_id, ((await api(`/players/${f.account_id}/recentMatches`)) || []).slice(0, 20));
+      const games = leaderCache.get(f.account_id).filter((m) => m.game_mode !== TURBO_MODE);
+      if (!games.length) continue;
+      const won = games.filter((m) => (m.player_slot < 128) === m.radiant_win).length;
+      rows.push({ ...f, games: games.length, wr: won / games.length,
+        kda: games.reduce((s, m) => s + (m.kills + m.assists) / Math.max(1, m.deaths), 0) / games.length,
+        gpm: games.reduce((s, m) => s + (m.gold_per_min || 0), 0) / games.length });
+    }
+    if (stale(seq)) return;
+    rows.sort((a, b) => b.wr - a.wr || b.kda - a.kda);
+    board.replaceChildren(...rows.map((r, i) => h("div", { class: `leader-row${r.me ? " me" : ""}` },
+      h("span", { class: "plan-num" }, String(i + 1)),
+      h("div", { class: "grow" }, h("b", {}, r.name), h("span", { class: "small muted" }, `KDA ${r.kda.toFixed(1)} · GPM ${Math.round(r.gpm)} · ${r.games} ${plural(r.games, "игра", "игры", "игр")}`)),
+      h("b", { class: r.wr >= 0.5 ? "win-text" : "loss-text" }, `${Math.round(r.wr * 100)}%`),
+      !r.me && h("button", { class: "leader-remove", type: "button", "aria-label": `Убрать ${r.name}`, onclick: () => remove(r.account_id) }, "×"))));
+    if (rows.length < 2) board.append(h("p", { class: "small muted" }, "Добавь друзей по Friend ID — посмотрим, кто из вас сейчас в форме."));
+  })().catch(() => { if (!stale(seq)) board.replaceChildren(h("p", { class: "muted small" }, "OpenDota не отдала игры друзей.")); });
+  return h("div", {}, h("h2", {}, "Друзья"), h("div", { class: "card" }, board,
+    h("div", { class: "row friend-add" }, h("div", { class: "grow" }, input), h("button", { type: "button", onclick: add }, "Добавить")),
+    status,
+    h("p", { class: "small muted" }, "Рейтинг по последним 20 играм без Турбо: винрейт, потом KDA.")));
+}
+
 // ---------- сравнение двух каток ----------
 
 const compareKey = (a) => `cmp:${(a.hist_self && a.hist_self.account) || "anon"}`;
@@ -2246,6 +2347,8 @@ async function boot() {
   }
   const { matchId, slot, account } = startParams();
   if (account) storage.set("account_id", String(account));
+  // история и задачи с других устройств: в фоне, экран не ждёт
+  storage.get("account_id").then((acc) => acc && syncProfile(acc)).catch(() => {});
   if (matchId) {
     navStack.push([homeScreen, []]);
     go(matchScreen, matchId, slot, account);

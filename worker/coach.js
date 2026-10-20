@@ -28,6 +28,7 @@ const MAX_CARD_BODY = 1000000; // тот же PNG в base64
 const CARD_TTL = 3 * 86400;
 const CARD_PER_IP_PER_HOUR = 15;
 const CARD_PER_DAY = 2000;
+const MAX_SYNC_BODY = 400000; // профиль с историей разборов
 const MAX_BODY = 10000;        // байт: сюда влезает вся сводка разбора вместе с моментами
 const PER_IP_PER_HOUR = 6;     // мягкий лимит на человека (память воркера, сбрасывается при перезапуске)
 const GLOBAL_PER_DAY = 400;    // не даём выжечь бесплатный лимит ключей одному энтузиасту
@@ -608,6 +609,39 @@ export async function checkWatches(env, now = Date.now()) {
   return sent;
 }
 
+// ---------- бэкенд: профиль пользователя в KV (история, задачи, память тренера, друзья) ----------
+
+// Один документ на пользователя Телеграма. Слияние по ключам: устройства дописывают, а не затирают друг друга
+const USER_LIMITS = { progress: 120, goal_hist: 60, memory: 20, friends: 30 };
+const emptyUser = () => ({ account_id: null, progress: [], goal: null, goal_hist: [], memory: [], friends: [], updated: 0 });
+
+// Список записей: объединение по ключу, при совпадении берётся более свежая (по полю t), порядок — от новых
+function mergeBy(a, b, key, limit) {
+  const map = new Map();
+  for (const x of [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])]) {
+    if (!x || typeof x !== "object" || x[key] == null) continue;
+    const old = map.get(x[key]);
+    if (!old || (Number(x.t) || 0) >= (Number(old.t) || 0)) map.set(x[key], x);
+  }
+  return [...map.values()].sort((x, y) => (Number(y.t) || 0) - (Number(x.t) || 0)).slice(0, limit);
+}
+
+export function mergeUser(stored, incoming) {
+  const s = { ...emptyUser(), ...(stored || {}) }, i = incoming || {};
+  const goal = [s.goal, i.goal].filter((g) => g && typeof g === "object").sort((x, y) => (Number(y.t) || 0) - (Number(x.t) || 0))[0] || null;
+  // удалённые друзья приходят списком removed, чтобы слияние их не вернуло
+  const removed = new Set((Array.isArray(i.removed_friends) ? i.removed_friends : []).map(Number));
+  return {
+    account_id: Number(i.account_id) || s.account_id,
+    progress: mergeBy(s.progress, i.progress, "match", USER_LIMITS.progress),
+    goal,
+    goal_hist: mergeBy(s.goal_hist, i.goal_hist, "checked", USER_LIMITS.goal_hist),
+    memory: mergeBy(s.memory, i.memory, "match", USER_LIMITS.memory),
+    friends: mergeBy(s.friends, i.friends, "account_id", USER_LIMITS.friends).filter((f) => !removed.has(Number(f.account_id))),
+    updated: Date.now(),
+  };
+}
+
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47];
 const JPEG_MAGIC = [0xff, 0xd8, 0xff];
 
@@ -641,6 +675,19 @@ async function handlePost(request, env, ctx, origin) {
     const id = (await sha256(b64)).slice(0, 24);
     await env.COACH_KV.put(`card:${id}.${ext}`, bytes, { expirationTtl: CARD_TTL });
     return reply(200, { url: `${new URL(request.url).origin}/card/${id}.${ext}` }, origin);
+  }
+
+  if (mode === "sync") {
+    if (!env.COACH_KV || !env.BOT_TOKEN) return reply(500, { error: "Синхронизация не настроена." }, origin);
+    if (body.length > MAX_SYNC_BODY) return reply(413, { error: "Слишком много данных." }, origin);
+    const user = await telegramUser(raw.initData, env.BOT_TOKEN);
+    if (!user || !user.id) return reply(403, { error: "Открой приложение из Телеграма." }, origin);
+    const limited = throttle(String(user.id), Date.now(), 60, "sync", 20000);
+    if (limited) return reply(429, { error: limited }, origin);
+    const key = `user:${user.id}`;
+    const merged = mergeUser(await env.COACH_KV.get(key, "json"), raw.data);
+    await env.COACH_KV.put(key, JSON.stringify(merged));
+    return reply(200, { data: merged }, origin);
   }
 
   if (mode === "watch") {

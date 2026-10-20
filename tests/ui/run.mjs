@@ -77,6 +77,9 @@ function opendota(url) {
     return keys.flatMap((item, i) => [900, 1200, 1500, 1800, 2100, 2400].map((time, j) => ({ hero_id: ME.hero_id, item, time, games: String(5 + ((i + j * 3) % 9)), wins: String(2 + ((i + j) % 5)) })));
   }
   if (p.startsWith("/request/") || p.endsWith("/refresh")) return {};
+  // другие игроки (друзья): профиль и последние игры, у друга винрейт выше
+  if ((m = /^\/players\/(\d+)$/.exec(p))) return { profile: { personaname: `Друг ${m[1].slice(-3)}` }, rank_tier: 34 };
+  if ((m = /^\/players\/(\d+)\/recentMatches$/.exec(p))) return history.slice(0, 20).map((x, i) => ({ ...x, radiant_win: i % 3 !== 0, player_slot: 0 }));
   return null;
 }
 
@@ -254,6 +257,16 @@ await step("profile", async () => {
   await page.locator('.tabbtn[data-tab="profile"]').click();
   await page.waitForSelector(".profile-card", { timeout: 10000 });
   await shot("profile");
+});
+await step("friends", async () => {
+  await page.locator(".friend-add input").fill("123456789");
+  await page.locator(".friend-add button").click();
+  await page.waitForFunction(() => document.querySelectorAll(".leader-row").length >= 2, null, { timeout: 15000 });
+  // друг с винрейтом 65% выше тебя
+  const first = await page.locator(".leader-row").first().innerText();
+  if (!/Друг 789/.test(first)) throw new Error(`рейтинг: ${first.replace(/\s+/g, " ")}`);
+  await page.locator(".leaderboard").scrollIntoViewIfNeeded();
+  await shot("friends", { full: false });
 });
 await step("hero", async () => {
   await page.locator(".hero-stat").first().click();

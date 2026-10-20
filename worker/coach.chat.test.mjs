@@ -329,3 +329,36 @@ test("карточка: JPEG тоже принимается и отдаётся
   const img = await worker.fetch(new Request(url), e);
   assert.equal(img.headers.get("Content-Type"), "image/jpeg");
 });
+
+// ---------- бэкенд: синхронизация профиля ----------
+import { mergeUser } from "./coach.js";
+
+test("mergeUser: устройства дописывают друг друга, свежая запись побеждает, лимиты держатся", () => {
+  const a = { account_id: 1, progress: [{ match: 1, t: 10, score: 5 }, { match: 2, t: 20, score: 6 }], goal: { t: 20, text: "старая" }, memory: [{ match: 1, t: 1 }] };
+  const b = { progress: [{ match: 2, t: 25, score: 7 }, { match: 3, t: 30 }], goal: { t: 30, text: "новая" }, friends: [{ account_id: 5, name: "Друг", t: 1 }] };
+  const m = mergeUser(a, b);
+  assert.equal(m.account_id, 1);
+  assert.deepEqual(m.progress.map((x) => x.match), [3, 2, 1]);
+  assert.equal(m.progress.find((x) => x.match === 2).score, 7);
+  assert.equal(m.goal.text, "новая");
+  assert.equal(m.friends.length, 1);
+  const removed = mergeUser(m, { removed_friends: [5] });
+  assert.equal(removed.friends.length, 0);
+  const many = mergeUser(null, { progress: Array.from({ length: 200 }, (_, i) => ({ match: i, t: i })) });
+  assert.equal(many.progress.length, 120);
+  assert.equal(many.progress[0].match, 199);
+  // мусор не ломает слияние
+  assert.deepEqual(mergeUser(null, { progress: [null, 5, "x", { t: 1 }] }).progress, []);
+});
+
+test("fetch: sync — только с подписью Телеграма, данные копятся в KV", async () => {
+  const kv = fakeKV();
+  const e = { ...env, COACH_KV: kv, BOT_TOKEN: "123:abc" };
+  const init = await signInit({ auth_date: String(Math.floor(Date.now() / 1000)), user: JSON.stringify({ id: 77 }) }, "123:abc");
+  const r1 = await (await worker.fetch(req({ mode: "sync", initData: init, data: { account_id: 801280038, progress: [{ match: 1, t: 1 }] } }), e)).json();
+  assert.equal(r1.data.account_id, 801280038);
+  const r2 = await (await worker.fetch(req({ mode: "sync", initData: init, data: { progress: [{ match: 2, t: 2 }] } }), e)).json();
+  assert.deepEqual(r2.data.progress.map((x) => x.match), [2, 1]);
+  assert.ok(kv.m.has("user:77"));
+  assert.equal((await worker.fetch(req({ mode: "sync", initData: "user=1&hash=00", data: {} }), e)).status, 403);
+});
