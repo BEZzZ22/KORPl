@@ -325,3 +325,48 @@ def test_ai_prompt_has_names_not_ids(match, od):
     prompt = coach_ai.build_prompt(run(match, match["players"][2], od))
     assert "enemy_names" in prompt and "Clinkz" in prompt
     assert '"enemies"' not in prompt and "Мелкие ошибки с точным временем" in prompt
+
+
+def micro_texts(a):
+    return [f.text for f in micro(a)]
+
+
+def test_khan_lh20_flags_slow_core(match, od):
+    import copy
+
+    m = copy.deepcopy(match)
+    for p in m["players"]:
+        p["lh_t"] = [min(x, 60) for x in p["lh_t"]]
+    texts = [t for p in m["players"] for t in micro_texts(run(m, p, od))]
+    assert any("60 крипов" in t and "20" in t for t in texts)
+
+
+def test_khan_death_while_team_is_ahead(match, od):
+    import copy
+
+    m = copy.deepcopy(match)
+    m["radiant_gold_adv"] = [20000] * len(m["radiant_gold_adv"])
+    victims = [p for p in m["players"] if p["isRadiant"] and sum(d["time"] >= 600 for d in p["deaths_log"]) >= 2]
+    assert victims
+    texts = [t for p in victims for t in micro_texts(run(m, p, od))]
+    assert any("золоту" in t and ("000" in t) for t in texts)
+
+
+def test_khan_idle_active_item(match, od):
+    import copy
+
+    m = copy.deepcopy(match)
+    found = []
+    for p in m["players"]:
+        p["purchase_log"] = p["purchase_log"] + [{"time": 900, "key": "lotus_orb"}]
+        p["item_uses"] = {k: v for k, v in p["item_uses"].items() if k != "lotus_orb"}
+        found += micro_texts(run(m, p, od))
+    assert any("Lotus Orb" in t for t in found)
+
+
+def test_khan_checks_stay_quiet_for_dominant_game(match, od):
+    for p in match["players"]:
+        a = run(match, p, od)
+        if a.facts["kda"].split("/")[1] == "0":
+            texts = micro_texts(a)
+            assert not any("перевес" in t or "ни разу не нажат" in t for t in texts)

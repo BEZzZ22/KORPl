@@ -30,6 +30,24 @@ const FARM_PACE = { herald: 3.5, guardian: 4.2, crusader: 5, archon: 5.8, legend
 const FARM_PACE_ROLE = { 1: 1, 2: 0.9, 3: 0.65 };
 const WARD_GAP = 480;
 const BUYBACK_WASTE_WINDOW = 45;
+// Хан держит ориентир 200+ крипов к 20:00 для кора, но по реальным матчам это уже уровень сильных:
+// флаг ставим на нижней четверти (≈25-й перцентиль), а 200+ называем как цель
+const LH20_FLOOR = { 1: 120, 2: 90, 3: 80 };
+const LH20_GOAL = 200;
+const TURBO_MODE = 23;
+const LEAD_DEATH_GOLD = 8000;
+const LEAD_DEATH_MIN_TIME = 600;
+const ROSHAN_RESPAWN_MIN = 480;
+const ROSHAN_FOLLOW_WINDOW = 180;
+const ROSHAN_FIGHT_MIN_TIME = 1200;
+const LANE_XP_GAP = 1500;
+const BKB_SOLO_WINDOW = 240;
+// Дорогие предметы с активкой: купил и ни разу не нажал — деньги в пустоту
+const ACTIVE_ITEMS = ["black_king_bar", "blink", "force_staff", "hurricane_pike", "cyclone", "ghost", "glimmer_cape",
+  "lotus_orb", "shivas_guard", "sheepstick", "orchid", "bloodthorn", "abyssal_blade", "silver_edge", "manta", "refresher",
+  "mekansm", "guardian_greaves", "solar_crest", "spirit_vessel", "heavens_halberd", "meteor_hammer", "rod_of_atos",
+  "nullifier", "diffusal_blade", "disperser", "mjollnir", "pipe", "crimson_guard", "blade_mail", "sphere", "satanic",
+  "wind_waker", "overwhelming_blink", "swift_blink", "arcane_blink"];
 const MAX_COUNTER_ITEMS = 3;
 const DETECTION_ITEMS = new Set(["dust", "ward_sentry", "gem"]);
 const PRO_MIN_COUNT = 3;
@@ -1368,16 +1386,26 @@ class MatchAnalyzer {
   checkMicro() {
     // Пометки к смертям в хронологии: время смерти -> что пошло не так
     this.deathNotes = new Map();
+    this.unusedKeys = new Set();
     this.checkLaneGaps();
     this.checkCoreDenies();
     this.checkMidRunes();
     this.checkFarmPace();
+    this.checkLastHits20();
     this.checkWardGaps();
     this.checkNeutral();
     this.checkWand();
     this.checkFightButtons();
     this.checkFirstToDie();
     this.checkBuybacks();
+    this.checkDeathsWhileAhead();
+    this.checkIdleActives();
+    this.checkCoreWards();
+    this.checkMidStartWard();
+    this.checkRoshanFollowup();
+    this.checkTormentor();
+    this.checkLaneXp();
+    this.checkBkbSolo();
   }
 
   micro(category, severity, key, params = {}, tipKey = `${key}_tip`) {
@@ -1548,6 +1576,7 @@ class MatchAnalyzer {
       // Нажатия вне больших драк по времени не видны: предмет мог быть в откате после стычки
       const outside = ((this.p.item_uses || {})[key] || 0) > (insideUses[key] || 0);
       const severe = (key === "black_king_bar" || n >= 2) && !(outside && n < 2);
+      this.unusedKeys.add(key);
       this.micro(FIGHTS, severe ? BAD : WARN, "micro_unused_item",
         { item, times, n, times_word: timesWord(n) });
       for (const t of ts) this.deathNotes.set(t, `${item} так и не нажат`);
@@ -1616,6 +1645,142 @@ class MatchAnalyzer {
     this.issue("buyback_wasted", cost * wasted.length, "Байбек в пустоту",
       `На ${mmss(bt)} выкупился за ~${num(cost)} золота и умер через ${dt - bt} ${plural(dt - bt, "секунду", "секунды", "секунд")}`,
       "Перед байбеком посмотри на карту: сколько врагов живо и успеешь ли ты вообще что-то сделать. Если файт уже проигран — копи на следующий");
+  }
+
+  // ---------- методика Хана: бенчмарки и привычки ----------
+
+  // 200 крипов к 20:00 — нижняя планка кора по Хану; у керри цель 300
+  checkLastHits20() {
+    const lh = this.p.lh_t || [];
+    if (!this.core || !this.roleSure || this.dominant || this.minutes < 21 || lh.length < 21) return;
+    if (this.match.game_mode === TURBO_MODE || this.issues.some((i) => i.group === "farm_pace")) return;
+    const target = LH20_FLOOR[this.pos], got = lh[20];
+    if (got >= target) return;
+    const goal = this.pos === 1 ? ` Ориентир сильных керри — ${LH20_GOAL}+.` : "";
+    this.micro(FARM, got < target * 0.75 ? BAD : WARN, "micro_lh20", { lh: got, target, goal });
+    this.issue("lh20", (target - got) * 40, "Мало крипов к 20-й минуте",
+      `К 20:00 у тебя ${got} ${plural(got, "крип", "крипа", "крипов")}, а нижняя планка для ${ROLE_GEN_PLURAL[this.pos]} — ${target}.${goal}`,
+      "Нет файта — фарми. Волна, ближайший кемп, снова волна; стакай большой кемп, пока идёшь по кругу",
+      `Цель на следующую катку: ${target}+ крипов к 20:00`);
+  }
+
+  // Умирал при крупном перевесе по золоту: игра была в кармане
+  checkDeathsWhileAhead() {
+    if (this.dominant || !this.teamAdv.length) return;
+    const lead = (this.p.deaths_log || []).filter((d) => d.time >= LEAD_DEATH_MIN_TIME &&
+      atMinute(this.teamAdv, Math.floor(d.time / 60)) >= LEAD_DEATH_GOLD);
+    if (lead.length < 2) return;
+    const n = lead.length;
+    const times = lead.slice(0, 4).map((d) => mmss(d.time)).join(", ");
+    this.micro(SURVIVAL, n >= 3 ? BAD : WARN, "micro_death_lead", { n, times, times_word: timesWord(n), gold: num(LEAD_DEATH_GOLD) });
+    for (const d of lead) if (!this.deathNotes.has(d.time)) this.deathNotes.set(d.time, "умер, когда команда вела по золоту");
+    this.issue("lead_deaths", n * 600, "Умирал при перевесе",
+      `${n} ${deathsWord(n)} в моменты, когда команда вела по золоту на ${num(LEAD_DEATH_GOLD)}+ (${times})`,
+      "С перевесом тебя должны ловить, а не ты бегать: стой с командой, бери объекты и не лезь в туман один",
+      "Цель на следующую катку: при перевесе ни одной смерти вне файта");
+  }
+
+  // Купил предмет с активкой и ни разу не нажал за всю игру
+  checkIdleActives() {
+    if (this.dominant || this.duration < 1200) return;
+    const log = this.p.purchase_log || [], uses = this.p.item_uses || {};
+    if (!("item_uses" in this.p)) return;
+    const idle = [];
+    for (const key of ACTIVE_ITEMS) {
+      if (this.unusedKeys && this.unusedKeys.has(key)) continue;
+      const buy = log.find((x) => x.key === key);
+      if (!buy || buy.time > this.duration - 420) continue;
+      const group = [key, ...(ITEM_UPGRADES[key] || [])];
+      if (group.some((k) => (uses[k] || 0) > 0)) continue;
+      idle.push({ key, time: buy.time });
+    }
+    if (!idle.length) return;
+    idle.sort((a, b) => this.od.itemCost(b.key) - this.od.itemCost(a.key));
+    const top = idle.slice(0, 2);
+    const items = top.map((x) => this.od.itemName(x.key)).join(", ");
+    const n = top.length;
+    this.micro(ITEMS, WARN, "micro_idle_active", { items, n, verb: n > 1 ? "ни разу не нажаты" : "ни разу не нажат" });
+    this.issue("idle_active", sum(top.map((x) => this.od.itemCost(x.key))) * 0.4, "Предметы без нажатия",
+      `${items} куплен${n > 1 ? "ы" : ""} на ${top.map((x) => mmss(x.time)).join(", ")} и за всю игру не нажат${n > 1 ? "ы" : ""} ни разу`,
+      "Купил активку — нажимай: в каждой драке, на каждом ганге. Предмет, который лежит в слоте, не работает");
+  }
+
+  // Керри и мидер сами покупают обсы: они дешёвые, а вижн нужен им не меньше саппортов
+  checkCoreWards() {
+    const p = this.p;
+    if (this.pos > 2 || !this.roleSure || this.dominant || this.minutes < 25 || !("obs_placed" in p)) return;
+    if ((p.obs_placed || 0) > 0 || (p.sen_placed || 0) > 0) return;
+    this.micro(VISION, WARN, "micro_core_wards", { mins: this.minutes, role: this.pos === 1 ? "керри" : "мидер" });
+  }
+
+  // Мидер ставит обс на старте или к руне 6-й минуты, а не живёт вслепую
+  checkMidStartWard() {
+    const log = this.p.obs_log;
+    if (this.pos !== 2 || !this.roleSure || this.dominant || this.minutes < 12 || !Array.isArray(log)) return;
+    if (log.some((w) => w.time <= 420)) return;
+    this.micro(VISION, WARN, "micro_mid_ward");
+  }
+
+  // Выиграли драку с перевесом, а Рошана не взяли и вышки не сломали
+  checkRoshanFollowup() {
+    const objs = this.match.objectives || [];
+    const kills = objs.filter((o) => o.type === "CHAT_MESSAGE_ROSHAN_KILL").map((o) => o.time).sort((a, b) => a - b);
+    const myTeam = this.p.isRadiant ? 2 : 3;
+    const enemyBuilding = this.p.isRadiant ? "badguys" : "goodguys";
+    const buildingFalls = objs.filter((o) => o.type === "building_kill" && typeof o.key === "string" && o.key.includes(enemyBuilding)).map((o) => o.time);
+    const allyIdx = this.allies.map((a) => this.match.players.indexOf(a));
+    const enemyIdx = this.enemies.map((a) => this.match.players.indexOf(a));
+    const missed = [];
+    for (const tf of this.match.teamfights || []) {
+      const ps = tf.players || [];
+      if (!ps.length || tf.end < ROSHAN_FIGHT_MIN_TIME || tf.end > this.duration - 240) continue;
+      const mine = sum(allyIdx.filter((i) => i < ps.length).map((i) => ps[i].deaths));
+      const theirs = sum(enemyIdx.filter((i) => i < ps.length).map((i) => ps[i].deaths));
+      if (theirs < 3 || theirs - mine < 2) continue;
+      const lastRosh = kills.filter((t) => t <= tf.end).pop();
+      if (lastRosh !== undefined && tf.end - lastRosh < ROSHAN_RESPAWN_MIN) continue;
+      const until = tf.end + ROSHAN_FOLLOW_WINDOW;
+      if (kills.some((t) => t >= tf.start && t <= until)) continue;
+      if (buildingFalls.some((t) => t >= tf.end && t <= until)) continue;
+      missed.push(tf.start);
+    }
+    const n = missed.length;
+    if (!n || (n < 2 && this.won)) return;
+    this.micro(FIGHTS, WARN, "micro_roshan_skipped", { n, times: missed.slice(0, 3).map(mmss).join(", "), times_word: timesWord(n) });
+    this.issue("roshan_skipped", n * 500, "Выиграли файт и не взяли Рошана",
+      `${n} ${timesWord(n)} команда выиграла драку с перевесом (${missed.slice(0, 3).map(mmss).join(", ")}), но ни Рошана, ни вышки за следующие 3 минуты не взяла`,
+      "Выиграли драку — сразу Рошан, а если он ещё на кулдауне — ломайте вышки. Аегис и перевес не ждут, пока враги соберутся");
+  }
+
+  // Торментор: враги забирают, а вы ни разу
+  checkTormentor() {
+    if (this.minutes < 30 || this.dominant) return;
+    const myTeam = this.p.isRadiant ? 2 : 3;
+    const kills = (this.match.objectives || []).filter((o) => o.type === "CHAT_MESSAGE_MINIBOSS_KILL");
+    const ours = kills.filter((o) => o.team === myTeam).length;
+    const theirs = kills.length - ours;
+    if (theirs >= 2 && ours === 0) this.micro(FIGHTS, WARN, "micro_tormentor", { theirs, times_word: timesWord(theirs) });
+  }
+
+  // Опыт против оппонента по линии: перекачать его — главная цель лайна
+  checkLaneXp() {
+    const mine = this.p.xp_t, theirs = this.opponent && this.opponent.xp_t;
+    if (!this.core || !this.roleSure || this.dominant || !this.opponent || this.minutes < 16 || !mine || !theirs) return;
+    if (this.issues.some((i) => i.group === "lane_lost")) return;
+    const gap = atMinute(theirs, 15) - atMinute(mine, 15);
+    if (gap < LANE_XP_GAP) return;
+    this.micro(LANE, gap >= LANE_XP_GAP * 1.6 ? BAD : WARN, "micro_lane_xp", { opp: this.oppName, xp: num(gap) });
+  }
+
+  // Купил БКБ и в первые минуты умер один: «реализовывать» пошёл без команды
+  checkBkbSolo() {
+    if (!this.core || this.dominant) return;
+    const buy = (this.p.purchase_log || []).find((x) => x.key === "black_king_bar");
+    if (!buy) return;
+    const d = (this.p.deaths_log || []).find((x) => x.time > buy.time && x.time <= buy.time + BKB_SOLO_WINDOW && this.isSoloDeath(x.time));
+    if (!d) return;
+    this.micro(SURVIVAL, WARN, "micro_bkb_solo", { buy: mmss(buy.time), death: mmss(d.time) });
+    if (!this.deathNotes.has(d.time)) this.deathNotes.set(d.time, "через пару минут после БКБ, в одиночку");
   }
 
   // ---------- сравнение с другими игроками на герое ----------
