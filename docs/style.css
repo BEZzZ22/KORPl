@@ -542,3 +542,13 @@ details.timeline-box > summary { font-weight: 700; }
   .coach-fresh > [style*="--i"], .coach-fresh .coach-steps > li { animation: none; }
   .coach-step, .coach-mark, .coach-mark::after { transition: none; }
 }
+
+/* ---------- статистика по герою ---------- */
+
+button.hero-stat { width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; box-shadow: none; color: var(--text); font: inherit; padding: 9px 0; }
+button.hero-stat:last-child { border-bottom: 0; }
+button.hero-stat:active { transform: scale(.98); filter: none; }
+.spark { display: block; width: 100%; height: auto; margin-bottom: 8px; }
+.spark polyline { fill: none; stroke: var(--ember); stroke-width: 2; stroke-linejoin: round; }
+.spark .w { fill: var(--gold); }
+.spark .l { fill: var(--bad); }

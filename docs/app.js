@@ -527,7 +527,7 @@ async function profileScreen() {
     topHeroes.length > 0 && h("h2", {}, "Любимые герои"),
     topHeroes.length > 0 && h("div", { class: "card" }, ...topHeroes.map((hx) => {
       const wr = hx.games ? Math.round((hx.win / hx.games) * 100) : 0;
-      return h("div", { class: "hero-stat" },
+      return h("button", { class: "hero-stat", onclick: () => { haptic(); go(heroStatsScreen, hx.hero_id); } },
         heroImg(hx.hero_id),
         h("div", { class: "grow" },
           h("div", { class: "hn" }, dictionary.heroName(hx.hero_id)),
@@ -573,6 +573,123 @@ function weakHeroesBlock(heroes) {
   return h("div", {}, h("h2", {}, "Не заходят"),
     h("div", { class: "card" }, ...weak.map((hx) => h("div", { class: "problem-fact" },
       `${dictionary.heroName(hx.hero_id)}: ${Math.round((hx.win / hx.games) * 100)}% побед за ${hx.games} игр. Пока лучше не пикай его в рейтинг.`))));
+}
+
+// ---------- экран «Статистика по герою» (только свои игры) ----------
+
+const HERO_TTL = 6 * 3600 * 1000;
+const HERO_FIELDS = "hero_id,kills,deaths,assists,gold_per_min,xp_per_min,last_hits,duration,player_slot,radiant_win,start_time,game_mode";
+
+// Матчи на герое и враги против него. Кэш в localStorage на 6 часов: OpenDota не любит частые запросы
+async function heroStatsData(account, heroId) {
+  const key = `hs:${account}:${heroId}`;
+  try {
+    const hit = JSON.parse(safeLocal.get(key) || "null");
+    if (hit && Date.now() - hit.t < HERO_TTL) return hit;
+  } catch { /* битый кэш — просто качаем заново */ }
+  const [matches, vs] = await Promise.all([
+    api(`/players/${account}/matches?hero_id=${heroId}&project=${HERO_FIELDS.split(",").join("&project=")}`),
+    api(`/players/${account}/heroes?hero_id=${heroId}`),
+  ]);
+  const data = {
+    t: Date.now(),
+    matches: (matches || []).filter((m) => m.game_mode !== TURBO_MODE),
+    vs: (vs || []).filter((x) => x.against_games >= 5)
+      .map((x) => ({ id: x.hero_id, g: x.against_games, w: x.against_win })),
+  };
+  safeLocal.set(key, JSON.stringify(data));
+  return data;
+}
+
+// Мини-график GPM по играм (старые слева), точки — победа/поражение
+function sparkline(list) {
+  const W = 300, H = 56, P = 5;
+  const vals = list.map((m) => m.gold_per_min || 0);
+  const lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo || 1;
+  const pts = vals.map((v, i) => [P + (i * (W - 2 * P)) / Math.max(1, vals.length - 1), H - P - ((v - lo) / span) * (H - 2 * P)]);
+  return svg("svg", { class: "spark", viewBox: `0 0 ${W} ${H}`, "aria-hidden": "true" },
+    svg("polyline", { points: pts.map((p) => p.map((n) => n.toFixed(1)).join(",")).join(" ") }),
+    ...pts.map(([x, y], i) => {
+      const won = (list[i].player_slot < 128) === list[i].radiant_win;
+      return svg("circle", { cx: x.toFixed(1), cy: y.toFixed(1), r: "3", class: won ? "w" : "l" });
+    }));
+}
+
+async function heroStatsScreen(heroId) {
+  section = "profile";
+  const seq = navSeq;
+  const account = await storage.get("account_id");
+  if (stale(seq)) return;
+  if (!account) { navRoot("profile", profileScreen); return; }
+  const name = dictionary.heroName(heroId);
+  loading(`Считаю игры на ${name}...`);
+  let data;
+  try {
+    data = await heroStatsData(account, heroId);
+  } catch {
+    if (!stale(seq)) errorScreen("OpenDota не отвечает.", () => go(heroStatsScreen, heroId));
+    return;
+  }
+  if (stale(seq)) return;
+  const head = h("div", { class: "page-head" }, heroImg(heroId), h("h1", {}, name));
+  const list = data.matches.slice().sort((a, b) => b.start_time - a.start_time);
+  if (!list.length) {
+    render(head, h("div", { class: "card muted" },
+      `Игр на ${name} не видно. Если игры были, проверь в Доте: Настройки → Расширенные настройки → Социальное → «Expose Public Match Data».`));
+    return;
+  }
+
+  const won = (m) => (m.player_slot < 128) === m.radiant_win;
+  const wins = list.filter(won).length;
+  const wr = Math.round((wins / list.length) * 100);
+  const avg = (f) => list.reduce((s, m) => s + (f(m) || 0), 0) / list.length;
+  const row = (label, value) => h("div", { class: "score-row trend" }, h("span", {}, label), h("b", {}, value), h("span", {}));
+
+  // Тренд: последние 20 игр, первая половина против второй
+  const last = list.slice(0, 20).reverse();
+  let trend = null;
+  if (last.length >= 10) {
+    const half = Math.floor(last.length / 2);
+    const mean = (arr) => Math.round(arr.reduce((s, m) => s + (m.gold_per_min || 0), 0) / arr.length);
+    const a = mean(last.slice(0, half)), b = mean(last.slice(half));
+    const wa = last.slice(0, half).filter(won).length, wb = last.slice(half).filter(won).length;
+    trend = h("div", {}, h("h2", {}, `Тренд за последние ${last.length} игр`), h("div", { class: "card" },
+      sparkline(last),
+      h("div", { class: "small muted" }, `GPM: ${a} → ${b}. Побед: ${wa} из ${half} → ${wb} из ${last.length - half}. Точка — игра, золотая — победа.`)));
+  }
+
+  // Враги: с кем встречался чаще всего, от 5 игр против
+  const foes = data.vs.slice().sort((x, y) => y.g - x.g).slice(0, 8);
+  const foesBlock = foes.length > 0 && h("div", {}, h("h2", {}, "Чаще всего против"), h("div", { class: "card" },
+    ...foes.map((f) => {
+      const fwr = Math.round((f.w / f.g) * 100);
+      return h("div", { class: "hero-stat" },
+        heroImg(f.id),
+        h("div", { class: "grow" },
+          h("div", { class: "hn" }, dictionary.heroName(f.id)),
+          h("div", { class: "hg" }, `${f.g} игр: ${f.w} побед, ${f.g - f.w} поражений`)),
+        h("div", { class: `wr ${fwr >= 50 ? "win-text" : "loss-text"}` }, `${fwr}%`));
+    }),
+    h("div", { class: "small muted" }, "Только враги, против которых было 5+ игр.")));
+
+  render(head,
+    h("div", { class: "card" },
+      h("div", { class: "profile-metrics" },
+        h("div", { class: "metric" }, h("b", {}, String(list.length)), h("span", {}, "игр")),
+        h("div", { class: "metric" }, h("b", { class: wr >= 50 ? null : "loss-text" }, `${wr}%`), h("span", {}, "винрейт")),
+        h("div", { class: "metric" }, h("b", {}, String(wins)), h("span", {}, "побед")),
+      ),
+      row("Средний KDA", `${avg((m) => m.kills).toFixed(1)}/${avg((m) => m.deaths).toFixed(1)}/${avg((m) => m.assists).toFixed(1)}`),
+      row("GPM / XPM", `${Math.round(avg((m) => m.gold_per_min))} / ${Math.round(avg((m) => m.xp_per_min))}`),
+      row("Добитые крипы", String(Math.round(avg((m) => m.last_hits)))),
+      list.length < 10 && h("div", { class: "small muted" }, "Мало игр, выводы появятся от 10 игр."),
+    ),
+    trend,
+    list.length >= 10 && foesBlock,
+    h("h2", {}, "Последние игры на герое"),
+    ...list.slice(0, 10).map((m) => matchListItem(m, account)),
+    h("div", { class: "small muted" }, "Турбо не считается. Данные обновляются раз в 6 часов."),
+  );
 }
 
 function matchEmpty() {
