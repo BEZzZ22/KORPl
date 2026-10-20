@@ -294,7 +294,7 @@ const aliases = (s) => {
 const CLAIMS = [
   [/(?<!почти )без (обс|вижн|видим|вард)|не было (обс|вижн|видим|вард)/, ["ни одного обса"], "написано «без обсов», а обсы стояли"],
   [/в одиночку|без союзник|без своих|без команды|(^|[^а-яё])(?<!ни |на )одн?(ин|ого|ому)(?! (обс|вард|из|раз|на один))([^а-яё]|$)/,
-    ["один, рядом своих не было", "драка без тебя"], "написано «один», а в фактах этого нет"],
+    ["один, рядом своих не было", "драка без тебя", "своих в радиусе 1 500 не было"], "написано «один», а в фактах этого нет"],
 ];
 
 // Общие слова вместо действия
@@ -656,7 +656,9 @@ async function replayQueue(env, now = Date.now()) {
 
 export async function queueReplay(env, match, user = null, now = Date.now()) {
   const status = await env.COACH_KV.get(`replay:${match}`);
-  if (status) return status;
+  // готовый разбор отдаём сразу; после ошибки повторная заявка снова ставит матч в очередь
+  if (status === "done") return status;
+  if (status) await env.COACH_KV.delete(`replay:${match}`);
   const list = await replayQueue(env, now);
   if (!list.some((x) => x.match === match && x.user === user)) {
     list.push({ match, user, t: now });

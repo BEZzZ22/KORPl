@@ -188,3 +188,44 @@ test("ачивки: серия считается подряд, неподход
   assert.equal(by.eyes.have, 0);
   assert.equal(by.goals5.done, true);
 });
+
+// ---------- реплей ----------
+import { replayInsights } from "../docs/engine.js";
+
+// Синтетический файл позиций: все стоят на месте весь матч
+function fakeReplay(match, spots) {
+  const n = Math.ceil((match.duration + 90) / 2) + 1;
+  const pos = {};
+  for (const p of match.players) pos[p.player_slot] = Array.from({ length: n }, () => spots[p.player_slot] || [180, 180]);
+  return { v: 1, step: 2, start: -90, end: match.duration, pos };
+}
+
+test("реплей: кто был рядом в смерти, зоны и тепловая карта", () => {
+  const m = copy();
+  const replay = fakeReplay(m, { 0: [100, 100], 1: [100, 105], 2: [150, 150], 128: [102, 100] });
+  const tusk = m.players[0];
+  const r = replayInsights(m, tusk, replay);
+  assert.equal(r.deaths.length, tusk.deaths_log.length);
+  const d = r.deaths[5];
+  assert.equal(d.allies_near, 1); // слот 1 в 5 клетках = 640 юнитов
+  assert.equal(d.enemies_near, 1); // слот 128 в 2 клетках
+  assert.equal(d.nearest_ally, 600);
+  assert.equal(d.enemy_half, false);
+  assert.ok(d.path.length >= 5);
+  assert.equal(r.zones.lane.own, 1);
+  assert.ok(r.heat.length > 100);
+  assert.equal(replayInsights(m, tusk, null), null);
+  assert.equal(replayInsights(m, tusk, { v: 2 }), null);
+});
+
+test("реплей: в моментах тренера правда о соседях вместо догадки", () => {
+  const m = copy();
+  // Batrider (слот 2) один на вражеской половине, свои далеко
+  const replay = fakeReplay(m, { 2: [170, 170], 0: [80, 80], 1: [80, 82], 3: [82, 80], 4: [84, 84] });
+  const p = m.players.find((x) => od.heroName(x.hero_id) === "Batrider");
+  const a = analyze(m, p, od, kb, tx, pro, bench, {}, [], replay);
+  assert.ok(a.replay && a.replay.deaths.length);
+  const ep = a.episodes.find((e) => e.kind === "death" && e.time >= 600);
+  assert.ok(ep.facts.some((f) => /^по реплею: своих в радиусе 1 500 не было/.test(f)), ep.facts.join(" | "));
+  assert.ok(ep.facts.includes("на вражеской половине карты"));
+});

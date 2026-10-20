@@ -63,6 +63,7 @@ function fakeKV() {
       return v;
     },
     async put(k, v) { m.set(k, v); },
+    async delete(k) { m.delete(k); },
   };
 }
 

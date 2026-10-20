@@ -19,5 +19,5 @@ if (!player) {
   process.exit(2);
 }
 const od = createDictionary(input.constants);
-const result = analyze(input.match, player, od, knowledge, texts, input.pro_items || {}, input.hero_bench || {}, norms, input.matchups || []);
+const result = analyze(input.match, player, od, knowledge, texts, input.pro_items || {}, input.hero_bench || {}, norms, input.matchups || [], input.replay || null);
 process.stdout.write(JSON.stringify(result));

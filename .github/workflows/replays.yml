@@ -64,7 +64,8 @@ jobs:
               echo '{"error":"Реплей не скачался: Valve хранит их около двух недель"}' > "out/r/$id.err.json"
               echo "::endgroup::"; continue
             fi
-            code=$(curl -s --max-time 900 --data-binary @replay.dem -o parsed.jsonl -w "%{http_code}" http://localhost:5600 || echo "curl-fail")
+            # Expect: пустой — иначе curl ждёт «100 Continue», парсер сразу отвечает 200, и реплей так и не уходит
+            code=$(curl -s --max-time 900 -H "Expect:" -H "Content-Type: application/octet-stream" --data-binary @replay.dem -o parsed.jsonl -w "%{http_code}" http://localhost:5600 || echo "curl-fail")
             if node tools/replay-summary.mjs "$id" < parsed.jsonl > "out/r/$id.json"; then
               echo "готово: $(wc -c < "out/r/$id.json") байт"
             else

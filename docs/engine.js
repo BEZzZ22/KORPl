@@ -378,7 +378,7 @@ export function isParsed(match) {
 }
 
 class MatchAnalyzer {
-  constructor(match, player, od, knowledge, texts, proItems, heroBench, norms, matchups) {
+  constructor(match, player, od, knowledge, texts, proItems, heroBench, norms, matchups, replay = null) {
     this.match = match;
     this.matchups = Array.isArray(matchups) ? matchups : [];
     this.norms = norms || {};
@@ -421,6 +421,8 @@ class MatchAnalyzer {
     this.bracket = this.detectBracket();
     this.metrics = this.collectMetrics();
     this.rank = this.rankMetrics();
+    // позиции из реплея, если его разобрали: правда о том, кто был рядом в каждой смерти
+    this.replay = replayInsights(match, player, replay);
   }
 
   // ---------- ранг и нормы ----------
@@ -594,6 +596,7 @@ class MatchAnalyzer {
       moments: this.moments(),
       episodes: this.episodes(),
       map: this.mapData(),
+      replay: this.replay,
       progress: this.progressMetrics(),
       next_rank: this.nextRank(),
       lane: this.laneDuel(),
@@ -2338,7 +2341,15 @@ class MatchAnalyzer {
       if (killer === "башня") facts.push("тебя убила вышка");
       else if (!d.key.startsWith("npc_dota_hero_")) facts.push("тебя убили крипы или нейтралы");
       else facts.push(`тебя убил ${killer}`);
-      const alone = !tf && !laning && this.isSoloDeath(d.time);
+      // по реплею видно точно, кто был рядом: это важнее догадок по логу смертей
+      const seen = this.replay ? this.replay.deaths.find((x) => x.t === d.time) : null;
+      const alone = seen ? seen.allies_near === 0 && !laning && d.time >= RUNE_FIGHT_END : !tf && !laning && this.isSoloDeath(d.time);
+      if (seen) {
+        facts.push(seen.allies_near
+          ? `по реплею: рядом своих ${seen.allies_near}, врагов ${seen.enemies_near}`
+          : `по реплею: своих в радиусе 1 500 не было${seen.nearest_ally ? ` (ближайший в ${num(seen.nearest_ally)})` : ""}, врагов рядом ${seen.enemies_near}`);
+        facts.push(seen.enemy_half ? "на вражеской половине карты" : "на своей половине карты");
+      }
       if (tf) facts.push("в командной драке");
       else if (d.time < RUNE_FIGHT_END) facts.push("драка за руну на старте, до выхода на линии");
       else if (laning) facts.push(myLane ? `стадия линий, твоя линия: ${{ bot: "низ", mid: "мид", top: "верх" }[myLane]}` : "стадия линий");
@@ -2348,7 +2359,7 @@ class MatchAnalyzer {
       if (killerP) facts.push(killerP.lane === p.lane ? "убийца стоял на твоей линии" : "ганг: убийца пришёл не с твоей линии");
       const traded = (p.kills_log || []).filter((k) => k.key.startsWith("npc_dota_hero_") && Math.abs(k.time - d.time) <= 20);
       if (traded.length) facts.push(`размен: ты тоже убил ${[...new Set(traded.map((k) => this.od.heroNameByKey(k.key)))].join(", ")}`);
-      if (tf) {
+      if (tf && !seen) {
         const pos = Object.entries((tf.players || [])[idx]?.deaths_pos || {}).flatMap(([x, ys]) => Object.keys(ys).map((y) => [parseFloat(x), parseFloat(y)]));
         if (pos.length) facts.push(enemyHalf(pos[0][0], pos[0][1], p.isRadiant) ? "на вражеской половине карты" : "на своей половине карты");
       }
@@ -2532,6 +2543,69 @@ class MatchAnalyzer {
   }
 }
 
+// ---------- реплей: позиции героев ----------
+
+const CELL = 128;            // юнитов в клетке карты OpenDota
+const NEAR_RADIUS = 1500;    // юнитов: «рядом» — примерно дальность каста и подхода в драке
+const PATH_SECONDS = 20;     // путь перед смертью
+
+// Позиции из файла реплея (tools/replay-summary.mjs): кто где стоял, кто был рядом в каждой смерти,
+// сколько времени на своей половине, на реке и на чужой. null — файла нет или игрока в нём нет
+export function replayInsights(match, player, replay) {
+  if (!replay || replay.v !== 1 || !replay.pos) return null;
+  const mine = replay.pos[player.player_slot];
+  if (!Array.isArray(mine) || !mine.length) return null;
+  const { step, start } = replay;
+  const index = (t) => Math.round((t - start) / step);
+  const at = (track, t, back = 3) => {
+    // ближайшая живая точка не позже t (смерть пишется уже мёртвым)
+    for (let k = 0; k <= back; k++) {
+      const p = track && track[index(t) - k];
+      if (p) return p;
+    }
+    return null;
+  };
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) * CELL;
+  const radiant = player.isRadiant;
+  const allies = match.players.filter((x) => x.isRadiant === radiant && x !== player).map((x) => replay.pos[x.player_slot]);
+  const enemies = match.players.filter((x) => x.isRadiant !== radiant).map((x) => replay.pos[x.player_slot]);
+  const deaths = (player.deaths_log || []).map((d) => {
+    const me = at(mine, d.time);
+    if (!me) return null;
+    const allyPos = allies.map((tr) => at(tr, d.time, 1)).filter(Boolean);
+    const enemyPos = enemies.map((tr) => at(tr, d.time, 1)).filter(Boolean);
+    const nearest = allyPos.length ? Math.min(...allyPos.map((p) => dist(me, p))) : null;
+    const path = [];
+    for (let t = d.time - PATH_SECONDS; t <= d.time; t += step) { const p = mine[index(t)]; if (p) path.push(p); }
+    return {
+      t: d.time, x: me[0], y: me[1], path,
+      allies_near: allyPos.filter((p) => dist(me, p) <= NEAR_RADIUS).length,
+      enemies_near: enemyPos.filter((p) => dist(me, p) <= NEAR_RADIUS).length,
+      nearest_ally: nearest == null ? null : Math.round(nearest / 100) * 100,
+      enemy_half: enemyHalf(me[0], me[1], radiant),
+    };
+  }).filter(Boolean);
+  // где проводил время: своя половина, река, чужая — по фазам игры
+  const phases = [["lane", 0, 600], ["mid", 600, 1500], ["late", 1500, Infinity]];
+  const zones = {};
+  for (const [key, t0, t1] of phases) {
+    const z = { own: 0, river: 0, enemy: 0 };
+    mine.forEach((p, i) => {
+      const t = start + i * step;
+      if (!p || t < t0 || t >= t1) return;
+      const s = p[0] + p[1];
+      if (Math.abs(s - MAP_CENTER_SUM) <= RIVER_MARGIN) z.river++;
+      else if (enemyHalf(p[0], p[1], radiant)) z.enemy++;
+      else z.own++;
+    });
+    const total = z.own + z.river + z.enemy;
+    if (total) zones[key] = { own: z.own / total, river: z.river / total, enemy: z.enemy / total };
+  }
+  // тепловая карта: точка раз в 10 секунд, пока жив
+  const heat = mine.filter((p, i) => p && i % Math.max(1, Math.round(10 / step)) === 0);
+  return { deaths, zones, heat, radiant };
+}
+
 // ---------- прогресс: цели, ачивки, ранг ----------
 
 // Проверка цели прошлой катки по показателям новой: done, failed или skip (в этой катке не проверить)
@@ -2676,6 +2750,6 @@ export function draftAdvice({ enemies, pool, matchups, knowledge, od, role = "co
   return { picks: picks.slice(0, 3), items };
 }
 
-export function analyze(match, player, od, knowledge, texts, proItems, heroBench, norms, matchups) {
-  return new MatchAnalyzer(match, player, od, knowledge, texts, proItems, heroBench, norms, matchups).run();
+export function analyze(match, player, od, knowledge, texts, proItems, heroBench, norms, matchups, replay = null) {
+  return new MatchAnalyzer(match, player, od, knowledge, texts, proItems, heroBench, norms, matchups, replay).run();
 }
