@@ -642,6 +642,58 @@ export function mergeUser(stored, incoming) {
   };
 }
 
+// ---------- разбор реплеев: очередь для GitHub Actions ----------
+
+// Результат кладёт workflow .github/workflows/replays.yml в ветку replays
+const REPLAY_RAW = "https://raw.githubusercontent.com/BEZzZ22/KORPl/replays/r";
+const REPLAY_QUEUE = "replay_queue";
+const REPLAY_TTL = 24 * 3600 * 1000;
+
+async function replayQueue(env, now = Date.now()) {
+  const list = (await env.COACH_KV.get(REPLAY_QUEUE, "json")) || [];
+  return list.filter((x) => now - x.t < REPLAY_TTL);
+}
+
+export async function queueReplay(env, match, user = null, now = Date.now()) {
+  const status = await env.COACH_KV.get(`replay:${match}`);
+  if (status) return status;
+  const list = await replayQueue(env, now);
+  if (!list.some((x) => x.match === match && x.user === user)) {
+    list.push({ match, user, t: now });
+    await env.COACH_KV.put(REPLAY_QUEUE, JSON.stringify(list.slice(-100)));
+  }
+  return "queued";
+}
+
+// Крон: что из очереди уже разобрано (или не получилось) — снимаем и пишем игроку
+export async function checkReplays(env, now = Date.now()) {
+  if (!env.COACH_KV) return 0;
+  const list = await replayQueue(env, now);
+  if (!list.length) return 0;
+  const keep = [], status = new Map();
+  let changed = false, sent = 0;
+  for (const x of list) {
+    if (!status.has(x.match) && status.size < 10) {
+      const has = async (name) => (await fetch(`${REPLAY_RAW}/${name}`, { method: "HEAD", signal: AbortSignal.timeout(10000) }).catch(() => null))?.ok;
+      status.set(x.match, (await has(`${x.match}.json`)) ? "done" : (await has(`${x.match}.err.json`)) ? "error" : null);
+    }
+    const s = status.get(x.match);
+    if (!s) { keep.push(x); continue; }
+    changed = true;
+    await env.COACH_KV.put(`replay:${x.match}`, s, { expirationTtl: 30 * 86400 });
+    if (x.user && env.BOT_TOKEN) {
+      const ok = await sendTelegram(env, "sendMessage", {
+        chat_id: x.user,
+        text: s === "done" ? `Реплей матча ${x.match} разобран по позициям: где ты стоял, кто был рядом в каждой смерти.` : `Реплей матча ${x.match} разобрать не получилось: Valve хранит реплеи около двух недель.`,
+        ...(s === "done" ? { reply_markup: { inline_keyboard: [[{ text: "Открыть карту", web_app: { url: `${APP_URL}?match=${x.match}` } }]] } } : {}),
+      }).catch(() => false);
+      if (ok) sent++;
+    }
+  }
+  if (changed || keep.length !== list.length) await env.COACH_KV.put(REPLAY_QUEUE, JSON.stringify(keep));
+  return sent;
+}
+
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47];
 const JPEG_MAGIC = [0xff, 0xd8, 0xff];
 
@@ -688,6 +740,17 @@ async function handlePost(request, env, ctx, origin) {
     const merged = mergeUser(await env.COACH_KV.get(key, "json"), raw.data);
     await env.COACH_KV.put(key, JSON.stringify(merged));
     return reply(200, { data: merged }, origin);
+  }
+
+  if (mode === "replay") {
+    if (!env.COACH_KV) return reply(500, { error: "Разбор реплеев не настроен." }, origin);
+    const match = Number(raw.match_id);
+    if (!Number.isInteger(match) || match < 1e6) return reply(400, { error: "Нет матча." }, origin);
+    const limited = throttle(ip, Date.now(), 10, "replay", 300);
+    if (limited) return reply(429, { error: limited }, origin);
+    // из Телеграма — пришлём сообщение, когда разберётся; без него просто ставим в очередь
+    const user = env.BOT_TOKEN ? await telegramUser(raw.initData, env.BOT_TOKEN) : null;
+    return reply(200, { status: await queueReplay(env, match, user && user.id ? user.id : null) }, origin);
   }
 
   if (mode === "watch") {
@@ -755,6 +818,11 @@ export default {
         return new Response(bytes, { headers: { "Content-Type": type, "Cache-Control": "public, max-age=86400", "Access-Control-Allow-Origin": "*" } });
       }
       if (url.pathname === "/stats") return new Response(JSON.stringify(await usageStats(env), null, 1), { headers: { "Content-Type": "application/json; charset=utf-8" } });
+      // очередь для GitHub Actions: только номера матчей, без пользователей
+      if (url.pathname === "/replay-queue" && env.COACH_KV) {
+        const ids = [...new Set((await replayQueue(env)).map((x) => x.match))];
+        return new Response(JSON.stringify({ matches: ids }), { headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
+      }
     }
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(origin) });
     if (request.method !== "POST") return reply(405, { error: "Только POST." }, origin);
@@ -763,6 +831,6 @@ export default {
   },
 
   async scheduled(_event, env, ctx) {
-    ctx.waitUntil(checkWatches(env));
+    ctx.waitUntil(Promise.all([checkWatches(env), checkReplays(env)]));
   },
 };

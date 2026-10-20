@@ -40,7 +40,7 @@ function mockFetch(queues) {
   const calls = [];
   globalThis.fetch = async (url, init) => {
     const u = String(url);
-    const who = u.includes("groq") ? "groq" : u.includes("dreamn") ? "claude" : u.includes("telegram") ? "tg"
+    const who = u.includes("groq") ? "groq" : u.includes("dreamn") ? "claude" : u.includes("telegram") ? "tg" : u.includes("githubusercontent") ? "gh"
       : u.includes("opendota") ? "od" : "gemini";
     calls.push({ who, url: u, body: init && init.body ? JSON.parse(init.body) : null, headers: init ? init.headers : {} });
     const next = queues[who]?.shift();
@@ -361,4 +361,40 @@ test("fetch: sync — только с подписью Телеграма, да�
   assert.deepEqual(r2.data.progress.map((x) => x.match), [2, 1]);
   assert.ok(kv.m.has("user:77"));
   assert.equal((await worker.fetch(req({ mode: "sync", initData: "user=1&hash=00", data: {} }), e)).status, 403);
+});
+
+// ---------- очередь реплеев ----------
+import { queueReplay, checkReplays } from "./coach.js";
+
+test("реплеи: очередь для Actions, готовый результат снимается и приходит сообщение", async (t) => {
+  t.after(restore);
+  const kv = fakeKV();
+  const e = { ...env, COACH_KV: kv, BOT_TOKEN: "123:abc" };
+  const init = await signInit({ auth_date: String(Math.floor(Date.now() / 1000)), user: JSON.stringify({ id: 42 }) }, "123:abc");
+  assert.deepEqual(await (await worker.fetch(req({ mode: "replay", match_id: 9052987576, initData: init }), e)).json(), { status: "queued" });
+  assert.equal(await queueReplay(e, 9052987576, 42), "queued"); // повтор не дублирует
+  assert.equal(JSON.parse(kv.m.get("replay_queue")).length, 1);
+  const q = await (await worker.fetch(new Request("https://coach.example/replay-queue"), e)).json();
+  assert.deepEqual(q, { matches: [9052987576] });
+  // ещё не готово
+  mockFetch({ gh: [new Response("", { status: 404 }), new Response("", { status: 404 })] });
+  assert.equal(await checkReplays(e), 0);
+  assert.equal(JSON.parse(kv.m.get("replay_queue")).length, 1);
+  // готово: снимаем, пишем игроку, второй запрос сразу «done»
+  const calls = mockFetch({ gh: [new Response("", { status: 200 })], tg: [new Response("{}")] });
+  assert.equal(await checkReplays(e), 1);
+  assert.match(calls.find((c) => c.who === "tg").body.text, /разобран по позициям/);
+  assert.equal(JSON.parse(kv.m.get("replay_queue")).length, 0);
+  assert.equal(await queueReplay(e, 9052987576, 42), "done");
+});
+
+test("реплеи: ошибка разбора тоже снимается с очереди", async (t) => {
+  t.after(restore);
+  const kv = fakeKV();
+  const e = { COACH_KV: kv };
+  await queueReplay(e, 1234567, null);
+  mockFetch({ gh: [new Response("", { status: 404 }), new Response("{}", { status: 200 })] });
+  await checkReplays(e);
+  assert.equal(kv.m.get("replay:1234567"), "error");
+  assert.equal(JSON.parse(kv.m.get("replay_queue")).length, 0);
 });

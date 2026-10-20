@@ -1,0 +1,88 @@
+# Разбор реплеев с позициями героев.
+# Воркер тренера держит очередь матчей (GET /replay-queue). Раз в 10 минут берём из неё до 4 матчей,
+# качаем реплей у Valve, разбираем парсером OpenDota (docker odota/parser) и кладём позиции
+# в ветку replays: r/<match_id>.json. Воркер видит файл, снимает матч с очереди и пишет игроку в Телеграм.
+# Секреты не нужны: очередь публичная, результат пишется встроенным GITHUB_TOKEN.
+name: Разбор реплеев
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+  push:
+    branches: [claude/opus-55-capabilities-limits-ekkxhj]
+    paths: [".github/replay-trigger"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: replays
+  cancel-in-progress: false
+
+jobs:
+  parse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Очередь матчей
+        id: queue
+        run: |
+          curl -sf --max-time 30 https://dotacoach.2007rggg.workers.dev/replay-queue -o queue.json || echo '{"matches":[]}' > queue.json
+          ids=$(node -e 'const q=JSON.parse(require("fs").readFileSync("queue.json","utf8"));console.log((q.matches||[]).filter(Number.isInteger).slice(0,4).join(" "))')
+          echo "Очередь: ${ids:-пусто}"
+          echo "ids=$ids" >> "$GITHUB_OUTPUT"
+
+      - name: Ветка с результатами
+        if: steps.queue.outputs.ids != ''
+        uses: actions/checkout@v4
+        with:
+          ref: replays
+          path: out
+
+      - name: Парсер OpenDota
+        if: steps.queue.outputs.ids != ''
+        run: |
+          docker run -d --name parser -p 5600:5600 odota/parser
+          for i in $(seq 1 60); do curl -s -o /dev/null http://localhost:5600/healthz && break; sleep 2; done
+
+      - name: Разбор
+        if: steps.queue.outputs.ids != ''
+        run: |
+          mkdir -p out/r
+          for id in ${{ steps.queue.outputs.ids }}; do
+            if [ -f "out/r/$id.json" ] || [ -f "out/r/$id.err.json" ]; then echo "$id уже разобран"; continue; fi
+            echo "::group::Матч $id"
+            url=$(curl -sf --max-time 60 "https://api.opendota.com/api/matches/$id" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).replay_url||"")}catch{console.log("")}})')
+            if [ -z "$url" ]; then
+              echo '{"error":"У OpenDota нет ссылки на реплей: матч ещё не разобран или реплей удалён"}' > "out/r/$id.err.json"
+              echo "::endgroup::"; continue
+            fi
+            if ! curl -sf --max-time 300 "$url" -o replay.dem.bz2 || ! bunzip2 -f replay.dem.bz2; then
+              echo '{"error":"Реплей не скачался: Valve хранит их около двух недель"}' > "out/r/$id.err.json"
+              echo "::endgroup::"; continue
+            fi
+            curl -s --max-time 900 --data-binary @replay.dem http://localhost:5600 -o parsed.jsonl || true
+            if node tools/replay-summary.mjs "$id" < parsed.jsonl > "out/r/$id.json"; then
+              echo "готово: $(wc -c < "out/r/$id.json") байт"
+            else
+              rm -f "out/r/$id.json"
+              echo '{"error":"Парсер не отдал позиции героев"}' > "out/r/$id.err.json"
+              head -c 600 parsed.jsonl || true
+            fi
+            rm -f replay.dem parsed.jsonl
+            echo "::endgroup::"
+          done
+
+      - name: Сохранить
+        if: steps.queue.outputs.ids != ''
+        working-directory: out
+        run: |
+          git config user.name "replay-bot"
+          git config user.email "replay-bot@users.noreply.github.com"
+          git add r
+          git diff --cached --quiet && { echo "нового нет"; exit 0; }
+          git commit -q -m "Реплеи: ${{ steps.queue.outputs.ids }}"
+          git push -q origin HEAD:replays
