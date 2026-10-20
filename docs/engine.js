@@ -40,6 +40,8 @@ const LEAD_DEATH_MIN_TIME = 600;
 const ROSHAN_RESPAWN_MIN = 480;
 const ROSHAN_FOLLOW_WINDOW = 180;
 const ROSHAN_FIGHT_MIN_TIME = 1200;
+const LEVEL_XP = [0, 240, 640, 1160, 1760, 2440, 3200, 4000, 4900, 5900, 7000, 8200, 9500, 10900, 12400, 14000, 15700, 17500, 19400, 21400, 23600, 25600, 27600, 29600, 31600];
+const NETWORTH_GAP_20 = 5000; const SUPPORT_LEVEL_GAP = 3; const KILLS_NO_FARM = 8;
 const LANE_XP_GAP = 1500;
 const BKB_SOLO_WINDOW = 240;
 // Дорогие предметы с активкой: купил и ни разу не нажал — деньги в пустоту
@@ -1405,6 +1407,9 @@ class MatchAnalyzer {
     this.checkRoshanFollowup();
     this.checkTormentor();
     this.checkLaneXp();
+    this.checkNetworthGap();
+    this.checkKillsNoFarm();
+    this.checkSupportLevel();
     this.checkBkbSolo();
   }
 
@@ -1770,6 +1775,37 @@ class MatchAnalyzer {
     const gap = atMinute(theirs, 15) - atMinute(mine, 15);
     if (gap < LANE_XP_GAP) return;
     this.micro(LANE, gap >= LANE_XP_GAP * 1.6 ? BAD : WARN, "micro_lane_xp", { opp: this.oppName, xp: num(gap) });
+  }
+
+  // К 20:00 золота у кора на 5000+ меньше, чем у его визави: итог всей лайн-стадии и фарма до 20-й
+  checkNetworthGap() {
+    const mine = this.p.networth_t, theirs = this.opponent && this.opponent.networth_t;
+    if (!this.core || !this.roleSure || this.dominant || !this.opponent || this.minutes < 22 || !mine || !theirs) return;
+    if (this.issues.some((i) => ["lh20", "lane_lost", "farm_pace"].includes(i.group))) return;
+    const gap = atMinute(theirs, 20) - atMinute(mine, 20);
+    if (gap < NETWORTH_GAP_20) return;
+    this.micro(FARM, gap >= NETWORTH_GAP_20 * 1.6 ? BAD : WARN, "micro_networth_gap", { opp: this.oppName, gold: num(gap) });
+  }
+
+  // Много киллов, а по золоту в своей команде кор не в топ-2: убийства не заменяют фарм
+  checkKillsNoFarm() {
+    const nw = this.p.networth_t;
+    if (this.pos > 2 || !this.roleSure || this.minutes < 25 || !nw || this.p.kills < KILLS_NO_FARM) return;
+    const mine = atMinute(nw, 20);
+    const rank = this.allies.filter((a) => a !== this.p && atMinute(a.networth_t, 20) > mine).length + 1;
+    if (rank < 3) return;
+    this.micro(FARM, WARN, "micro_kills_no_farm", { kills: this.p.kills, rank });
+  }
+
+  // Саппорт к 20:00 отстаёт от вражеского на 3+ уровня: лайн проигран или опыт отдан
+  checkSupportLevel() {
+    if (this.core || !this.roleSure || this.minutes < 22) return;
+    const opp = this.enemies.find((e) => this.roleOf.get(e) === this.pos);
+    if (!opp || !opp.xp_t || !this.p.xp_t) return;
+    const level = (xp) => LEVEL_XP.filter((x) => xp >= x).length;
+    const mine = level(atMinute(this.p.xp_t, 20)), theirs = level(atMinute(opp.xp_t, 20));
+    if (theirs - mine < SUPPORT_LEVEL_GAP) return;
+    this.micro(LANE, WARN, "micro_support_level", { opp: this.od.heroName(opp.hero_id), mine, theirs });
   }
 
   // Купил БКБ и в первые минуты умер один: «реализовывать» пошёл без команды

@@ -370,3 +370,25 @@ def test_khan_checks_stay_quiet_for_dominant_game(match, od):
         if a.facts["kda"].split("/")[1] == "0":
             texts = micro_texts(a)
             assert not any("перевес" in t or "ни разу не нажат" in t for t in texts)
+
+
+def test_khan_networth_gap_at_20(match, od):
+    import copy
+
+    m = copy.deepcopy(match)
+    for p in m["players"]:
+        if p["isRadiant"]:
+            p["networth_t"] = [x // 3 if i >= 12 else x for i, x in enumerate(p["networth_t"])]
+    texts = [t for p in m["players"] if p["isRadiant"] for t in micro_texts(run(m, p, od))]
+    assert any("к 20:00" in t.lower() or "двадцатой" in t for t in texts)
+
+
+def test_khan_support_level_gap(match, od):
+    import copy
+
+    m = copy.deepcopy(match)
+    for p in m["players"]:
+        if p["isRadiant"]:
+            p["xp_t"] = [x // 4 for x in p["xp_t"]]
+    texts = [t for p in m["players"] if p["isRadiant"] for t in micro_texts(run(m, p, od))]
+    assert any("уров" in t and "ты" in t for t in texts)
