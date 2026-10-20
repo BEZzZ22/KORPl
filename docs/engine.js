@@ -19,6 +19,7 @@ const ITEM_UPGRADES = {
   maelstrom: ["mjollnir", "gleipnir"],
   ward_sentry: ["ward_dispenser"],
   orchid: ["bloodthorn"],
+  hood_of_defiance: ["eternal_shroud"],
 };
 // Мелкие ошибки. Сейв-предметы и сколько секунд после прошлого нажатия они ещё в откате
 const SAVE_ITEMS = [["black_king_bar", 100], ["glimmer_cape", 20], ["force_staff", 20], ["hurricane_pike", 20],
@@ -114,7 +115,7 @@ const GRADE_WORD = {
 };
 // Ключевые показатели для оценки относительно ранга и роли
 const RANK_METRICS = {
-  lh10: { what: "Ласт хиты к 10:00", cat: "Линия", roles: [1, 2, 3], fmt: (v) => String(Math.round(v)) },
+  lh10: { what: "Добито крипов к 10:00", cat: "Линия", roles: [1, 2, 3], fmt: (v) => String(Math.round(v)) },
   gpm: { what: "GPM (золото в минуту)", cat: "Фарм", roles: [1, 2, 3], fmt: (v) => String(Math.round(v)) },
   xpm: { what: "XPM (опыт в минуту)", cat: "Фарм", roles: [1, 2, 3, 4, 5], fmt: (v) => String(Math.round(v)) },
   kp: { what: "KP (участие в киллах)", cat: "Драки", roles: [1, 2, 3, 4, 5], fmt: (v) => `${Math.round(v * 100)}%` },
@@ -365,7 +366,7 @@ export function isParsed(match) {
 class MatchAnalyzer {
   constructor(match, player, od, knowledge, texts, proItems, heroBench, norms, matchups) {
     this.match = match;
-    this.matchups = matchups || [];
+    this.matchups = Array.isArray(matchups) ? matchups : [];
     this.norms = norms || {};
     this.issues = [];
     this.heroBench = heroBench || {};
@@ -523,7 +524,7 @@ class MatchAnalyzer {
     params = { ...params };
     if ("lh" in params) {
       params.creeps = plural(params.lh, "крип", "крипа", "крипов");
-      params.lasthits = plural(params.lh, "ластхит", "ластхита", "ластхитов");
+      params.lasthits = params.creeps;
     }
     if ("mins" in params) params.mins_word = plural(params.mins, "минуту", "минуты", "минут");
     return fill(variants[textHash(fullSeed) % variants.length], params);
@@ -725,7 +726,7 @@ class MatchAnalyzer {
     if (g === "idle") return "Цель на следующую катку: ни одной минуты АФК — фарм или файт";
     if (g === "lane_lost") return "Цель на следующую катку: выйти с линии хотя бы в ноль по золоту";
     if (g.startsWith("killer_")) return `Цель на следующую катку: заранее купить защиту против самого опасного врага`;
-    if (g === "lane_gaps") return "Цель на следующую катку: на лайне ни одной минуты без ластхита";
+    if (g === "lane_gaps") return "Цель на следующую катку: на лайне ни одной минуты без добитого крипа";
     if (g === "mid_runes") return "Цель на следующую катку: забрать минимум 2 руны силы до 12:00";
     if (g === "buyback_wasted") return "Цель на следующую катку: выкуп только когда файт ещё можно выиграть";
     return "Цель на следующую катку: исправить главную ошибку выше";
@@ -786,8 +787,8 @@ class MatchAnalyzer {
       if (this.rankCheck("lh10", { tipKey: "lane_lh_bad_tip", roastKey: "lane_lh_bad_roast" })) {
         const r = this.rank.lh10;
         if (r.pct < 25) {
-          this.issue("lane_farm", Math.max(0, r.median - lh10) * 45, "Мало ластхитов на лайне",
-            `${lh10} ластхит${plural(lh10, "", "а", "ов")} к 10:00 — хуже, чем у ${100 - r.pct}% ${ROLE_GEN_PLURAL[pos]} на ранге ${RANKS[this.bracket][0]} (обычно ${Math.round(r.median)})`,
+          this.issue("lane_farm", Math.max(0, r.median - lh10) * 45, "Мало добитых крипов на лайне",
+            `${lh10} ${plural(lh10, "крип", "крипа", "крипов")} к 10:00 — хуже, чем у ${100 - r.pct}% ${ROLE_GEN_PLURAL[pos]} на ранге ${RANKS[this.bracket][0]} (обычно ${Math.round(r.median)})`,
             "Перед каткой 5 минут ластхитить в демке. На лайне бей крипа только на ластхит, не пушь волну просто так");
         }
       } else {
@@ -856,7 +857,7 @@ class MatchAnalyzer {
       if (idle.length) {
         const mins = sum(idle.map(([s, e]) => e - s));
         this.issue("idle", mins * (p.gold_per_min || 300) * 0.8, "АФК: ни фарма, ни файтов",
-          `${idle.map(([s, e]) => `${mmss(s * 60)}–${mmss(e * 60)}`).join(", ")}: ни ластхитов, ни золота, ни файтов`,
+          `${idle.map(([s, e]) => `${mmss(s * 60)}–${mmss(e * 60)}`).join(", ")}: ни крипов, ни золота, ни файтов`,
           "Нет файта — фарми по кругу: волна, кемп, волна. Заранее решай, куда идёшь после текущей волны");
       }
       if (this.pos === 1 && this.minutes >= 25 && p.last_hits > 0) {
@@ -901,6 +902,7 @@ class MatchAnalyzer {
   // Простой: почти нет крипов, мало золота, игрок жив и не дерётся. Драки и ганги простоем не считаются
   idleWindows() {
     const lh = this.p.lh_t;
+    if (!lh || !lh.length) return [];
     const gold = this.p.gold_t || [];
     const avgGold = gold.length > 1 ? gold[gold.length - 1] / (gold.length - 1) : 0;
     const busy = this.fightMinutes();
@@ -1620,7 +1622,7 @@ class MatchAnalyzer {
     const times = minuteRanges(empty);
     this.micro(LANE, n >= 4 ? BAD : WARN, "micro_lane_gaps", { n, mins: n, times });
     this.issue("lane_gaps", n * 150, "Пустые минуты на лайне",
-      `${n} ${plural(n, "минута", "минуты", "минут")} лайна без единого ластхита: ${times}. Ты был жив и не дрался — крипы умирали без тебя`,
+      `${n} ${plural(n, "минута", "минуты", "минут")} лайна без единого добитого крипа: ${times}. Ты был жив и не дрался — крипы умирали без тебя`,
       this.pos === 3
         ? "Если тебя зонят от волны — не стой в стороне: тяни крипов на себя, бери ластхит или фарми малый кемп рядом с лайном"
         : "Каждые 20–30 секунд будь у волны. Если не пускают — отведи волну к своей вышке (пул саппорта, агро крипов), но не стой без дела");
@@ -2042,7 +2044,8 @@ class MatchAnalyzer {
 
   phases() {
     const p = this.p;
-    const lh = p.lh_t;
+    const lh = p.lh_t || [];
+    if (!lh.length) return [];
     const kills = (p.kills_log || []).filter((k) => k.key.startsWith("npc_dota_hero_")).map((k) => k.time);
     const deaths = (p.deaths_log || []).map((d) => d.time);
     const result = [];

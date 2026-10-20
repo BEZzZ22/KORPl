@@ -59,7 +59,14 @@ class OpenDota:
         abilities = await self._request("GET", "/constants/abilities")
         # Храним только то, что нужно для разбора: справочник большой
         self.abilities = {
-            key: {"dname": a.get("dname"), "dmg_type": damage_type(a.get("dmg_type"))}
+            key: {
+                "dname": a.get("dname"),
+                "dmg_type": damage_type(a.get("dmg_type")),
+                # нужны, чтобы понять, какой это контроль и снимает ли его БКБ или диспел
+                "desc": str(a.get("desc") or "")[:300],
+                "bkbpierce": a.get("bkbpierce"),
+                "dispellable": a.get("dispellable"),
+            }
             for key, a in abilities.items()
             if a.get("dname")
         }

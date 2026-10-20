@@ -410,3 +410,56 @@ def test_draft_matchups_flag_bad_and_good(match, od):
 def test_draft_skipped_without_matchups(match, od):
     p = match["players"][0]
     assert run(match, p, od).draft is None
+
+
+def control_scenario(match, od, ability, dmg_share_auto=False):
+    """Все враги бьют героя контролем `ability`; у героя нет предметов-диспелов."""
+    import copy
+
+    m = copy.deepcopy(match)
+    od.constants["abilities"]["zz_control"] = ability
+    p = m["players"][0]
+    my_key = od.hero_keys[p["hero_id"]]
+    for e in m["players"]:
+        if e["isRadiant"] != p["isRadiant"]:
+            e["ability_targets"] = {"zz_control": {my_key: 4}}
+            if dmg_share_auto:
+                e["damage_targets"] = {"null": {my_key: 4000}}
+    p["purchase_log"] = [x for x in p["purchase_log"] if x["key"] not in ("manta", "cyclone", "lotus_orb", "black_king_bar", "wind_waker")]
+    return m, p
+
+
+def test_dispel_advice_when_silenced_often(match, od):
+    silence = {"dname": "Zz Silence", "dmg_type": None, "desc": "Silences the target.", "bkbpierce": "No", "dispellable": "Yes"}
+    m, p = control_scenario(match, od, silence)
+    a = run(m, p, od)
+    assert any("диспел" in f.text.lower() for f in a.findings), [f.text for f in a.findings]
+    keys = {i["key"] for i in a.build_plan["missing"]}
+    assert keys & {"manta", "cyclone", "lotus_orb", "black_king_bar"}
+    assert a.killers and a.killers[0]["control"][0]["dispellable"] is True
+    del od.constants["abilities"]["zz_control"]
+
+
+def test_bkb_stays_quiet_when_control_pierces_it(match, od):
+    stun = {"dname": "Zz Stun", "dmg_type": None, "desc": "Stuns the target.", "bkbpierce": "Yes", "dispellable": "Strong Dispels Only"}
+    m, p = control_scenario(match, od, stun)
+    a = run(m, p, od)
+    plan = a.build_plan["missing"] if a.build_plan else []
+    assert not any(i["key"] == "black_king_bar" and "блокирует" in i["why"] for i in plan)
+    del od.constants["abilities"]["zz_control"]
+
+
+def test_build_plan_follows_physical_autoattacks(match, od):
+    import copy
+
+    m = copy.deepcopy(match)
+    p = m["players"][0]
+    my_key = od.hero_keys[p["hero_id"]]
+    for e in m["players"]:
+        if e["isRadiant"] != p["isRadiant"]:
+            e["damage_targets"] = {"null": {my_key: 4000}}
+    p["purchase_log"] = [x for x in p["purchase_log"] if x["key"] not in ("assault", "heavens_halberd", "ghost", "butterfly", "shivas_guard")]
+    a = run(m, p, od)
+    keys = {i["key"] for i in a.build_plan["missing"]}
+    assert keys & {"heavens_halberd", "assault", "ghost", "butterfly", "shivas_guard", "solar_crest"}
+    assert not any(i["key"] == "black_king_bar" for i in a.build_plan["missing"])

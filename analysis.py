@@ -55,6 +55,7 @@ class Analysis:
     verdict: str = ""
     items: list[dict] = field(default_factory=list)
     draft: dict | None = None
+    build_plan: dict | None = None
 
     def by_severity(self, severity: str) -> list[Finding]:
         return [f for f in self.findings if f.severity == severity]

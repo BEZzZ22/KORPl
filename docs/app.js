@@ -1,7 +1,7 @@
 // Telegram Mini App: разбор матча Dota 2 внутри Телеграма.
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, CATEGORIES, BAD, WARN, GOOD,
-} from "./engine.js?v=10";
+} from "./engine.js?v=11";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -22,13 +22,12 @@ const PARSE_POLL_MS = 15000;
 const PARSE_POLL_MAX = 20;
 const BG_COLOR = "#070404";
 const DAMAGE_TYPES = { Physical: "физический", Magical: "магический", Pure: "чистый" };
-const SEVERITY_LABEL = { [BAD]: "Проблема", [WARN]: "Ошибка", [GOOD]: "Хорошо" };
 const PHASE_LABEL = { good: "выиграна", even: "ровно", bad: "проиграна" };
 const TURBO_MODE = 23;
 
 const tg = window.Telegram && window.Telegram.WebApp;
 const app = document.getElementById("app");
-let dictionary = null, knowledge = null, texts = null, itemIds = null, norms = {}, glossary = [];
+let dictionary = null, knowledge = null, texts = null, itemIds = null, norms = {};
 let pollTimer = null;
 let section = "home", lastAnalysis = null, tabbar = null;
 // Растёт при каждом переходе: экран, догрузившийся после ухода с него, не перерисовывает чужой
@@ -101,72 +100,116 @@ function hapticTick() {
   try { if (tg && tg.isVersionAtLeast("6.1")) tg.HapticFeedback.selectionChanged(); } catch { /* старый клиент */ }
 }
 
-// Стеклянная панель вкладок: «линза» едет под пальцем, вкладки переключаются, пока водишь по панели
-// live: переключать сразу (разбор) или только когда отпустил палец (нижняя навигация)
+// Стеклянная панель вкладок. «Линза» подчиняется пружине: едет за пальцем, тянется от скорости,
+// при нажатии разбухает, на отпускании мягко садится на вкладку. Содержимое меняется после паузы,
+// чтобы тяжёлая перерисовка не мешала жесту. live: переключать на лету (разбор) или при отпускании (навигация)
 function glassBar(bar, itemSelector, { live, onPick }) {
   const lens = h("div", { class: "lens", "aria-hidden": "true" });
   bar.prepend(lens);
   const items = () => [...bar.querySelectorAll(itemSelector)];
-  let shown = -1, hover = -1, dragging = false, startX = 0, scrubbed = false;
-  const place = (i, instant = false) => {
+  const S = { x: 0, sx: 1, sy: 1, vx: 0, vsx: 0, vsy: 0 };
+  const T = { x: 0, sx: 1, sy: 1 };
+  let active = -1, hover = -1, dragging = false, pressed = false, raf = 0, last = 0, timer = 0, width = 0, lastTarget = 0;
+  const reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const geometry = (i) => {
     const el = items()[i];
-    if (!el) return;
-    shown = i;
-    if (instant) lens.classList.add("instant");
-    lens.style.setProperty("--x", `${el.offsetLeft}px`);
-    lens.style.setProperty("--w", `${el.offsetWidth}px`);
-    if (instant) requestAnimationFrame(() => requestAnimationFrame(() => lens.classList.remove("instant")));
-    const target = el.offsetLeft - (bar.clientWidth - el.offsetWidth) / 2;
-    if (bar.scrollWidth > bar.clientWidth + 2) bar.scrollTo({ left: Math.max(0, target), behavior: instant ? "auto" : "smooth" });
+    return el ? { l: el.offsetLeft, w: el.offsetWidth } : null;
+  };
+  const apply = () => {
+    lens.style.transform = `translate3d(${S.x.toFixed(2)}px,0,0) scale(${S.sx.toFixed(4)},${S.sy.toFixed(4)})`;
+  };
+  const tick = (now) => {
+    const dt = Math.min(0.032, (now - last) / 1000 || 0.016);
+    last = now;
+    // пружины: чуть недозатухающие, чтобы был живой «ход», но без раскачки
+    const spring = (key, vkey, target, k, c) => {
+      const a = k * (target - S[key]) - c * S[vkey];
+      S[vkey] += a * dt;
+      S[key] += S[vkey] * dt;
+    };
+    const speed = Math.abs(S.vx);
+    T.sx = (pressed ? 1.1 : 1) + Math.min(0.2, speed / 3200);
+    T.sy = (pressed ? 1.12 : 1) - Math.min(0.08, speed / 9000);
+    spring("x", "vx", T.x, 380, 30);
+    spring("sx", "vsx", T.sx, 320, 24);
+    spring("sy", "vsy", T.sy, 320, 24);
+    apply();
+    const settled = Math.abs(T.x - S.x) < 0.2 && Math.abs(S.vx) < 2 && Math.abs(T.sx - S.sx) < 0.002 && Math.abs(T.sy - S.sy) < 0.002;
+    if (settled) { S.x = T.x; S.sx = T.sx; S.sy = T.sy; S.vx = S.vsx = S.vsy = 0; apply(); raf = 0; return; }
+    raf = requestAnimationFrame(tick);
+  };
+  const run = () => { if (!raf) { last = performance.now(); raf = requestAnimationFrame(tick); } };
+
+  const snap = (i) => {
+    const g = geometry(i);
+    if (!g) return;
+    width = g.w;
+    lens.style.width = `${g.w}px`;
+    T.x = g.l;
+  };
+  const place = (i, instant = false) => {
+    active = i; hover = i;
+    snap(i);
+    items().forEach((el, n) => el.classList.toggle("hot", n === i));
+    if (instant || reduce) { S.x = T.x; S.vx = 0; apply(); } else run();
   };
   const indexAt = (x) => {
-    const list = items();
+    const r = bar.getBoundingClientRect();
     let best = 0, bestDist = Infinity;
-    list.forEach((el, i) => {
-      const r = el.getBoundingClientRect();
-      const d = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
+    items().forEach((el, i) => {
+      const c = r.left + el.offsetLeft + el.offsetWidth / 2;
+      const d = Math.abs(x - c);
       if (d < bestDist) { bestDist = d; best = i; }
     });
     return best;
   };
-  const pick = (i) => {
-    if (i === hover) return;
-    hover = i;
-    place(i);
-    hapticTick();
-    if (live) onPick(i);
+  const follow = (clientX) => {
+    const r = bar.getBoundingClientRect();
+    const list = items();
+    const first = list[0], lastEl = list[list.length - 1];
+    const min = first.offsetLeft, max = lastEl.offsetLeft + lastEl.offsetWidth - width;
+    T.x = Math.max(min, Math.min(max, clientX - r.left - width / 2));
+    const i = indexAt(clientX);
+    if (i !== hover) {
+      hover = i;
+      items().forEach((el, n) => el.classList.toggle("hot", n === i));
+      hapticTick();
+      if (live) { clearTimeout(timer); timer = setTimeout(() => { active = i; onPick(i); }, 90); }
+    }
+    run();
   };
+
   bar.addEventListener("pointerdown", (e) => {
     if (e.pointerType === "mouse" && e.button !== 0) return;
-    dragging = true; scrubbed = false; startX = e.clientX; hover = shown;
+    dragging = pressed = true;
     bar.classList.add("pressed");
+    snap(Math.max(0, active));
     try { bar.setPointerCapture(e.pointerId); } catch { /* не критично */ }
-    pick(indexAt(e.clientX));
+    follow(e.clientX);
   });
-  bar.addEventListener("pointermove", (e) => {
-    if (!dragging) return;
-    if (Math.abs(e.clientX - startX) > 6) scrubbed = true;
-    const r = bar.getBoundingClientRect();
-    if (e.clientX < r.left + 36) bar.scrollLeft -= 10;
-    else if (e.clientX > r.right - 36) bar.scrollLeft += 10;
-    pick(indexAt(e.clientX));
-  });
+  bar.addEventListener("pointermove", (e) => { if (dragging) follow(e.clientX); });
   const end = (e) => {
     if (!dragging) return;
-    dragging = false;
+    dragging = pressed = false;
     bar.classList.remove("pressed");
-    if (!live && e.type !== "pointercancel" && hover >= 0) onPick(hover);
-    else if (!live) place(Math.max(0, items().findIndex((el) => el.classList.contains("active"))));
+    clearTimeout(timer);
+    const cancelled = e.type === "pointercancel";
+    const target = cancelled ? Math.max(0, active) : hover;
+    if (!cancelled && target !== active) { active = target; onPick(target); }
+    place(Math.max(0, target));
   };
   bar.addEventListener("pointerup", end);
   bar.addEventListener("pointercancel", end);
+  bar.addEventListener("lostpointercapture", end);
   // Клавиатура и скринридеры: обычный click без указателя
   bar.addEventListener("click", (e) => {
     if (e.detail !== 0) return;
     const i = items().indexOf(e.target.closest(itemSelector));
-    if (i >= 0) { hover = i; place(i); onPick(i); }
+    if (i >= 0) { onPick(i); place(i); }
   });
-  return { place, current: () => shown };
+  if (window.ResizeObserver) new ResizeObserver(() => { if (active >= 0 && !dragging) place(active, true); }).observe(bar);
+  return { place, current: () => active };
 }
 
 async function api(path, { method = "GET", timeout = 20000 } = {}) {
@@ -196,7 +239,8 @@ async function proItems(heroId) {
 async function heroMatchups(heroId) {
   if (!matchupCache.has(heroId)) {
     try {
-      matchupCache.set(heroId, (await api(`/heroes/${heroId}/matchups`)) || []);
+      const data = await api(`/heroes/${heroId}/matchups`);
+      matchupCache.set(heroId, Array.isArray(data) ? data : []);
     } catch {
       return [];
     }
@@ -515,7 +559,7 @@ function trendBlock(recent) {
     const still = Math.abs(a - b) <= Math.abs(b) * 0.05;
     const cls = still ? "muted" : delta > 0 ? "win-text" : "loss-text";
     const mark = still ? "≈" : delta > 0 ? "▲" : "▼";
-    return h("div", { class: "score-row" }, h("span", {}, label), h("span", { class: "muted" }, `${fmt(b)} → ${fmt(a)}`), h("b", { class: cls }, mark));
+    return h("div", { class: "score-row trend" }, h("span", {}, label), h("span", { class: "muted" }, `${fmt(b)} → ${fmt(a)}`), h("b", { class: cls }, mark));
   });
   return h("div", {}, h("h2", {}, "Тренд"), h("div", { class: "card" }, ...rows,
     h("div", { class: "small muted" }, `Последние ${fresh.length} игр против предыдущих ${old.length}`)));
@@ -618,10 +662,8 @@ async function notYourMatch() {
 const TABS = [
   ["Обзор", overviewTab],
   ["Фазы", phasesTab],
-  ["Ошибки", findingsTab],
-  ["Убийцы", killersTab],
+  ["Смерти", killersTab],
   ["Сборка", buildTab],
-  ["Сравнение", compareTab],
   ["Графики", chartsTab],
 ];
 
@@ -632,12 +674,20 @@ function analysisScreen(a) {
   const content = h("div", { class: "tab-content" });
   const tabs = h("div", { class: "tabs", role: "tablist" });
   let index = -1, lens = null;
+  const pages = new Map();
   const select = (i) => {
+    if (i === index) return;
     const dir = index < 0 ? 0 : Math.sign(i - index);
     index = i;
     [...tabs.querySelectorAll(".tab")].forEach((t, j) => { t.classList.toggle("active", i === j); t.setAttribute("aria-selected", String(i === j)); });
-    content.replaceChildren(h("div", { class: dir > 0 ? "slide-from-right" : dir < 0 ? "slide-from-left" : "fade-in" }, TABS[i][1](a)));
-    if (lens) lens.place(i);
+    // страницы строим один раз и держим в памяти: переключение мгновенное
+    if (!pages.has(i)) pages.set(i, TABS[i][1](a));
+    const page = pages.get(i);
+    page.classList.remove("slide-from-right", "slide-from-left", "fade-in");
+    void page.offsetWidth;
+    page.classList.add(dir > 0 ? "slide-from-right" : dir < 0 ? "slide-from-left" : "fade-in");
+    content.replaceChildren(page);
+    if (lens && lens.current() !== i) lens.place(i);
   };
   TABS.forEach(([name]) => tabs.append(h("button", { class: "tab", role: "tab" }, name)));
   lens = glassBar(tabs, ".tab", { live: true, onPick: select });
@@ -720,20 +770,11 @@ function scoreRing(score) {
   );
 }
 
-function findingCard(f) {
-  return h("div", { class: `finding ${f.severity}` },
-    h("div", { class: "cat" }, `${SEVERITY_LABEL[f.severity]} · ${f.category}`),
-    h("div", {}, f.text),
-    f.roast && h("div", { class: "roast" }, f.roast),
-    f.tip && h("div", { class: "tip" }, f.tip),
-  );
-}
-
 function overviewTab(a) {
   const s = a.summary || {};
   const who = [s.role, s.rank && `ранг ${s.rank}`].filter(Boolean).join(" · ");
-  const problems = s.problems || [];
-  const strengths = s.strengths || [];
+  const problems = (s.problems || []).slice(0, 3);
+  const strengths = (s.strengths || []).slice(0, 2);
   return h("div", {},
     who && h("div", { class: "who" }, who, s.role_sure === false && h("span", { class: "muted" }, " · роль определена неточно")),
     h("h2", {}, problems.length ? "Что было не так" : "Серьёзных ошибок нет"),
@@ -747,24 +788,24 @@ function overviewTab(a) {
     )),
     strengths.length > 0 && h("h2", {}, "Что получилось"),
     ...strengths.map((st) => h("div", { class: "strength" }, h("b", {}, st.title), st.fact && h("span", { class: "muted" }, ` — ${st.fact}`))),
-    s.goal && h("div", { class: "card goal" }, s.goal),
     microBlock(a),
     draftBlock(a),
-    h("h2", {}, "Оценки по разделам"),
+    h("h2", {}, "Оценки"),
     h("div", { class: "card" }, ...CATEGORIES.map((c) => h("div", { class: "score-row" },
       h("span", {}, c), h("div", { class: "bar" }, h("i", { "data-w": a.scores[c] })), h("b", {}, a.scores[c])))),
-    glossaryBlock(),
   );
 }
 
-// Мелкие ошибки с точным временем — то, что тренер разбирает по реплею
+// Мелочи с точным временем: сверху текст, совет раскрывается по нажатию
 function microBlock(a) {
   const micro = a.findings.filter((f) => f.kind === "micro" && f.severity !== GOOD)
-    .sort((x, y) => (x.severity === BAD ? 0 : 1) - (y.severity === BAD ? 0 : 1));
+    .sort((x, y) => (x.severity === BAD ? 0 : 1) - (y.severity === BAD ? 0 : 1)).slice(0, 4);
   if (!micro.length) return null;
   return h("div", {},
-    h("h2", {}, "Мелочи, на которых теряешь игру"),
-    h("div", { class: "card micro" }, ...micro.map(findingCard)),
+    h("h2", {}, "Мелочи"),
+    h("div", { class: "card micro" }, ...micro.map((f) => h("details", { class: `finding ${f.severity}` },
+      h("summary", {}, f.text),
+      f.tip && h("div", { class: "tip" }, f.tip)))),
   );
 }
 
@@ -774,15 +815,7 @@ function draftBlock(a) {
   if (!d || !d.notes.length) return null;
   return h("div", {},
     h("h2", {}, "Драфт"),
-    h("div", { class: "card" }, ...d.notes.map((n) => h("div", { class: n.severity === GOOD ? "strength" : "problem-fact" }, n.text))),
-  );
-}
-
-function glossaryBlock() {
-  if (!glossary.length) return null;
-  return h("details", { class: "card glossary" },
-    h("summary", {}, "Словарик: что значат слова в разборе"),
-    ...glossary.map(([term, meaning]) => h("div", { class: "gl-row" }, h("b", {}, term), h("span", {}, meaning))),
+    h("div", { class: "card" }, ...d.notes.slice(0, 2).map((n) => h("div", { class: n.severity === GOOD ? "strength" : "problem-fact" }, n.text))),
   );
 }
 
@@ -798,28 +831,16 @@ function phasesTab(a) {
         ph.nw_delta != null && h("span", {}, "Нетворс ", h("b", {}, (ph.nw_delta > 0 ? "+" : "") + num(ph.nw_delta))),
       ),
     )),
-    h("h2", {}, "Хронология"),
-    h("div", { class: "timeline" }, ...a.moments.map((m) =>
-      h("div", { class: `moment ${m.severity}` }, h("time", {}, m.clock), m.text))),
+    a.moments.length > 0 && h("details", { class: "card timeline-box" },
+      h("summary", {}, "Хронология"),
+      h("div", { class: "timeline" }, ...a.moments.map((m) =>
+        h("div", { class: `moment ${m.severity}` }, h("time", {}, m.clock), m.text)))),
   );
 }
 
-function findingsTab(a) {
-  const order = { [BAD]: 0, [WARN]: 1, [GOOD]: 2 };
-  const groups = CATEGORIES
-    .map((c) => [c, a.findings.filter((f) => f.category === c && f.kind !== "killer")])
-    .filter(([, list]) => list.length);
-  if (!groups.length) return h("p", { class: "muted" }, "Явных ошибок не нашёл. Красавчик.");
-  return h("div", {}, ...groups.map(([c, list]) => h("div", {},
-    h("h2", {}, `${c} · ${a.scores[c]}/10`),
-    ...[...list].sort((x, y) => order[x.severity] - order[y.severity]).map(findingCard),
-  )));
-}
-
 function killersTab(a) {
-  if (!a.killers.length) return h("p", { class: "muted" }, "Никто не убил тебя больше одного раза. Выживание на уровне.");
-  const roasts = a.findings.filter((f) => f.kind === "killer").map((f) => f.roast);
-  return h("div", {}, ...a.killers.map((k, idx) => {
+  if (!a.killers.length) return h("p", { class: "muted" }, "Никто не убил тебя больше одного раза.");
+  return h("div", {}, ...a.killers.map((k) => {
     const total = Object.values(k.damage_by_type).reduce((x, y) => x + y, 0) || 1;
     return h("div", { class: "card" },
       h("div", { class: "killer-head" },
@@ -833,7 +854,7 @@ function killersTab(a) {
       h("div", { class: "legend" }, ...Object.entries(k.damage_by_type).map(([t, v]) =>
         h("span", {}, h("i", { class: t }), `${DAMAGE_TYPES[t]} ${Math.round((v / total) * 100)}%`))),
       h("div", { class: "sub" }, "Чем убивал"),
-      ...k.sources.map((s) => h("div", { class: "source" }, h("span", {}, s.name), h("b", {}, num(s.damage)))),
+      ...k.sources.slice(0, 3).map((s) => h("div", { class: "source" }, h("span", {}, s.name), h("b", {}, num(s.damage)))),
       k.control && k.control.length > 0 && h("div", { class: "sub" }, "Контроль на тебе"),
       ...(k.control || []).map((c) => h("div", { class: "source control" },
         h("span", {}, c.name, h("em", {}, ` ${c.label}`)),
@@ -841,13 +862,10 @@ function killersTab(a) {
         h("div", { class: "ctl-tags" },
           h("i", { class: c.bkb_blocks ? "yes" : "no" }, c.bkb_blocks ? "БКБ блокирует" : "БКБ пробивает"),
           h("i", { class: c.dispellable ? "yes" : "no" }, c.dispellable ? "снимается диспелом" : "диспел не снимает")))),
-      k.mechanics.length > 0 && h("div", { class: "sub" }, "Опасен: " + k.mechanics.join(", ")),
-      ...k.tips.map((t) => h("div", { class: "advice" }, t)),
       k.counter_keys.length > 0 && h("div", { class: "sub" }, "Что брать против этого героя"),
       ...k.counter_keys.map((key) => h("div", { class: "why-row" }, itemChip(key, "chip need"),
         k.counter_why && k.counter_why[key] && h("div", { class: "small muted" }, k.counter_why[key]))),
       k.had_counter_keys.length > 0 && h("div", { class: "small muted" }, "Уже было: " + k.had_counters.join(", ")),
-      roasts[idx] && h("div", { class: "roast" }, roasts[idx]),
     );
   }));
 }
@@ -896,22 +914,6 @@ function buildTab(a) {
   return h("div", {}, planBlock, pro, yours);
 }
 
-function compareTab(a) {
-  if (!a.compare.length) return h("p", { class: "muted" }, "Нет данных для сравнения с другими игроками на этом герое.");
-  return h("div", {},
-    h("h2", {}, `Ты против игроков на ${a.facts.hero}`),
-    h("div", { class: "card" }, ...a.compare.map((c) => h("div", { class: "cmp-row" },
-      h("div", { class: "cmp-head" }, h("span", {}, c.name), h("b", { class: c.pct >= 50 ? "win-text" : "loss-text" }, c.you)),
-      h("div", { class: "cmp-scale" }, h("i", { class: "cmp-median" }), h("i", { class: "cmp-marker", "data-left": c.pct })),
-      h("div", { class: "cmp-legend" },
-        h("span", {}, `средний ${c.median}`),
-        h("span", {}, `${c.pct >= 50 ? "лучше" : "хуже"}, чем у ${c.pct >= 50 ? c.pct : 100 - c.pct}%`),
-        h("span", {}, `топ-1% ${c.top}`)),
-    ))),
-    h("div", { class: "small muted" }, "Шкала — твоё место среди всех игроков на этом герое: слева худшие, справа лучшие, черта — середина."),
-  );
-}
-
 function chartsTab(a) {
   const t = a.timeline;
   const series = [{ values: t.player, color: "#ff6a2a", label: t.hero, glow: true }];
@@ -922,7 +924,7 @@ function chartsTab(a) {
     h("div", { class: "card" }, lineChart(series, { markers: t.deaths, unit: "k" }), legend(series, t.deaths.length > 0)),
     t.team_gold_adv.length > 0 && h("h2", {}, "Преимущество команды"),
     t.team_gold_adv.length > 0 && h("div", { class: "card" }, areaChart(t.team_gold_adv)),
-    h("h2", {}, "Ластхиты"),
+    h("h2", {}, "Добито крипов"),
     h("div", { class: "card" }, lineChart([{ values: t.last_hits, color: "#e6b65c" }], {})),
   );
 }
@@ -1101,14 +1103,13 @@ async function boot() {
     const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
       api("/constants/heroes"), api("/constants/items"), api("/constants/abilities", { timeout: 40000 }),
       api("/constants/item_ids"),
-      fetch("knowledge.json?v=10").then((r) => r.json()), fetch("texts.json?v=10").then((r) => r.json()),
+      fetch("knowledge.json?v=11").then((r) => r.json()), fetch("texts.json?v=11").then((r) => r.json()),
     ]);
     dictionary = createDictionary({ heroes, items, abilities });
     itemIds = ids;
     knowledge = kb;
     texts = tx;
     // Нормы по рангам необязательны: без них разбор работает по общим порогам
-    glossary = await fetch("glossary.json?v=5").then((r) => (r.ok ? r.json() : [])).catch(() => []);
     norms = await fetch("rank_norms.json?v=4").then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
   } catch {
     errorScreen("Не удалось загрузить данные OpenDota.", boot);
