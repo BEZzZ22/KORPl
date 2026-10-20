@@ -791,23 +791,64 @@ function coachPayload(a) {
   };
 }
 
+// Ответ воркера: «Главное: ...», пустая строка, «План на следующую игру:», шаги с «— ».
+// Если формат поплыл, всё, что не шаг и не заголовок, уходит в «Главное».
+function parseCoach(text) {
+  const main = [], steps = [];
+  for (const raw of String(text).split("\n")) {
+    const line = raw.trim();
+    if (!line || /^план\b.*:$/i.test(line)) continue;
+    const step = line.match(/^(?:[—–-]|\d+[.)])\s*(.+)$/);
+    if (step) steps.push(step[1]);
+    else main.push(line.replace(/^главное\s*:\s*/i, ""));
+  }
+  return { main: main.join(" "), steps };
+}
+
 function coachBlock(a) {
   if (!COACH_URL) return null;
   const key = `coach:${a.facts.match_id}:${a.facts.slot}`;
-  const box = h("div", { class: "card coach" });
-  const show = (text) => box.replaceChildren(
-    h("div", { class: "coach-title" }, "Разбор тренера"),
-    ...text.split("\n").filter((l) => l.trim()).map((l) => h("p", { class: "coach-line" }, l)));
-  const cached = safeLocal.get(key);
-  if (cached) { show(cached); return box; }
+  const box = h("section", { class: "card coach", "aria-labelledby": "coach-title" });
+  const title = h("div", { class: "coach-title", id: "coach-title" }, "Разбор тренера");
 
-  const ask = h("button", { class: "coach-btn" }, "Разбор тренера");
+  const show = (text, fresh) => {
+    const { main, steps } = parseCoach(text);
+    let done = [];
+    try { done = JSON.parse(safeLocal.get(`${key}:done`) || "[]"); } catch { /* битое значение */ }
+    let i = 0;
+    const seq = (el) => { el.style.setProperty("--i", i++); return el; };
+    const list = h("ol", { class: "coach-steps" }, steps.map((s, n) => {
+      const btn = h("button", { class: "coach-step", type: "button", "aria-pressed": String(done.includes(n)) },
+        h("span", { class: "coach-mark", "aria-hidden": "true" }), h("span", { class: "coach-step-text" }, s));
+      btn.onclick = () => {
+        const on = btn.getAttribute("aria-pressed") !== "true";
+        btn.setAttribute("aria-pressed", String(on));
+        done = on ? [...done, n] : done.filter((x) => x !== n);
+        safeLocal.set(`${key}:done`, JSON.stringify(done));
+        haptic(on ? "medium" : "light");
+      };
+      return seq(h("li", {}, btn));
+    }));
+    box.classList.toggle("coach-fresh", !!fresh);
+    box.replaceChildren(
+      title,
+      main && seq(h("div", { class: "coach-label" }, "Главное")),
+      main && seq(h("p", { class: "coach-main" }, main)),
+      steps.length && seq(h("div", { class: "coach-label" }, "Задачи на следующую катку")),
+      steps.length && list);
+  };
+  const cached = safeLocal.get(key);
+  if (cached) { show(cached, false); return box; }
+
+  const ask = h("button", { class: "coach-btn", type: "button" }, "Разобрать с тренером");
+  const note = h("p", { class: "coach-note small muted", role: "status" },
+    "Тренер выберет главное из разбора и даст три задачи на следующую катку.");
   ask.onclick = async () => {
     const day = new Date().toISOString().slice(0, 10);
     const used = safeLocal.get("coach_day") === day ? Number(safeLocal.get("coach_n") || 0) : 0;
-    if (used >= COACH_DAILY) { note.textContent = "На сегодня хватит, приходи завтра."; return; }
+    if (used >= COACH_DAILY) { note.textContent = `Сегодня уже ${COACH_DAILY} разборов, это лимит. Завтра снова.`; return; }
     ask.disabled = true;
-    note.textContent = "Тренер думает...";
+    ask.textContent = "Тренер смотрит катку…";
     haptic("medium");
     try {
       const res = await fetch(COACH_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(coachPayload(a)) });
@@ -816,14 +857,14 @@ function coachBlock(a) {
       safeLocal.set("coach_day", day);
       safeLocal.set("coach_n", String(used + 1));
       safeLocal.set(key, data.text);
-      show(data.text);
+      show(data.text, true);
     } catch (e) {
       ask.disabled = false;
+      ask.textContent = "Попробовать ещё раз";
       note.textContent = e && e.message && e.message.length < 80 ? e.message : "Тренер сейчас недоступен.";
     }
   };
-  const note = h("div", { class: "small muted" }, "Перескажет разбор и даст план на следующую игру.");
-  box.append(ask, note);
+  box.append(title, ask, note);
   return box;
 }
 
