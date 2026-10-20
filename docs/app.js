@@ -401,7 +401,7 @@ async function homeScreen() {
     const matches = (await api(`/players/${account}/recentMatches`)) || [];
     if (!matches.length) {
       list.replaceChildren(h("div", { class: "card muted" },
-        "Матчей не видно. В Доте включи: Настройки → Социальное → «Открыть доступ к данным матчей», " +
+        "Матчей не видно. В Доте включи: Настройки (шестерёнка) → Расширенные настройки → Социальное → «Expose Public Match Data» (публичные данные матчей), " +
         "сыграй катку и зайди сюда снова."));
       api(`/players/${account}/refresh`, { method: "POST" }).catch(() => {});
       return;
@@ -651,7 +651,7 @@ async function notYourMatch() {
   render(
     h("h1", {}, saved ? "Это не твоя игра" : "Привяжи аккаунт"),
     h("p", { class: "muted" }, saved
-      ? "Тебя нет в этом матче, а чужие игры я не разбираю. Если игра твоя, в ней мог быть скрыт профиль: включи в Доте Настройки → Социальное → «Открыть доступ к данным матчей»."
+      ? "Тебя нет в этом матче, а чужие игры я не разбираю. Если игра твоя, в ней мог быть скрыт профиль: включи в Доте Настройки (шестерёнка) → Расширенные настройки → Социальное → «Expose Public Match Data» (публичные данные матчей)."
       : "Я разбираю только твои игры. Укажи Friend ID или Steam ID."),
     saved ? h("button", { onclick: () => navRoot("home", homeScreen) }, "На главную") : accountForm(),
   );
@@ -783,8 +783,9 @@ function coachPayload(a) {
   const s = a.summary || {}, f = a.facts;
   return {
     hero: f.hero, role: s.role || "", rank: s.rank || "", won: f.won, kda: f.kda, duration: f.duration,
-    problems: (s.problems || []).slice(0, 3).map((p) => ({ title: p.title, fact: p.fact })),
-    micro: a.findings.filter((x) => x.kind === "micro" && x.severity !== GOOD).slice(0, 4).map((x) => x.text),
+    problems: (s.problems || []).slice(0, 3).map((p) => ({ title: p.title, fact: p.fact, action: p.action })),
+    strengths: (s.strengths || []).slice(0, 2).map((x) => ({ title: x.title, fact: x.fact })),
+    micro: a.findings.filter((x) => x.kind === "micro" && x.severity !== GOOD).slice(0, 4).map((x) => ({ text: x.text, tip: x.tip })),
     plan: a.build_plan ? a.build_plan.missing.slice(0, 3).map((i) => ({ item: i.item, why: i.why })) : [],
     draft: a.draft ? a.draft.notes.slice(0, 2).map((n) => n.text) : [],
   };
