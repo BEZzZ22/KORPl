@@ -801,7 +801,7 @@ function parseCoach(text) {
   const main = [], steps = [];
   for (const raw of String(text).split("\n")) {
     const line = raw.trim();
-    if (!line || /^план\b.*:$/i.test(line)) continue;
+    if (!line || /^план[\s:]/i.test(line)) continue; // \b в JS не видит границ кириллических слов
     const step = line.match(/^(?:[—–-]|\d+[.)])\s*(.+)$/);
     if (step) steps.push(step[1]);
     else main.push(line.replace(/^главное\s*:\s*/i, ""));
@@ -838,8 +838,8 @@ function coachBlock(a) {
       title,
       main && seq(h("div", { class: "coach-label" }, "Главное")),
       main && seq(h("p", { class: "coach-main" }, main)),
-      steps.length && seq(h("div", { class: "coach-label" }, "Задачи на следующую катку")),
-      steps.length && list);
+      steps.length > 0 && seq(h("div", { class: "coach-label" }, "Задачи на следующую катку")),
+      steps.length > 0 && list);
   };
   const cached = safeLocal.get(key);
   if (cached) { show(cached, false); return box; }
