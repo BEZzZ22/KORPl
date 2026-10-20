@@ -1,7 +1,7 @@
 // Telegram Mini App: разбор матча Dota 2 внутри Телеграма.
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, CATEGORIES, BAD, WARN, GOOD,
-} from "./engine.js?v=12";
+} from "./engine.js?v=13";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
