@@ -20,6 +20,16 @@ const ITEM_UPGRADES = {
   ward_sentry: ["ward_dispenser"],
   orchid: ["bloodthorn"],
 };
+// Мелкие ошибки. Сейв-предметы и сколько секунд после прошлого нажатия они ещё в откате
+const SAVE_ITEMS = [["black_king_bar", 100], ["glimmer_cape", 20], ["force_staff", 20], ["hurricane_pike", 20],
+  ["ghost", 25], ["cyclone", 25], ["wind_waker", 20], ["lotus_orb", 20], ["satanic", 35], ["manta", 35]];
+// Руны силы (без баунти, воды и мудрости): ДД, хаст, иллюзии, инвиз, реген, арканка, щит
+const POWER_RUNES = new Set(["0", "1", "2", "3", "4", "6", "9"]);
+// Крипов в минуту с 10 по 20 минуту, ниже которых керри своего ранга фармит медленно
+const FARM_PACE = { herald: 3.5, guardian: 4.2, crusader: 5, archon: 5.8, legend: 6.5, ancient: 7.2, divine: 8, immortal: 8.5 };
+const FARM_PACE_ROLE = { 1: 1, 2: 0.9, 3: 0.65 };
+const WARD_GAP = 480;
+const BUYBACK_WASTE_WINDOW = 45;
 const MAX_COUNTER_ITEMS = 3;
 const DETECTION_ITEMS = new Set(["dust", "ward_sentry", "gem"]);
 const PRO_MIN_COUNT = 3;
@@ -229,6 +239,18 @@ export function assignRoles(team) {
 function atMinute(series, minute) {
   if (!series || !series.length) return null;
   return minute < series.length ? series[minute] : series[series.length - 1];
+}
+
+// [3, 4, 5, 8] -> "2:00–5:00, 7:00–8:00": минута m — это отрезок с (m-1):00 до m:00
+function minuteRanges(mins) {
+  const out = [];
+  let start = mins[0], prev = mins[0];
+  for (const m of [...mins.slice(1), null]) {
+    if (m === prev + 1) { prev = m; continue; }
+    out.push(`${start - 1}:00–${prev}:00`);
+    start = prev = m;
+  }
+  return out.join(", ");
 }
 
 const sum = (xs) => xs.reduce((a, b) => a + b, 0);
@@ -492,6 +514,7 @@ class MatchAnalyzer {
     this.checkDeathZones();
     this.checkWardZones();
     this.checkLateGame();
+    this.checkMicro();
     const compare = this.compare();
     this.checkCompareGap(compare);
     this.cleanup();
@@ -655,6 +678,9 @@ class MatchAnalyzer {
     if (g === "idle") return "Цель на следующую катку: ни одной минуты АФК — фарм или файт";
     if (g === "lane_lost") return "Цель на следующую катку: выйти с линии хотя бы в ноль по золоту";
     if (g.startsWith("killer_")) return `Цель на следующую катку: заранее купить защиту против самого опасного врага`;
+    if (g === "lane_gaps") return "Цель на следующую катку: на лайне ни одной минуты без ластхита";
+    if (g === "mid_runes") return "Цель на следующую катку: забрать минимум 2 руны силы до 12:00";
+    if (g === "buyback_wasted") return "Цель на следующую катку: байбек только когда файт ещё можно выиграть";
     return "Цель на следующую катку: исправить главную ошибку выше";
   }
 
@@ -1339,6 +1365,247 @@ class MatchAnalyzer {
 
   // ---------- сравнение с другими игроками на герое ----------
 
+  // ---------- мелкие ошибки: конкретные моменты со временем ----------
+
+  checkMicro() {
+    // Пометки к смертям в хронологии: время смерти -> что пошло не так
+    this.deathNotes = new Map();
+    this.checkLaneGaps();
+    this.checkCoreDenies();
+    this.checkMidRunes();
+    this.checkFarmPace();
+    this.checkWardGaps();
+    this.checkNeutral();
+    this.checkWand();
+    this.checkFightButtons();
+    this.checkFirstToDie();
+    this.checkBuybacks();
+  }
+
+  micro(category, severity, key, params = {}, tipKey = `${key}_tip`) {
+    this.add(category, severity, key, tipKey, params, "micro");
+  }
+
+  // Минуты (по началу), когда игрок был мёртв
+  deadMinuteSet() {
+    const dead = new Set();
+    for (const d of this.p.deaths_log || []) {
+      const from = Math.floor(d.time / 60), to = Math.floor((d.time + (d.time_dead ?? 30)) / 60);
+      for (let m = from; m <= to; m++) dead.add(m);
+    }
+    return dead;
+  }
+
+  // Минуты лайна без единого ластхита, когда игрок был жив и не дрался
+  checkLaneGaps() {
+    const lh = this.p.lh_t || [];
+    if (!this.core || !this.roleSure || this.dominant || this.minutes < 10 || lh.length < 11) return;
+    const dead = this.deadMinuteSet(), busy = this.fightMinutes();
+    const empty = [];
+    for (let m = 2; m <= 10; m++) {
+      if (lh[m] - lh[m - 1] === 0 && !dead.has(m - 1) && !dead.has(m) && !busy.has(m - 1)) empty.push(m);
+    }
+    if (empty.length < 2) return;
+    const n = empty.length;
+    const times = minuteRanges(empty);
+    this.micro(LANE, n >= 4 ? BAD : WARN, "micro_lane_gaps", { n, mins: n, times });
+    this.issue("lane_gaps", n * 150, "Пустые минуты на лайне",
+      `${n} ${plural(n, "минута", "минуты", "минут")} лайна без единого ластхита: ${times}. Ты был жив и не дрался — крипы умирали без тебя`,
+      this.pos === 3
+        ? "Если тебя зонят от волны — не стой в стороне: тяни крипов на себя, бери хард-ластхит или фарми малый кемп рядом с лайном"
+        : "Каждые 20–30 секунд будь у волны. Если не пускают — отведи волну к своей вышке (пул саппорта, агро крипов), но не стой без дела");
+  }
+
+  checkCoreDenies() {
+    if (![1, 3].includes(this.pos) || !this.roleSure || this.dominant || this.minutes < 10) return;
+    const dn10 = atMinute(this.p.dn_t, 10);
+    if (dn10 == null || dn10 > 2) return;
+    const dnText = dn10 === 0 ? "ни одного деная" : `всего ${dn10} ${plural(dn10, "денай", "деная", "деная")}`;
+    this.micro(LANE, WARN, "micro_core_denies", { dn_text: dnText });
+  }
+
+  checkMidRunes() {
+    const log = this.p.runes_log;
+    if (this.pos !== 2 || !this.roleSure || this.dominant || !Array.isArray(log) || this.duration < 900) return;
+    if (log.some((r) => r.time <= 735 && POWER_RUNES.has(String(r.key)))) return;
+    this.micro(LANE, WARN, "micro_mid_runes");
+    this.issue("mid_runes", 400, "Мид без рун",
+      "До 12:00 ты не взял ни одной руны силы — а они появляются на 6:00, 8:00, 10:00 и 12:00",
+      "За 15 секунд до чётной минуты сдвигайся к реке и забирай руну. Нет шансов забрать — подсвети её вардом, чтобы знать, с чем придёт оппонент");
+  }
+
+  // Темп фарма с 10 по 20 минуту в спокойные минуты (жив и не в драке)
+  checkFarmPace() {
+    const lh = this.p.lh_t || [];
+    if (!this.core || !this.roleSure || this.dominant || this.minutes < 21 || lh.length < 21) return;
+    const dead = this.deadMinuteSet(), busy = this.fightMinutes();
+    let free = 0, gained = 0;
+    for (let m = 11; m <= 20; m++) {
+      if (dead.has(m - 1) || busy.has(m - 1)) continue;
+      free++;
+      gained += lh[m] - lh[m - 1];
+    }
+    if (free < 4) return;
+    const pace = gained / free;
+    const target = Math.round(FARM_PACE[this.bracket || "archon"] * FARM_PACE_ROLE[this.pos] * 10) / 10;
+    if (pace >= target) return;
+    const rankGen = this.bracket ? ` на ранге ${RANKS[this.bracket][0]}` : "";
+    this.micro(FARM, pace < target * 0.7 ? BAD : WARN, "micro_farm_pace",
+      { pace: tenths(pace), target: tenths(target), mins: free, role_gen: ROLE_GEN_PLURAL[this.pos], rank: rankGen });
+    this.issue("farm_pace", (target - pace) * free * 45, "Медленный фарм в мидгейме",
+      `С 10:00 до 20:00 в спокойные минуты (${free} ${plural(free, "минута", "минуты", "минут")}) ты добивал ${tenths(pace)} крипа в минуту — для ${ROLE_GEN_PLURAL[this.pos]}${rankGen} нормальный темп от ${tenths(target)}`,
+      "Фарми по кругу: волна на линии → ближайший кемп → следующая волна. Пока идёшь — смотри на миникарту и сразу решай, куда дальше",
+      `Цель на следующую катку: с 10 по 20 минуту ${tenths(target)}+ крипов в минуту`);
+  }
+
+  // Самая длинная дыра между обсами у саппорта (без учёта времени мёртвым)
+  checkWardGaps() {
+    if (this.pos < 4 || !this.roleSure || this.duration < 1500) return;
+    const times = (this.p.obs_log || []).map((w) => w.time).filter((t) => t >= 0).sort((a, b) => a - b);
+    if (times.length < 3) return;
+    const a = 300, b = this.duration - 180;
+    const points = [a, ...times.filter((t) => t > a && t < b), b];
+    let gap = [0, a, a];
+    for (let i = 1; i < points.length; i++) {
+      if (points[i] - points[i - 1] > gap[0]) gap = [points[i] - points[i - 1], points[i - 1], points[i]];
+    }
+    const deadInGap = sum((this.p.deaths_log || []).map((d) =>
+      Math.max(0, Math.min(d.time + (d.time_dead ?? 30), gap[2]) - Math.max(d.time, gap[1]))));
+    const effective = gap[0] - deadInGap;
+    if (effective < WARD_GAP) return;
+    const mins = Math.round(gap[0] / 60);
+    this.micro(VISION, mins >= 12 ? BAD : WARN, "micro_ward_gap", { from: mmss(gap[1]), to: mmss(gap[2]), mins });
+    this.issue("ward_gap", (effective / 60) * 80, "Дыра в вардах",
+      `С ${mmss(gap[1])} до ${mmss(gap[2])} ты не поставил ни одного обса — ${mins} ${plural(mins, "минуту", "минуты", "минут")} команда играла вслепую`,
+      "Обсы в лавке восстанавливаются: заглядывай туда каждые пару минут и держи 1–2 варда при себе. Пропал старый — сразу ставь новый",
+      "Цель на следующую катку: ни одного перерыва в обсах дольше 5 минут");
+  }
+
+  checkNeutral() {
+    if (this.duration < 1500 || this.dominant || !("item_neutral" in this.p) || this.p.item_neutral) return;
+    this.micro(ITEMS, WARN, "micro_neutral");
+  }
+
+  checkWand() {
+    if (this.duration < 1200 || this.dominant || !this.hasPro) return;
+    if ((this.p.purchase_log || []).some((x) => x.key === "magic_stick" || x.key === "magic_wand")) return;
+    const ranked = Object.entries(this.pro).sort((x, y) => y[1] - x[1]).map(([k]) => k);
+    const idx = ranked.indexOf("magic_wand");
+    if (idx < 0 || idx >= 15) return;
+    this.micro(ITEMS, WARN, "micro_wand", { hero: this.hero });
+  }
+
+  // Был ли у игрока предмет к моменту t: куплен заранее и ещё не ушёл в апгрейд
+  ownedAt(key, t) {
+    const log = this.p.purchase_log || [];
+    const buy = log.find((x) => x.key === key && x.time < t - 5);
+    if (!buy) return false;
+    const upgrades = ITEM_UPGRADES[key] || [];
+    return !log.some((x) => upgrades.includes(x.key) && x.time > buy.time && x.time < t);
+  }
+
+  fightDeathTime(tf) {
+    const d = (this.p.deaths_log || []).find((x) => x.time >= tf.start - 2 && x.time <= tf.end + 2);
+    return d ? d.time : tf.start;
+  }
+
+  // Смерти в файтах с ненажатым сейвом и смерти без единой прожатой кнопки
+  checkFightButtons() {
+    const idx = this.match.players.indexOf(this.p);
+    const unused = [], silent = [];
+    const usedAt = {};
+    for (const tf of this.match.teamfights || []) {
+      const me = (tf.players || [])[idx];
+      if (!me) continue;
+      const items = me.item_uses;
+      if (me.deaths > 0) {
+        const t = this.fightDeathTime(tf);
+        if (items) {
+          const miss = SAVE_ITEMS.find(([key, cd]) => this.ownedAt(key, tf.start) && !items[key] &&
+            !(usedAt[key] != null && tf.start - usedAt[key] < cd));
+          if (miss) unused.push({ t, key: miss[0] });
+        }
+        if (!Object.keys(me.ability_uses || {}).length && !Object.keys(items || {}).length && !(me.damage > 0)) silent.push(t);
+      }
+      for (const key of Object.keys(items || {})) usedAt[key] = tf.end;
+    }
+
+    const byItem = new Map();
+    for (const u of unused) byItem.set(u.key, [...(byItem.get(u.key) || []), u.t]);
+    for (const [key, ts] of [...byItem.entries()].slice(0, 2)) {
+      const item = this.od.itemName(key);
+      const times = ts.slice(0, 3).map(mmss).join(", ");
+      const n = ts.length;
+      this.micro(FIGHTS, key === "black_king_bar" || n >= 2 ? BAD : WARN, "micro_unused_item",
+        { item, times, n, times_word: timesWord(n) });
+      for (const t of ts) this.deathNotes.set(t, `${item} так и не нажат`);
+      this.issue(`unused_${key}`, n * 500, `Не нажал ${item} в файтах`,
+        `${n === 1 ? "Умер" : `${n} ${timesWord(n)} умер`} в драке с ${item} в слоте и так его и не нажал (${times})`,
+        key === "black_king_bar"
+          ? "BKB жмётся ДО того, как на тебя прилетит контроль: видишь врага с блинком/станом в тумане — жми, а не жди, пока поймают"
+          : `Поставь ${item} на удобную кнопку и нажимай, как только тебя начинают фокусить — не надо ждать последних 100 ХП`,
+        `Цель на следующую катку: в каждой драке нажать ${item} раньше, чем умрёшь`);
+    }
+    if (silent.length >= 2) {
+      const n = silent.length;
+      const times = silent.slice(0, 3).map(mmss).join(", ");
+      this.micro(FIGHTS, n >= 3 ? BAD : WARN, "micro_silent_death", { n, times, times_word: timesWord(n) });
+      for (const t of silent) if (!this.deathNotes.has(t)) this.deathNotes.set(t, "ни одной кнопки не прожато");
+      this.issue("silent_deaths", n * 300, "Умирал, не нажав ни одной кнопки",
+        `${n} ${timesWord(n)} в драке тебя убили раньше, чем ты прожал хоть один скилл или предмет (${times})`,
+        "Тебя ловят первым, ещё до начала файта: держись за крипами и героями с бОльшим ХП, а скиллы прожимай с дистанции, а не после захода врага",
+        "Цель на следующую катку: в каждом файте успеть прожать главный скилл");
+    }
+  }
+
+  // Первым умирает в драках — значит, стоит не там
+  checkFirstToDie() {
+    const first = [];
+    let teamFights = 0;
+    for (const tf of this.match.teamfights || []) {
+      let best = null;
+      for (const a of this.allies) {
+        for (const d of a.deaths_log || []) {
+          if (d.time >= tf.start - 2 && d.time <= tf.end + 2 && (!best || d.time < best.t)) best = { t: d.time, who: a };
+        }
+      }
+      if (!best) continue;
+      teamFights++;
+      if (best.who === this.p) first.push(best.t);
+    }
+    if (first.length < 3 || first.length / teamFights < 0.45) return;
+    const n = first.length;
+    const times = first.slice(0, 4).map(mmss).join(", ");
+    this.micro(SURVIVAL, WARN, "micro_first_death", { n, total: teamFights, times }, `micro_first_death_tip_${this.role()}`);
+    for (const t of first) if (!this.deathNotes.has(t)) this.deathNotes.set(t, "умер первым в драке");
+    this.issue("first_death", n * 250, "Первым умираешь в драках",
+      `В ${n} из ${teamFights} драк, где твоя команда теряла героев, первым умирал ты (${times})`,
+      this.core
+        ? "Заходи в драку вторым: дождись, пока враги потратят контроль на тех, кто впереди, и только потом залетай"
+        : "Стой за корами, а не перед ними: саппорт, который умер первым, не успел дать ни стана, ни сейва",
+      "Цель на следующую катку: ни разу не умереть первым в драке");
+  }
+
+  // Байбек, после которого умер почти сразу
+  checkBuybacks() {
+    const deaths = this.p.deaths_log || [];
+    const wasted = [];
+    for (const b of this.p.buyback_log || []) {
+      // Выкуп в последние минуты — защита трона или добивание, это не ошибка
+      if (b.time > this.duration - 120) continue;
+      const d = deaths.find((x) => x.time > b.time && x.time <= b.time + BUYBACK_WASTE_WINDOW);
+      if (d) wasted.push([b.time, d.time]);
+    }
+    if (!wasted.length) return;
+    const [bt, dt] = wasted[0];
+    const cost = Math.round(200 + (atMinute(this.p.networth_t, Math.floor(bt / 60)) || 0) / 13);
+    this.micro(SURVIVAL, WARN, "micro_buyback_wasted", { time: mmss(bt), sec: dt - bt, gold: num(cost) });
+    for (const [b, d] of wasted) this.deathNotes.set(d, `через ${d - b} с после байбека`);
+    this.issue("buyback_wasted", cost * wasted.length, "Байбек в пустоту",
+      `На ${mmss(bt)} выкупился за ~${num(cost)} золота и умер через ${dt - bt} ${plural(dt - bt, "секунду", "секунды", "секунд")}`,
+      "Перед байбеком посмотри на карту: сколько врагов живо и успеешь ли ты вообще что-то сделать. Если файт уже проигран — копи на следующий");
+  }
+
   benchValue(key, percentile) {
     for (const row of this.heroBench[key] || []) if (Math.abs(row.percentile - percentile) < 1e-9) return row.value;
     return null;
@@ -1470,7 +1737,8 @@ class MatchAnalyzer {
       if (killer === "башня") key = "moment_death_tower";
       else if (!d.key.startsWith("npc_dota_hero_")) key = "moment_death_creeps";
       else key = this.isSoloDeath(d.time) ? "moment_death_solo" : "moment_death_fight";
-      add(d.time, BAD, this.say(key, { killer }, String(d.time)));
+      const note = this.deathNotes && this.deathNotes.get(d.time);
+      add(d.time, BAD, this.say(key, { killer }, String(d.time)) + (note ? ` — ${note}` : ""));
     }
     for (const x of p.purchase_log || []) {
       if (this.isFinalItem(x.key) && this.od.itemCost(x.key) >= 2000) {

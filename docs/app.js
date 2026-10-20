@@ -1,7 +1,7 @@
 // Telegram Mini App: разбор матча Dota 2 внутри Телеграма.
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, CATEGORIES, BAD, WARN, GOOD,
-} from "./engine.js?v=6";
+} from "./engine.js?v=7";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -592,10 +592,22 @@ function overviewTab(a) {
     strengths.length > 0 && h("h2", {}, "Что получилось"),
     ...strengths.map((st) => h("div", { class: "strength" }, h("b", {}, st.title), st.fact && h("span", { class: "muted" }, ` — ${st.fact}`))),
     s.goal && h("div", { class: "card goal" }, s.goal),
+    microBlock(a),
     h("h2", {}, "Оценки по разделам"),
     h("div", { class: "card" }, ...CATEGORIES.map((c) => h("div", { class: "score-row" },
       h("span", {}, c), h("div", { class: "bar" }, h("i", { "data-w": a.scores[c] })), h("b", {}, a.scores[c])))),
     glossaryBlock(),
+  );
+}
+
+// Мелкие ошибки с точным временем — то, что тренер разбирает по реплею
+function microBlock(a) {
+  const micro = a.findings.filter((f) => f.kind === "micro" && f.severity !== GOOD)
+    .sort((x, y) => (x.severity === BAD ? 0 : 1) - (y.severity === BAD ? 0 : 1));
+  if (!micro.length) return null;
+  return h("div", {},
+    h("h2", {}, "Мелочи, на которых теряешь игру"),
+    h("div", { class: "card micro" }, ...micro.map(findingCard)),
   );
 }
 
@@ -898,7 +910,7 @@ async function boot() {
     const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
       api("/constants/heroes"), api("/constants/items"), api("/constants/abilities", { timeout: 40000 }),
       api("/constants/item_ids"),
-      fetch("knowledge.json").then((r) => r.json()), fetch("texts.json").then((r) => r.json()),
+      fetch("knowledge.json?v=7").then((r) => r.json()), fetch("texts.json?v=7").then((r) => r.json()),
     ]);
     dictionary = createDictionary({ heroes, items, abilities });
     itemIds = ids;

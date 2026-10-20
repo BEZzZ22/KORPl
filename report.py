@@ -162,13 +162,25 @@ def summary_block(a: Analysis) -> str:
 
 
 MAX_DETAILS = 6
+MAX_MICRO = 8
+
+
+def micro_block(a: Analysis) -> str:
+    """Мелкие ошибки с точным временем: то, на чём теряешь игру по мелочи."""
+    micro = [f for f in a.by_severity(BAD) + a.by_severity(WARN) if f.kind == "micro"][:MAX_MICRO]
+    if not micro:
+        return ""
+    return "\n".join(["<b>Мелочи, на которых ты теряешь игру</b>"] + finding_lines(micro, False))
 
 
 def full_report(a: Analysis) -> str:
     parts = [f"<b>Оценка: {a.overall}/10</b>\n<i>{escape(a.verdict)}</i>", summary_block(a), scores_block(a)]
 
-    # Убийцы выводятся отдельным блоком, в общих списках их не дублируем
-    rest = [f for f in a.by_severity(BAD) + a.by_severity(WARN) if f.kind != "killer"]
+    micro = micro_block(a)
+    if micro:
+        parts.append(micro)
+    # Убийцы и мелочи выводятся отдельными блоками, в общих списках их не дублируем
+    rest = [f for f in a.by_severity(BAD) + a.by_severity(WARN) if f.kind not in ("killer", "micro")]
     good = a.by_severity(GOOD)
     if rest:
         parts.append("\n".join(["<b>Остальные замечания</b>"] + finding_lines(rest[:MAX_DETAILS], False)))

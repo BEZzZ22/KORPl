@@ -225,3 +225,53 @@ def test_no_contradictions_and_few_roasts(match, od):
 def test_summary_in_chat_report(match, od):
     text = report.full_report(run(match, match["players"][0], od))
     assert "Сводка" in text and "Цель на следующую катку" in text
+
+
+def micro(a):
+    return [f for f in a.findings if f.kind == "micro"]
+
+
+def test_micro_unused_save_item_and_death_note(match, od):
+    batrider = match["players"][2]  # умер в двух драках с Ghost Scepter в слоте
+    a = run(match, batrider, od)
+    unused = [f for f in micro(a) if "Ghost Scepter" in f.text]
+    assert unused and unused[0].severity == analysis.BAD and unused[0].tip
+    assert any("Ghost Scepter так и не нажат" in m["text"] for m in a.moments)
+    assert "Мелочи, на которых ты теряешь игру" in report.full_report(a)
+
+
+def test_micro_ward_gap_for_support(match, od):
+    wd = match["players"][9]  # пятёрка, с 16:04 до 25:20 без обсов
+    texts = [f.text for f in micro(run(match, wd, od))]
+    assert any("16:04" in t and "25:20" in t for t in texts)
+
+
+def test_micro_buyback_ignores_last_minutes(match, od):
+    def buyback_findings(player):
+        return [f for f in micro(run(match, player, od)) if "байбек" in f.text.lower() or "выкупился" in f.text.lower()]
+
+    assert buyback_findings(match["players"][0])  # Tusk выкупился на 35:20 и умер через 23 с
+    assert not buyback_findings(match["players"][5])  # Tiny выкупался в финальной драке у трона
+
+
+def test_micro_lane_gaps_on_synthetic_lane(match, od):
+    import copy
+
+    m = copy.deepcopy(match)
+    clinkz = m["players"][4]
+    lh = clinkz["lh_t"]
+    lost = lh[7] - lh[4]
+    clinkz["lh_t"] = lh[:5] + [lh[4]] * 3 + [x - lost for x in lh[8:]]
+    texts = [f.text for f in micro(run(m, clinkz, od))]
+    assert any("4:00–7:00" in t for t in texts)
+
+
+def test_no_raw_placeholders_anywhere(match, od):
+    bad = ("{", "}", "undefined", "NaN", "null")
+    for player in match["players"]:
+        a = run(match, player, od)
+        chunks = [x for f in a.findings for x in (f.text, f.tip, f.roast)]
+        chunks += [m["text"] for m in a.moments]
+        chunks += [x for p in a.summary["problems"] for x in (p["title"], p["fact"], p["action"])] + [a.summary["goal"]]
+        for chunk in chunks:
+            assert not any(b in chunk for b in bad), chunk
