@@ -60,10 +60,19 @@ jobs:
               echo '{"error":"У OpenDota нет ссылки на реплей: матч ещё не разобран или реплей удалён"}' > "out/r/$id.err.json"
               echo "::endgroup::"; continue
             fi
-            if ! curl -sf --max-time 300 "$url" -o replay.dem.bz2 || ! bunzip2 -f replay.dem.bz2; then
+            if ! curl -sf --max-time 300 "$url" -o replay.dem; then
               echo '{"error":"Реплей не скачался: Valve хранит их около двух недель"}' > "out/r/$id.err.json"
               echo "::endgroup::"; continue
             fi
+            # Valve пакует по-разному (bzip2, внутри бывает ещё zstd): снимаем слои по сигнатуре, пока не останется .dem
+            for layer in 1 2 3; do
+              magic=$(head -c 4 replay.dem | od -An -tx1 | tr -d " \n")
+              case "$magic" in
+                425a68*) bunzip2 -c replay.dem > replay.tmp && mv replay.tmp replay.dem; echo "слой $layer: bzip2" ;;
+                28b52ffd) zstd -dqf replay.dem -o replay.tmp && mv replay.tmp replay.dem; echo "слой $layer: zstd" ;;
+                *) break ;;
+              esac
+            done
             # как у самой OpenDota: поток через -T - (chunked), без Content-Length и Expect
             code=$(curl -s --max-time 900 -X POST -T - -o parsed.jsonl -w "%{http_code}" http://localhost:5600 < replay.dem || echo "curl-fail")
             if node tools/replay-summary.mjs "$id" < parsed.jsonl > "out/r/$id.json"; then
