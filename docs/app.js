@@ -1,7 +1,7 @@
 // Telegram Mini App: разбор матча Dota 2 внутри Телеграма.
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, CATEGORIES, BAD, WARN, GOOD,
-} from "./engine.js?v=11";
+} from "./engine.js?v=12";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -740,8 +740,7 @@ function analysisScreen(a) {
 // Шеринг: короткий вердикт + прямая ссылка на этот матч в приложении (растит бота)
 function shareMatch(a) {
   const f = a.facts;
-  const slot = f.slot != null ? `_s${f.slot}` : "";
-  const link = `https://t.me/${BOT_USERNAME}?startapp=m${f.match_id}${slot}`;
+  const link = `https://t.me/${BOT_USERNAME}?startapp`;
   const text = `${f.hero} · ${f.won ? "Победа" : "Поражение"} · оценка ${a.overall}/10\n${a.verdict}`;
   const url = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`;
   haptic("medium");
@@ -770,6 +769,63 @@ function scoreRing(score) {
   );
 }
 
+// ---------- тренер на Gemini (через воркер из worker/coach.js) ----------
+
+const COACH_URL = ""; // адрес воркера, ставится после деплоя; пока пусто, кнопки тренера нет
+const COACH_DAILY = 5; // разборов тренера в день на устройство
+
+const safeLocal = {
+  get(key) { try { return localStorage.getItem(key); } catch { return null; } },
+  set(key, value) { try { localStorage.setItem(key, value); } catch { /* приватный режим */ } },
+};
+
+function coachPayload(a) {
+  const s = a.summary || {}, f = a.facts;
+  return {
+    hero: f.hero, role: s.role || "", rank: s.rank || "", won: f.won, kda: f.kda, duration: f.duration,
+    problems: (s.problems || []).slice(0, 3).map((p) => ({ title: p.title, fact: p.fact })),
+    micro: a.findings.filter((x) => x.kind === "micro" && x.severity !== GOOD).slice(0, 4).map((x) => x.text),
+    plan: a.build_plan ? a.build_plan.missing.slice(0, 3).map((i) => ({ item: i.item, why: i.why })) : [],
+    draft: a.draft ? a.draft.notes.slice(0, 2).map((n) => n.text) : [],
+  };
+}
+
+function coachBlock(a) {
+  if (!COACH_URL) return null;
+  const key = `coach:${a.facts.match_id}:${a.facts.slot}`;
+  const box = h("div", { class: "card coach" });
+  const show = (text) => box.replaceChildren(
+    h("div", { class: "coach-title" }, "Разбор тренера"),
+    ...text.split("\n").filter((l) => l.trim()).map((l) => h("p", { class: "coach-line" }, l)));
+  const cached = safeLocal.get(key);
+  if (cached) { show(cached); return box; }
+
+  const ask = h("button", { class: "coach-btn" }, "Разбор тренера");
+  ask.onclick = async () => {
+    const day = new Date().toISOString().slice(0, 10);
+    const used = safeLocal.get("coach_day") === day ? Number(safeLocal.get("coach_n") || 0) : 0;
+    if (used >= COACH_DAILY) { note.textContent = "На сегодня хватит, приходи завтра."; return; }
+    ask.disabled = true;
+    note.textContent = "Тренер думает...";
+    haptic("medium");
+    try {
+      const res = await fetch(COACH_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(coachPayload(a)) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.text) throw new Error(data.error || "Тренер сейчас недоступен.");
+      safeLocal.set("coach_day", day);
+      safeLocal.set("coach_n", String(used + 1));
+      safeLocal.set(key, data.text);
+      show(data.text);
+    } catch (e) {
+      ask.disabled = false;
+      note.textContent = e && e.message && e.message.length < 80 ? e.message : "Тренер сейчас недоступен.";
+    }
+  };
+  const note = h("div", { class: "small muted" }, "Перескажет разбор и даст план на следующую игру.");
+  box.append(ask, note);
+  return box;
+}
+
 function overviewTab(a) {
   const s = a.summary || {};
   const who = [s.role, s.rank && `ранг ${s.rank}`].filter(Boolean).join(" · ");
@@ -777,6 +833,7 @@ function overviewTab(a) {
   const strengths = (s.strengths || []).slice(0, 2);
   return h("div", {},
     who && h("div", { class: "who" }, who, s.role_sure === false && h("span", { class: "muted" }, " · роль определена неточно")),
+    coachBlock(a),
     h("h2", {}, problems.length ? "Что было не так" : "Серьёзных ошибок нет"),
     ...problems.map((p, i) => h("div", { class: "card problem" },
       h("div", { class: "problem-num" }, String(i + 1)),
@@ -1103,7 +1160,7 @@ async function boot() {
     const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
       api("/constants/heroes"), api("/constants/items"), api("/constants/abilities", { timeout: 40000 }),
       api("/constants/item_ids"),
-      fetch("knowledge.json?v=11").then((r) => r.json()), fetch("texts.json?v=11").then((r) => r.json()),
+      fetch("knowledge.json?v=12").then((r) => r.json()), fetch("texts.json?v=12").then((r) => r.json()),
     ]);
     dictionary = createDictionary({ heroes, items, abilities });
     itemIds = ids;
