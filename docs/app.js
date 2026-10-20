@@ -642,7 +642,11 @@ async function matchScreen(matchId, slot, accountId, attempt = 0) {
 
   const [pro, bench, matchups] = await Promise.all([proItems(player.hero_id), heroBench(player.hero_id), heroMatchups(player.hero_id)]);
   if (stale(seq)) return;
-  analysisScreen(analyze(match, player, dictionary, knowledge, texts, pro, bench, norms, matchups));
+  const a = analyze(match, player, dictionary, knowledge, texts, pro, bench, norms, matchups);
+  // для блока «Обычно у тебя»: сырые цифры этой игры и чей аккаунт
+  a.hist_self = { account: player.account_id, duration: match.duration, kills: player.kills, deaths: player.deaths,
+    assists: player.assists, gold_per_min: player.gold_per_min, xp_per_min: player.xp_per_min, last_hits: player.last_hits };
+  analysisScreen(a);
 }
 
 // Разбираем только свои игры: либо аккаунт не привязан, либо тебя нет в матче
@@ -846,12 +850,98 @@ function overviewTab(a) {
     )),
     strengths.length > 0 && h("h2", {}, "Что получилось"),
     ...strengths.map((st) => h("div", { class: "strength" }, h("b", {}, st.title), st.fact && h("span", { class: "muted" }, ` — ${st.fact}`))),
+    historyBlock(a),
     microBlock(a),
     draftBlock(a),
     h("h2", {}, "Оценки"),
     h("div", { class: "card" }, ...CATEGORIES.map((c) => h("div", { class: "score-row" },
       h("span", {}, c), h("div", { class: "bar" }, h("i", { "data-w": a.scores[c] })), h("b", {}, a.scores[c])))),
   );
+}
+
+// ---------- сравнение с прошлыми играми (только свой аккаунт) ----------
+
+const HIST_TTL = 30 * 60 * 1000;
+const HIST_MIN = 5;
+const HIST_FIELDS = ["hero_id", "duration", "game_mode", "kills", "deaths", "assists", "gold_per_min", "xp_per_min", "last_hits"];
+
+async function histMatches(account, heroId) {
+  const key = `hm:v1:${account}:${heroId || "all"}`;
+  try {
+    const c = JSON.parse(safeLocal.get(key) || "null");
+    if (c && Date.now() - c.t < HIST_TTL && Array.isArray(c.rows)) return c.rows;
+  } catch { /* битый кэш — перезапросим */ }
+  const q = `limit=${heroId ? 30 : 20}&significant=1${heroId ? `&hero_id=${heroId}` : ""}&` + HIST_FIELDS.map((f) => `project=${f}`).join("&");
+  const rows = await api(`/players/${account}/matches?${q}`);
+  if (!Array.isArray(rows)) return [];
+  safeLocal.set(key, JSON.stringify({ t: Date.now(), rows }));
+  return rows;
+}
+
+const histKda = (m) => (m.kills + m.assists) / Math.max(1, m.deaths);
+const HIST_ROWS = [
+  ["GPM", (m) => m.gold_per_min, false, (v) => String(Math.round(v))],
+  ["XPM", (m) => m.xp_per_min, false, (v) => String(Math.round(v))],
+  ["Крипов в минуту", (m) => (m.last_hits * 60) / m.duration, false, (v) => v.toFixed(1)],
+  ["Смерти", (m) => m.deaths, true, (v) => (Number.isInteger(v) ? String(v) : v.toFixed(1))],
+  ["KDA", histKda, false, (v) => v.toFixed(1)],
+];
+
+function quantile(sorted, q) {
+  const pos = (sorted.length - 1) * q, lo = Math.floor(pos), hi = Math.ceil(pos);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+}
+
+function historyRows(self, pool) {
+  let up = 0, down = 0;
+  const rows = HIST_ROWS.map(([label, f, lowerBetter, fmt]) => {
+    const v = f(self);
+    const vals = pool.map(f).filter(Number.isFinite).sort((x, y) => x - y);
+    const med = quantile(vals, 0.5), q1 = quantile(vals, 0.25), q3 = quantile(vals, 0.75);
+    const better = vals.filter((x) => (lowerBetter ? v < x : v > x)).length;
+    const good = lowerBetter ? v < q1 : v > q3, bad = lowerBetter ? v > q3 : v < q1;
+    if (good) up++;
+    if (bad) down++;
+    const cls = good ? "win-text" : bad ? "loss-text" : "muted";
+    return h("div", { class: "score-row hist" },
+      h("span", {}, label, h("em", { class: "muted" }, ` лучше, чем в ${better} из ${vals.length}`)),
+      h("span", { class: "muted" }, `${fmt(med)} → ${fmt(v)}`),
+      h("b", { class: cls }, good ? "▲" : bad ? "▼" : "≈"));
+  });
+  const verdict = up >= 2 && up > down ? "Лучше обычного." : down >= 2 && down > up ? "Хуже обычного." : "На твоём обычном уровне.";
+  return { rows, verdict };
+}
+
+// Обычно у тебя: эта игра против медианы твоих прошлых (тот же герой, иначе все игры)
+function historyBlock(a) {
+  const self = a.hist_self;
+  if (!self || !self.account || !(self.duration > 0)) return null;
+  const box = h("details", { class: "card timeline-box hist-box" }, h("summary", {}, "Обычно у тебя"),
+    h("div", { class: "small muted" }, "Собираю прошлые игры..."));
+  const seq = navSeq;
+  const usable = (m) => m.match_id !== a.facts.match_id && m.duration >= 600 && m.game_mode !== TURBO_MODE && m.gold_per_min != null;
+  (async () => {
+    let pool = (await histMatches(self.account, a.facts.hero_id)).filter(usable);
+    let sample = `на ${a.facts.hero}`;
+    if (pool.length < HIST_MIN) {
+      pool = (await histMatches(self.account, null)).filter(usable);
+      sample = "на всех героях";
+    }
+    if (stale(seq)) return;
+    const body = [h("summary", {}, "Обычно у тебя")];
+    if (pool.length < HIST_MIN) {
+      body.push(h("div", { class: "small muted" }, "Мало прошлых игр для сравнения, нужно хотя бы пять."));
+    } else {
+      const { rows, verdict } = historyRows(self, pool);
+      body[0] = h("summary", {}, "Обычно у тебя", h("span", { class: "muted" }, ` · ${verdict.toLowerCase().replace(/\.$/, "")}`));
+      body.push(...rows,
+        h("div", { class: "small muted" }, `${verdict} Медиана ${pool.length} ${plural(pool.length, "прошлой игры", "прошлых игр", "прошлых игр")} ${sample} → эта игра. Турбо и игры короче 10 минут не считаю.`));
+    }
+    box.replaceChildren(...body);
+  })().catch(() => {
+    if (!stale(seq)) box.replaceChildren(h("summary", {}, "Обычно у тебя"), h("div", { class: "small muted" }, "OpenDota не отдала прошлые игры."));
+  });
+  return box;
 }
 
 // Мелочи с точным временем: сверху текст, совет раскрывается по нажатию
