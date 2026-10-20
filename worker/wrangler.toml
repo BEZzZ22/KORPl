@@ -2,3 +2,12 @@ name = "dotacoach"
 main = "coach.js"
 compatibility_date = "2026-10-01"
 workers_dev = true
+
+# Кэш разборов, расход токенов, подписки на уведомления, карточки
+[[kv_namespaces]]
+binding = "COACH_KV"
+id = "ffcbcc863d684737becec7a78f57412f"
+
+# Раз в 3 минуты проверяем, разобрались ли реплеи, и пишем в Телеграм
+[triggers]
+crons = ["*/3 * * * *"]

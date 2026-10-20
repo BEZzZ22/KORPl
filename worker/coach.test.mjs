@@ -240,8 +240,10 @@ const geminiOk = (text) => new Response(JSON.stringify({ candidates: [{ content:
 function mockFetch(queues) {
   const calls = [];
   globalThis.fetch = async (url, init) => {
-    const who = String(url).includes("groq") ? "groq" : "gemini";
-    const body = JSON.parse(init.body);
+    const u = String(url);
+    const who = u.includes("groq") ? "groq" : u.includes("dreamn") ? "claude" : u.includes("telegram") ? "tg"
+      : u.includes("opendota") ? "od" : "gemini";
+    const body = init && init.body ? JSON.parse(init.body) : null;
     calls.push({ who, url: String(url), body, headers: init.headers });
     const next = queues[who]?.shift();
     if (!next) throw new Error(`лишний вызов ${who}`);
@@ -561,4 +563,25 @@ test("problemsOf: «фармил один» в пропущенной драке
 — Иди к команде, когда она собирается на драку.
 — Перед дракой ставь обс у входа в лес.`);
   assert.deepEqual(problemsOf(t, missed), []);
+});
+
+test("problemsOf: «один» в «Ошибке» требует факта, в «Надо было» — нет", () => {
+  const p = buildPrompt({ ...raw, episodes: [
+    { clock: "36:07", kind: "death", facts: ["тебя убил Invoker", "в мелкой стычке", "обсов вашей команды на карте: 2"] },
+  ] });
+  const t = (moment) => normalize(`Главное: смерти при перевесе стоили игры.
+
+Моменты:
+— 36:07 ${moment}
+
+План на следующую игру:
+— С перевесом стой с командой.
+— Бери объекты после выигранной драки.
+— Перед дракой ставь обс у входа в лес.`);
+  const bad = (m) => problemsOf(t(m), p).some((r) => /36:07 написано «один»/.test(r));
+  assert.ok(bad("Ошибка: полез в мелкую стычку один с перевесом. Надо было: стоять с командой."));
+  assert.ok(bad("Ошибка: пошёл фармить в одиночку. Надо было: стоять с командой."));
+  assert.ok(!bad("Ошибка: полез в стычку при перевесе. Надо было: не лезть в туман одному."));
+  assert.ok(!bad("Ошибка: проиграл драку один на один. Надо было: стоять с командой."));
+  assert.ok(!bad("Ошибка: ни один обс не стоял у входа. Надо было: стоять с командой."));
 });
