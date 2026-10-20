@@ -66,7 +66,10 @@ function opendota(url) {
   }
   if (p === `/players/${ACCOUNT}/matches`) {
     const hero = Number(url.searchParams.get("hero_id")) || null;
-    return history.filter((x) => !hero || x.hero_id === hero);
+    const days = Number(url.searchParams.get("date")) || 0;
+    // свежие игры: первые сыграны в последние дни, чтобы «Неделя» было с чем считать
+    return history.map((x, i) => (days ? { ...x, start_time: Math.floor(Date.now() / 1000) - 86400 * (i * 0.6 + 0.5) } : x))
+      .filter((x) => (!hero || x.hero_id === hero) && (!days || Date.now() / 1000 - x.start_time < days * 86400));
   }
   if (p === "/scenarios/itemTimings") {
     // по каждому купленному предмету — корзины по 5 минут
@@ -117,6 +120,8 @@ await context.addInitScript(([acc, other]) => {
   try {
     localStorage.setItem("account_id", String(acc));
     if (!localStorage.getItem(`cmp:${acc}`)) localStorage.setItem(`cmp:${acc}`, JSON.stringify([other]));
+    // задача с прошлой катки: не больше одной смерти до 10:00 (у Tusk в этой катке две — провал)
+    if (!localStorage.getItem(`goal:${acc}`)) localStorage.setItem(`goal:${acc}`, JSON.stringify({ text: "Цель на следующую катку: не больше одной смерти до 10:00", check: { group: "lane_deaths", metric: "lane_deaths", op: "<=", target: 1 }, match: 1, t: 1000 }));
   } catch { /* */ }
 }, [ACCOUNT, { match: 1, hero: "Invoker", hero_id: 74, won: true, kda: "12/3/9", t: 0, payload: { hero: "Invoker", won: true, kda: "12/3/9", duration: "41:02" } }]);
 let netDown = false; // офлайн-проверка: все запросы рвутся, как без сети
@@ -170,6 +175,13 @@ await step("overview", async () => {
   await page.locator(".fresh-match").click();
   await page.waitForSelector(".hero-head", { timeout: 20000 });
   await shot("overview");
+});
+await step("goal", async () => {
+  // задача с прошлой катки проверена по этой: у Tusk две смерти до 10:00 — не вышло
+  const text = await page.locator(".goal-result").innerText();
+  if (!/Не вышло/.test(text) || !/В этой катке: 2/.test(text)) throw new Error(`проверка задачи: ${text.replace(/\s+/g, " ")}`);
+  await page.locator(".goal-card").scrollIntoViewIfNeeded();
+  await shot("goal", { full: false });
 });
 await step("share", async () => {
   await page.locator(".share").click();

@@ -594,6 +594,8 @@ class MatchAnalyzer {
       moments: this.moments(),
       episodes: this.episodes(),
       map: this.mapData(),
+      progress: this.progressMetrics(),
+      next_rank: this.nextRank(),
       lane: this.laneDuel(),
       pro_build: proBuild,
       compare,
@@ -720,6 +722,7 @@ class MatchAnalyzer {
       problems,
       strengths,
       goal: problems.length && !problems[0].minor ? this.goalFor(problems[0]) : "Цель на следующую катку: повторить такой же матч — и ранг пойдёт вверх",
+      goal_check: problems.length && !problems[0].minor ? this.goalCheckFor(problems[0]) : null,
     };
   }
 
@@ -747,6 +750,95 @@ class MatchAnalyzer {
     if (g === "mid_runes") return "Цель на следующую катку: забрать минимум 2 руны силы до 12:00";
     if (g === "buyback_wasted") return "Цель на следующую катку: выкуп только когда файт ещё можно выиграть";
     return "Цель на следующую катку: исправить главную ошибку выше";
+  }
+
+  // Та же цель в проверяемом виде: какой показатель следующей катки и с каким порогом сравнить.
+  // null — цель словами, автоматически её не проверить
+  goalCheckFor(issue) {
+    const g = issue.group, r = this.rank;
+    const nextQ = (key) => {
+      const next = RANK_ORDER[RANK_ORDER.indexOf(this.bracket) + 1];
+      return (next && this.normFor(key, next)) || this.normFor(key);
+    };
+    const num = (m, op, target) => ({ group: g, metric: m, op, target });
+    if (g === "lane_farm") return num("lh10", ">=", Math.round((nextQ("lh10") || [0, 0, 45])[2]));
+    if (g === "lane_deaths") return num("lane_deaths", "<=", 1);
+    if (g === "solo_deaths") return num("solo_deaths", "<=", 0);
+    if (g === "dead_time") return num("dead_share", "<=", r.dead_share ? Math.round(r.dead_share.median * 100) / 100 : 0.12);
+    if (g === "gpm") return num("gpm", ">=", Math.round((nextQ("gpm") || [0, 0, 450])[2]));
+    if (g === "obs") return num("obs10", ">=", Math.round((r.obs10 ? r.obs10.median : 3) * 10) / 10);
+    if (g === "missed_fights" || g === "kp") return num("kp", ">=", 0.6);
+    if (g === "first_item") return num("first_item", "<=", Math.round((nextQ("first_item") || [0, 0, 900])[2]));
+    if (g === "idle") return num("idle_minutes", "<=", 0);
+    if (g === "lane_lost") return num("lane_nw10", ">=", 0);
+    if (g === "lane_gaps") return num("lane_gaps", "<=", 0);
+    if (g === "mid_runes") return num("runes12", ">=", 2);
+    if (g === "buyback_wasted") return num("wasted_buybacks", "<=", 0);
+    if (g === "lh20") return num("lh20", ">=", LH20_FLOOR[this.pos] || 80);
+    if (g === "farm_pace") return num("farm_pace", ">=", Math.round(FARM_PACE[this.bracket || "archon"] * (FARM_PACE_ROLE[this.pos] || 1) * 10) / 10);
+    if (g === "ward_gap") return num("ward_gap", "<=", 300);
+    if (g === "first_death") return num("first_deaths", "<=", 0);
+    if (g === "silent_deaths") return num("silent_deaths", "<=", 0);
+    if (g === "lead_deaths") return num("lead_deaths", "<=", 0);
+    if (g.startsWith("unused_")) return num(`unused:${g.slice(7)}`, "<=", 0);
+    if (g.startsWith("killer_")) return num(`killer:${g.slice(7)}`, "<=", 1);
+    return null;
+  }
+
+  // Измеримые показатели катки: по ним проверяются цели, считаются ачивки и прогресс к рангу
+  progressMetrics() {
+    const p = this.p, deaths = p.deaths_log || [];
+    const killers = {};
+    for (const d of deaths) if (d.key.startsWith("npc_dota_hero_")) killers[d.key] = (killers[d.key] || 0) + 1;
+    const nw10 = this.opponent && this.minutes >= 10 ? atMinute(p.networth_t, 10) - atMinute(this.opponent.networth_t, 10) : null;
+    const runes = Array.isArray(p.runes_log) ? p.runes_log.filter((x) => x.time <= 735 && POWER_RUNES.has(String(x.key))).length : null;
+    return {
+      pos: this.pos,
+      won: this.won,
+      minutes: this.minutes,
+      deaths: p.deaths,
+      kda: (p.kills + p.assists) / Math.max(1, p.deaths),
+      lane_deaths: deaths.filter((d) => d.time < LANING_END).length,
+      solo_deaths: deaths.filter((d) => d.time >= LANING_END && this.isSoloDeath(d.time)).length,
+      dead_share: (p.life_state_dead || 0) / Math.max(this.duration, 1),
+      gpm: p.gold_per_min,
+      xpm: p.xp_per_min,
+      kp: this.metrics.kp,
+      lh10: this.metrics.lh10,
+      lh20: this.minutes >= 20 ? atMinute(p.lh_t, 20) : null,
+      obs10: this.metrics.obs10,
+      first_item: this.metrics.first_item,
+      dmg_min: this.metrics.dmg_min,
+      deaths10: this.metrics.deaths10,
+      idle_minutes: sum(this.idleWindows().map(([s, e]) => e - s)),
+      lane_nw10: nw10,
+      lane_gaps: this.laneGapCount ?? null,
+      enemy_keys: this.enemies.map((e) => this.od.heroKey(e.hero_id)),
+      runes12: this.pos === 2 ? runes : null,
+      wasted_buybacks: this.wastedBuybacks ?? 0,
+      farm_pace: this.farmPace ?? null,
+      ward_gap: this.wardGap ?? null,
+      first_deaths: this.firstDeaths ?? 0,
+      silent_deaths: this.silentDeaths ?? 0,
+      lead_deaths: this.leadDeaths ?? 0,
+      unused: [...(this.unusedKeys || [])],
+      bought: [...new Set((p.purchase_log || []).map((x) => x.key))],
+      killers,
+    };
+  }
+
+  // Разрыв с медианой следующего ранга по ключевым показателям роли
+  nextRank() {
+    const next = RANK_ORDER[RANK_ORDER.indexOf(this.bracket) + 1];
+    if (!this.bracket || !next) return null;
+    const out = [];
+    for (const [key, m] of Object.entries(RANK_METRICS)) {
+      if (!m.roles.includes(this.pos)) continue;
+      const q = this.normFor(key, next);
+      if (!q) continue;
+      out.push({ key, what: m.what, need: q[2], lower: Boolean(m.lower) });
+    }
+    return out.length ? { rank: RANKS[next][0], rank_gen: RANKS[next][1], pos: this.pos, metrics: out } : null;
   }
 
   // ---------- про-сборки ----------
@@ -1316,7 +1408,7 @@ class MatchAnalyzer {
         `${n} ${deathsWord(n)} от ${k.hero}${how ? `, в основном ${how}` : ""}`,
         action || `Держись дальше от ${k.hero} и не выходи один против этого героя`,
         k.counters.length
-          ? `Цель на следующую катку: ${k.counters[0]} к 20-й минуте, если снова против ${k.hero}`
+          ? `Цель на следующую катку: не больше одной смерти от ${k.hero}, если снова против него (помогут ${k.counters[0]})`
           : `Цель на следующую катку: не больше одной смерти от ${k.hero}`);
     }
   }
@@ -1635,6 +1727,7 @@ class MatchAnalyzer {
     for (let m = 2; m <= 10; m++) {
       if (lh[m] - lh[m - 1] === 0 && !dead.has(m - 1) && !dead.has(m) && !busy.has(m - 1)) empty.push(m);
     }
+    this.laneGapCount = empty.length;
     if (empty.length < 2) return;
     const n = empty.length;
     const times = minuteRanges(empty);
@@ -1685,6 +1778,7 @@ class MatchAnalyzer {
     }
     if (free < 4) return;
     const pace = gained / free;
+    this.farmPace = Math.round(pace * 10) / 10;
     const target = Math.round(FARM_PACE[this.bracket || "archon"] * FARM_PACE_ROLE[this.pos] * 10) / 10;
     if (pace >= target) return;
     const rankGen = this.bracket ? ` на ранге ${RANKS[this.bracket][0]}` : "";
@@ -1710,6 +1804,7 @@ class MatchAnalyzer {
     const deadInGap = sum((this.p.deaths_log || []).map((d) =>
       Math.max(0, Math.min(d.time + (d.time_dead ?? 30), gap[2]) - Math.max(d.time, gap[1]))));
     const effective = gap[0] - deadInGap;
+    this.wardGap = effective;
     if (effective < WARD_GAP) return;
     const mins = Math.round(gap[0] / 60);
     this.micro(VISION, mins >= 12 ? BAD : WARN, "micro_ward_gap", { from: mmss(gap[1]), to: mmss(gap[2]), mins });
@@ -1791,6 +1886,7 @@ class MatchAnalyzer {
           : `Поставь ${item} на удобную кнопку и нажимай, как только тебя начинают фокусить — не надо ждать последних 100 ХП`,
         `Цель на следующую катку: в каждой драке нажать ${item} раньше, чем умрёшь`);
     }
+    this.silentDeaths = silent.length;
     if (silent.length >= 2) {
       const n = silent.length;
       const times = silent.slice(0, 3).map(mmss).join(", ");
@@ -1818,6 +1914,7 @@ class MatchAnalyzer {
       teamFights++;
       if (best.who === this.p) first.push(best.t);
     }
+    this.firstDeaths = first.length;
     if (first.length < 3 || first.length / teamFights < 0.45) return;
     const n = first.length;
     const times = first.slice(0, 4).map(mmss).join(", ");
@@ -1841,6 +1938,7 @@ class MatchAnalyzer {
       const d = deaths.find((x) => x.time > b.time && x.time <= b.time + BUYBACK_WASTE_WINDOW);
       if (d) wasted.push([b.time, d.time]);
     }
+    this.wastedBuybacks = wasted.length;
     if (!wasted.length) return;
     const [bt, dt] = wasted[0];
     const cost = Math.round(200 + (atMinute(this.p.networth_t, Math.floor(bt / 60)) || 0) / 13);
@@ -1873,6 +1971,7 @@ class MatchAnalyzer {
     if (this.dominant || !this.teamAdv.length) return;
     const lead = (this.p.deaths_log || []).filter((d) => d.time >= LEAD_DEATH_MIN_TIME &&
       atMinute(this.teamAdv, Math.floor(d.time / 60)) >= LEAD_DEATH_GOLD);
+    this.leadDeaths = lead.length;
     if (lead.length < 2) return;
     const n = lead.length;
     const times = lead.slice(0, 4).map((d) => mmss(d.time)).join(", ");
@@ -1881,7 +1980,7 @@ class MatchAnalyzer {
     this.issue("lead_deaths", n * 600, "Умирал при перевесе",
       `${n} ${deathsWord(n)} в моменты, когда команда вела по золоту на ${num(LEAD_DEATH_GOLD)}+ (${times})`,
       "С перевесом тебя должны ловить, а не ты бегать: стой с командой, бери объекты и не лезь в туман один",
-      "Цель на следующую катку: при перевесе ни одной смерти вне файта");
+      "Цель на следующую катку: ни одной смерти, когда команда ведёт по золоту на 8 000+");
   }
 
   // Купил предмет с активкой и ни разу не нажал за всю игру
@@ -2393,6 +2492,7 @@ class MatchAnalyzer {
     const p = this.p;
     return {
       match_id: this.match.match_id,
+      start_time: this.match.start_time ?? null,
       slot: p.player_slot,
       game_mode: this.match.game_mode ?? null,
       hero: this.hero,
@@ -2430,6 +2530,76 @@ class MatchAnalyzer {
       team_gold_adv: this.teamAdv,
     };
   }
+}
+
+// ---------- прогресс: цели, ачивки, ранг ----------
+
+// Проверка цели прошлой катки по показателям новой: done, failed или skip (в этой катке не проверить)
+export function checkGoal(check, m) {
+  if (!check || !m) return null;
+  let value;
+  if (check.metric.startsWith("unused:")) {
+    const key = check.metric.slice(7);
+    if (!(m.bought || []).includes(key)) return { status: "skip" };
+    value = (m.unused || []).includes(key) ? 1 : 0;
+  } else if (check.metric.startsWith("killer:")) {
+    const key = check.metric.slice(7);
+    if (!(m.enemy_keys || []).includes(key)) return { status: "skip" };
+    value = (m.killers || {})[key] || 0;
+  } else {
+    value = m[check.metric];
+  }
+  if (value == null || Number.isNaN(value)) return { status: "skip" };
+  const ok = check.op === "<=" ? value <= check.target : value >= check.target;
+  return { status: ok ? "done" : "failed", value };
+}
+
+// Показатель катки для людей: проценты, время, знак
+export function formatMetric(metric, v) {
+  if (v == null) return "—";
+  if (["dead_share", "kp"].includes(metric)) return `${Math.round(v * 100)}%`;
+  if (["first_item", "ward_gap"].includes(metric)) return mmss(v);
+  if (metric === "lane_nw10") return signed(v);
+  if (["obs10", "farm_pace", "deaths10"].includes(metric)) return tenths(v);
+  if (metric.startsWith("unused:")) return v ? "не нажат" : "нажат";
+  if (metric.startsWith("killer:")) return `${v} ${plural(v, "смерть", "смерти", "смертей")}`;
+  return num(Math.round(v));
+}
+
+// Показатель из норм рангов (lh10, gpm, kp…) в том же виде, что в разборе
+export function formatRankMetric(key, v) {
+  const m = RANK_METRICS[key];
+  return m && v != null ? m.fmt(v) : "—";
+}
+
+// Ачивки за прогресс, а не за победы. streak — подряд по разобранным каткам (неподходящие по роли пропускаются),
+// count — сколько всего. history — разобранные катки от старых к новым: [{m: progressMetrics}]
+export const ACHIEVEMENTS = [
+  { id: "clean_lane", title: "Чистая линия", desc: "3 катки подряд не больше одной смерти до 10:00", kind: "streak", need: 3, test: (m) => m.lane_deaths <= 1 },
+  { id: "no_feed", title: "Без фида", desc: "3 катки подряд не больше 4 смертей", kind: "streak", need: 3, test: (m) => m.deaths <= 4 },
+  { id: "teamplayer", title: "В каждой драке", desc: "3 катки подряд KP 60% и выше", kind: "streak", need: 3, test: (m) => m.kp != null && m.kp >= 0.6, applies: (m) => m.kp != null },
+  { id: "buttons", title: "Всё прожато", desc: "5 каток подряд без смертей с непрожатыми кнопками", kind: "streak", need: 5, test: (m) => !m.silent_deaths && !(m.unused || []).length },
+  { id: "farmer", title: "Фермер", desc: "3 катки на коре с 45+ крипами к 10:00", kind: "count", need: 3, test: (m) => m.lh10 >= 45, applies: (m) => m.pos <= 3 && m.lh10 != null },
+  { id: "eyes", title: "Глаза команды", desc: "3 катки на саппорте с 4+ обсами за 10 минут", kind: "count", need: 3, test: (m) => m.obs10 >= 4, applies: (m) => m.pos >= 4 },
+  { id: "alive", title: "Живучий", desc: "3 катки, где мёртвым был меньше 10% игры", kind: "count", need: 3, test: (m) => m.dead_share < 0.1 },
+  { id: "goals5", title: "Слово держит", desc: "5 выполненных задач тренера", kind: "goals", need: 5 },
+];
+
+export function achievements(history, goalsDone = 0) {
+  return ACHIEVEMENTS.map((a) => {
+    let have = 0, best = 0;
+    if (a.kind === "goals") have = best = goalsDone;
+    else {
+      for (const { m } of history || []) {
+        if (!m || (a.applies && !a.applies(m))) continue;
+        if (a.kind === "count") { if (a.test(m)) have++; best = have; continue; }
+        have = a.test(m) ? have + 1 : 0;
+        best = Math.max(best, have);
+      }
+    }
+    // серия: прогресс показываем по текущей серии, а открыта ачивка, если лучшая серия добралась до цели
+    return { id: a.id, title: a.title, desc: a.desc, need: a.need, have: Math.min(have, a.need), done: best >= a.need };
+  });
 }
 
 // Тайминги предметов против всех игр на герое. rows — OpenDota scenarios/itemTimings:

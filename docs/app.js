@@ -1,7 +1,8 @@
 // Telegram Mini App: разбор матча Dota 2 внутри Телеграма.
 import {
-  analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, CATEGORIES, BAD, WARN, GOOD,
-} from "./engine.js?v=17";
+  analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric,
+  CATEGORIES, BAD, WARN, GOOD,
+} from "./engine.js?v=18";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -577,6 +578,7 @@ async function profileScreen() {
       h("div", { class: "small muted" }, `${recent.filter((m) => (m.player_slot < 128) === m.radiant_win).length} побед из ${recent.length}`),
     ),
     trendBlock(recent),
+    ...progressBlocks(account),
     topHeroes.length > 0 && h("h2", {}, "Любимые герои"),
     topHeroes.length > 0 && h("div", { class: "card" }, ...topHeroes.map((hx) => {
       const wr = hx.games ? Math.round((hx.win / hx.games) * 100) : 0;
@@ -1001,6 +1003,7 @@ function analysisScreen(a) {
   };
   a._select = (i) => { select(i); if (lens) lens.place(i); };
   if (COACH_URL) rememberForCompare(a);
+  if (a._goalResult === undefined) a._goalResult = trackProgress(a);
   TABS.forEach(([name]) => tabs.append(h("button", { class: "tab", role: "tab" }, name)));
   lens = glassBar(tabs, ".tab", { live: true, onPick: select });
   // Свайп по содержимому листает вкладки; графики со своим жестом не трогаем
@@ -1483,6 +1486,169 @@ function chatBlock(a) {
   };
 }
 
+// ---------- прогресс: задачи, ачивки, неделя, ранг ----------
+
+const PROGRESS_KEEP = 60;
+const progKey = (acc) => `prog:${acc}`;
+const goalKey = (acc) => `goal:${acc}`;
+const goalHistKey = (acc) => `goal_hist:${acc}`;
+
+// Катка уходит в историю прогресса, а задача с прошлой катки проверяется по её цифрам.
+// Задача одна: её ставит самая свежая разобранная катка, старые катки задачу не трогают
+function trackProgress(a) {
+  const acc = a.hist_self && a.hist_self.account;
+  if (!acc || !a.progress) return null;
+  const t = a.facts.start_time || 0;
+  const top = ((a.summary || {}).problems || [])[0];
+  const list = localJson(progKey(acc), []).filter((x) => x.match !== a.facts.match_id);
+  list.push({ match: a.facts.match_id, t, hero_id: a.facts.hero_id, hero: a.facts.hero, won: a.facts.won, score: a.overall,
+    kda: a.facts.kda, m: a.progress, problem: top && !top.minor ? top.title : null, next_rank: a.next_rank });
+  list.sort((x, y) => x.t - y.t);
+  safeLocal.set(progKey(acc), JSON.stringify(list.slice(-PROGRESS_KEEP)));
+
+  const hist = localJson(goalHistKey(acc), []);
+  let result = hist.find((g) => g.checked === a.facts.match_id) || null;
+  let cur = localJson(goalKey(acc), null);
+  if (!result && cur && cur.match !== a.facts.match_id && t > cur.t) {
+    const r = checkGoal(cur.check, a.progress);
+    result = { text: cur.text, check: cur.check, from: cur.match, checked: a.facts.match_id, status: r ? r.status : "skip", value: r ? r.value : null, t };
+    hist.unshift(result);
+    safeLocal.set(goalHistKey(acc), JSON.stringify(hist.slice(0, 30)));
+  }
+  const check = (a.summary || {}).goal_check;
+  if (check && (!cur || t >= cur.t)) {
+    cur = { text: a.summary.goal, check, match: a.facts.match_id, t };
+    safeLocal.set(goalKey(acc), JSON.stringify(cur));
+  }
+  return result;
+}
+
+const GOAL_STATUS = { done: "Выполнено", failed: "Не вышло", skip: "В этой катке не проверить" };
+const goalText = (text) => String(text || "").replace(/^Цель на следующую катку:\s*/, "");
+
+// Задача с прошлой катки (итог) и задача на следующую
+function goalBlock(a) {
+  const r = a._goalResult;
+  const next = (a.summary || {}).goal_check && (a.summary || {}).goal;
+  if (!r && !next) return null;
+  return h("section", { class: "card goal-card" },
+    r && h("div", { class: `goal-result ${r.status}` },
+      h("div", { class: "goal-head" }, h("span", {}, "Задача с прошлой катки"), h("b", {}, GOAL_STATUS[r.status] || "")),
+      h("p", {}, goalText(r.text)),
+      r.value != null && h("p", { class: "small muted" }, `В этой катке: ${formatMetric(r.check.metric, r.value)}`)),
+    next && h("div", { class: "goal-next" },
+      h("div", { class: "goal-head" }, h("span", {}, "Задача на следующую катку")),
+      h("p", {}, goalText(next)),
+      h("p", { class: "small muted" }, "Проверю сам, когда разберёшь следующую игру.")));
+}
+
+// Профиль: задачи, ачивки, неделя и что подтянуть до следующего ранга
+function progressBlocks(account) {
+  const list = localJson(progKey(account), []);
+  const hist = localJson(goalHistKey(account), []);
+  const cur = localJson(goalKey(account), null);
+  const done = hist.filter((g) => g.status === "done").length;
+  const checked = hist.filter((g) => g.status !== "skip").length;
+  const blocks = [];
+
+  blocks.push(h("h2", {}, "Задачи тренера"));
+  blocks.push(h("div", { class: "card goals" },
+    cur ? h("div", { class: "goal-next" }, h("div", { class: "goal-head" }, h("span", {}, "Сейчас")), h("p", {}, goalText(cur.text)))
+      : h("p", { class: "muted" }, "Разбери катку — тренер поставит задачу на следующую и сам проверит."),
+    checked > 0 && h("p", { class: "small muted" }, `Выполнено ${done} из ${checked}`),
+    ...hist.filter((g) => g.status !== "skip").slice(0, 6).map((g) => h("div", { class: `goal-row ${g.status}` },
+      h("i", { "aria-hidden": "true" }), h("span", { class: "grow" }, goalText(g.text)),
+      h("b", {}, g.value != null ? formatMetric(g.check.metric, g.value) : "")))));
+
+  const ach = achievements(list, done);
+  blocks.push(h("h2", {}, "Ачивки"));
+  blocks.push(h("div", { class: "ach-grid" }, ...ach.map((x) => h("div", { class: `ach ${x.done ? "on" : ""}`, title: x.desc },
+    h("div", { class: "ach-medal", "aria-hidden": "true" }),
+    h("b", {}, x.title),
+    h("span", {}, x.desc),
+    !x.done && h("div", { class: "ach-bar" }, h("i", { "data-pct": Math.round((x.have / x.need) * 100) })),
+    h("em", {}, x.done ? "Открыто" : `${x.have} из ${x.need}`)))));
+  if (!list.length) blocks.push(h("p", { class: "small muted" }, "Ачивки считаются по разобранным каткам: открывай свои игры."));
+
+  const rank = rankGoalBlock(list);
+  if (rank) blocks.push(rank);
+  blocks.push(weekBlock(account, list));
+  return blocks;
+}
+
+// До следующего ранга: средние последних разобранных каток на той же позиции против медианы ранга выше
+function rankGoalBlock(list) {
+  const last = [...list].reverse().find((x) => x.next_rank);
+  if (!last) return null;
+  const nr = last.next_rank;
+  const same = list.filter((x) => x.m && x.m.pos === nr.pos).slice(-10);
+  const rows = nr.metrics.map((k) => {
+    const vals = same.map((x) => x.m[k.key]).filter((v) => v != null && Number.isFinite(v));
+    if (vals.length < 2) return null;
+    const avg = vals.reduce((s, v) => s + v, 0) / vals.length;
+    const ok = k.lower ? avg <= k.need : avg >= k.need;
+    return h("div", { class: "score-row trend" },
+      h("span", {}, k.what),
+      h("span", { class: "muted" }, `${formatRankMetric(k.key, avg)} → ${formatRankMetric(k.key, k.need)}`),
+      h("b", { class: ok ? "win-text" : "loss-text" }, ok ? "✓" : "!"));
+  }).filter(Boolean);
+  if (!rows.length) return null;
+  return h("div", {}, h("h2", {}, `До ранга ${nr.rank}`), h("div", { class: "card" }, ...rows,
+    h("p", { class: "small muted" }, `Твоё среднее за последние ${same.length} ${plural(same.length, "разобранную катку", "разобранные катки", "разобранных каток")} на этой позиции → медиана игроков ранга ${nr.rank}.`)));
+}
+
+const WEEK_FIELDS = ["hero_id", "kills", "deaths", "assists", "gold_per_min", "duration", "player_slot", "radiant_win", "start_time", "game_mode"];
+
+// Неделя: эта неделя против прошлой по играм OpenDota, лучшая и худшая катка, главная ошибка недели
+function weekBlock(account, list) {
+  const box = h("div", {}, h("h2", {}, "Неделя"), h("div", { class: "card small muted" }, "Собираю игры за две недели..."));
+  const seq = navSeq;
+  (async () => {
+    const rows = ((await api(`/players/${account}/matches?date=14&${WEEK_FIELDS.map((f) => `project=${f}`).join("&")}`)) || [])
+      .filter((m) => m.game_mode !== TURBO_MODE && m.duration >= 600);
+    if (stale(seq)) return;
+    const now = Date.now() / 1000, week = 7 * 86400;
+    const cur = rows.filter((m) => now - m.start_time < week), prev = rows.filter((m) => now - m.start_time >= week);
+    if (!cur.length) { box.replaceChildren(h("h2", {}, "Неделя"), h("div", { class: "card muted" }, "На этой неделе игр не было.")); return; }
+    const won = (m) => (m.player_slot < 128) === m.radiant_win;
+    const kda = (m) => (m.kills + m.assists) / Math.max(1, m.deaths);
+    const avg = (xs, f) => (xs.length ? xs.reduce((s, m) => s + f(m), 0) / xs.length : null);
+    const line = (label, f, fmt, lowerBetter = false) => {
+      const a = avg(cur, f), b = avg(prev, f);
+      const better = b == null ? null : lowerBetter ? a < b : a > b;
+      return h("div", { class: "score-row trend" }, h("span", {}, label),
+        h("span", { class: "muted" }, b == null ? fmt(a) : `${fmt(b)} → ${fmt(a)}`),
+        h("b", { class: better == null ? "muted" : better ? "win-text" : "loss-text" }, better == null ? "" : better ? "▲" : "▼"));
+    };
+    const best = cur.reduce((x, m) => (kda(m) > kda(x) ? m : x));
+    const worst = cur.reduce((x, m) => (kda(m) < kda(x) ? m : x));
+    // главная ошибка недели: чаще всего первая проблема в разобранных катках этой недели
+    const counts = new Map();
+    for (const x of list) if (x.problem && now - x.t < week) counts.set(x.problem, (counts.get(x.problem) || 0) + 1);
+    const top = [...counts].sort((a, b) => b[1] - a[1])[0];
+    box.replaceChildren(h("h2", {}, "Неделя"), h("div", { class: "card" },
+      h("div", { class: "profile-metrics" },
+        h("div", { class: "metric" }, h("b", {}, String(cur.length)), h("span", {}, plural(cur.length, "игра", "игры", "игр"))),
+        h("div", { class: "metric" }, h("b", {}, `${Math.round((cur.filter(won).length / cur.length) * 100)}%`), h("span", {}, "побед")),
+        h("div", { class: "metric" }, h("b", {}, avg(cur, kda).toFixed(1)), h("span", {}, "KDA"))),
+      line("Винрейт", (m) => (won(m) ? 100 : 0), (v) => `${Math.round(v)}%`),
+      line("Смертей за игру", (m) => m.deaths, (v) => v.toFixed(1), true),
+      line("GPM", (m) => m.gold_per_min, (v) => String(Math.round(v))),
+      top && h("div", { class: "week-mistake" }, h("span", {}, "Главная ошибка недели"), h("b", {}, top[0]),
+        h("em", {}, `в ${top[1]} ${plural(top[1], "разобранной катке", "разобранных катках", "разобранных катках")}`)),
+      h("div", { class: "week-pair" },
+        weekMatch("Лучшая", best, account), cur.length > 1 && weekMatch("Худшая", worst, account)),
+      h("p", { class: "small muted" }, prev.length ? `Эта неделя против прошлой (${prev.length} ${plural(prev.length, "игра", "игры", "игр")}). Турбо не считаю.` : "Прошлой недели для сравнения нет.")));
+  })().catch(() => { if (!stale(seq)) box.replaceChildren(h("h2", {}, "Неделя"), h("div", { class: "card muted" }, "OpenDota не отдала игры за неделю.")); });
+  return box;
+}
+
+function weekMatch(label, m, account) {
+  return h("button", { class: "week-match", type: "button", onclick: () => { haptic(); go(matchScreen, m.match_id, null, Number(account)); } },
+    h("span", { class: "muted small" }, label), heroImg(m.hero_id, "hero-img small"),
+    h("b", {}, dictionary.heroName(m.hero_id)), h("span", { class: "small muted" }, `${m.kills}/${m.deaths}/${m.assists}`));
+}
+
 // ---------- сравнение двух каток ----------
 
 const compareKey = (a) => `cmp:${(a.hist_self && a.hist_self.account) || "anon"}`;
@@ -1532,6 +1698,7 @@ function overviewTab(a) {
   const strengths = (s.strengths || []).slice(0, 2);
   return h("div", {},
     who && h("div", { class: "who" }, who, s.role_sure === false && h("span", { class: "muted" }, " · роль определена неточно")),
+    goalBlock(a),
     coachBlock(a),
     COACH_URL && chatFor(a).box,
     COACH_URL && compareBlock(a),

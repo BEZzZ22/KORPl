@@ -147,3 +147,44 @@ test("хронология: смерть на линии подписана ли
   for (const m of lane) assert.doesNotMatch(m.text, /соло|одного|без команды|без союзников/);
   assert.ok(lane.some((m) => /\(размен\)/.test(m.text)));
 });
+
+// ---------- прогресс ----------
+import { checkGoal, achievements, formatMetric } from "../docs/engine.js";
+
+test("прогресс: показатели катки и цель в проверяемом виде", () => {
+  const a = run(copy(), "Tusk");
+  const m = a.progress;
+  assert.equal(m.deaths, 19);
+  assert.equal(typeof m.lane_deaths, "number");
+  assert.ok(m.dead_share > 0 && m.dead_share < 1);
+  assert.ok(Array.isArray(m.enemy_keys) && m.enemy_keys.length === 5);
+  assert.equal(a.facts.start_time, base.start_time);
+  // главная проблема Tusk — смерти от Tiny: цель проверяется по смертям от него
+  if (a.summary.goal_check) assert.ok(typeof a.summary.goal_check.metric === "string");
+});
+
+test("checkGoal: выполнено, провалено и нельзя проверить", () => {
+  const m = { lane_deaths: 1, kp: 0.5, bought: ["blink"], unused: [], enemy_keys: ["npc_dota_hero_tiny"], killers: { npc_dota_hero_tiny: 3 } };
+  assert.deepEqual(checkGoal({ metric: "lane_deaths", op: "<=", target: 1 }, m), { status: "done", value: 1 });
+  assert.deepEqual(checkGoal({ metric: "kp", op: ">=", target: 0.6 }, m), { status: "failed", value: 0.5 });
+  assert.deepEqual(checkGoal({ metric: "lh10", op: ">=", target: 45 }, m), { status: "skip" });
+  assert.deepEqual(checkGoal({ metric: "unused:black_king_bar", op: "<=", target: 0 }, m), { status: "skip" });
+  assert.deepEqual(checkGoal({ metric: "unused:blink", op: "<=", target: 0 }, m), { status: "done", value: 0 });
+  assert.deepEqual(checkGoal({ metric: "killer:npc_dota_hero_tiny", op: "<=", target: 1 }, m), { status: "failed", value: 3 });
+  assert.deepEqual(checkGoal({ metric: "killer:npc_dota_hero_pudge", op: "<=", target: 1 }, m), { status: "skip" });
+  assert.equal(formatMetric("kp", 0.5), "50%");
+  assert.equal(formatMetric("first_item", 905), "15:05");
+});
+
+test("ачивки: серия считается подряд, неподходящие по роли пропускаются", () => {
+  const h = [{ m: { lane_deaths: 0, deaths: 3, pos: 1, lh10: 50 } }, { m: { lane_deaths: 2, deaths: 9, pos: 5 } },
+    { m: { lane_deaths: 1, deaths: 4, pos: 1, lh10: 46 } }, { m: { lane_deaths: 0, deaths: 2, pos: 1, lh10: 30 } }, { m: { lane_deaths: 1, deaths: 4, pos: 2, lh10: 60 } }];
+  const by = Object.fromEntries(achievements(h, 6).map((x) => [x.id, x]));
+  assert.equal(by.clean_lane.done, true);
+  assert.equal(by.clean_lane.have, 3);
+  assert.equal(by.no_feed.done, true);
+  assert.equal(by.farmer.have, 3);
+  assert.equal(by.farmer.done, true);
+  assert.equal(by.eyes.have, 0);
+  assert.equal(by.goals5.done, true);
+});
