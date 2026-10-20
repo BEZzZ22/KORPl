@@ -40,8 +40,9 @@ const history = Array.from({ length: 24 }, (_, i) => ({
   kills: 3 + (i % 7), deaths: 4 + (i % 5), assists: 8 + (i % 6), duration: 1900 + i * 37, start_time: match.start_time - 86400 * (i + 1),
   game_mode: 22, gold_per_min: 380 + ((i * 37) % 140), xp_per_min: 450 + ((i * 29) % 120), last_hits: 90 + ((i * 13) % 80),
 }));
+// Свежая катка: закончилась пару часов назад, чтобы на главной был блок «Последняя катка»
 const recent = [{ match_id: match.match_id, player_slot: ME.player_slot, radiant_win: match.radiant_win, hero_id: ME.hero_id,
-  kills: ME.kills, deaths: ME.deaths, assists: ME.assists, duration: match.duration, start_time: match.start_time, game_mode: match.game_mode,
+  kills: ME.kills, deaths: ME.deaths, assists: ME.assists, duration: match.duration, start_time: Math.floor(Date.now() / 1000) - match.duration - 7200, game_mode: match.game_mode,
   gold_per_min: ME.gold_per_min, xp_per_min: ME.xp_per_min, last_hits: ME.last_hits }, ...history.slice(0, 19)];
 const itemIds = Object.fromEntries(Object.keys(constants.items).map((k) => [k, k]));
 function opendota(url) {
@@ -66,6 +67,11 @@ function opendota(url) {
   if (p === `/players/${ACCOUNT}/matches`) {
     const hero = Number(url.searchParams.get("hero_id")) || null;
     return history.filter((x) => !hero || x.hero_id === hero);
+  }
+  if (p === "/scenarios/itemTimings") {
+    // по каждому купленному предмету — корзины по 5 минут
+    const keys = [...new Set((ME.purchase_log || []).map((x) => x.key))];
+    return keys.flatMap((item, i) => [900, 1200, 1500, 1800, 2100, 2400].map((time, j) => ({ hero_id: ME.hero_id, item, time, games: String(5 + ((i + j * 3) % 9)), wins: String(2 + ((i + j) % 5)) })));
   }
   if (p.startsWith("/request/") || p.endsWith("/refresh")) return {};
   return null;
@@ -96,7 +102,7 @@ const PLACEHOLDER = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAA
 const errors = [];
 const browser = await chromium.launch({ headless: !process.env.UI_HEADED });
 const context = await browser.newContext({
-  viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true, locale: "ru-RU",
+  viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true, locale: "ru-RU", serviceWorkers: "block",
   colorScheme: "dark", reducedMotion: process.env.UI_MOTION ? "no-preference" : "reduce",
 });
 // Привязанный аккаунт и одна уже открытая раньше катка, чтобы было с чем сравнить
@@ -150,9 +156,17 @@ await step("home", async () => {
   await shot("home");
 });
 await step("overview", async () => {
-  await page.locator(".match-item").first().click();
+  // свежая катка открывается из большого блока сверху
+  await page.locator(".fresh-match").click();
   await page.waitForSelector(".hero-head", { timeout: 20000 });
   await shot("overview");
+});
+await step("share", async () => {
+  await page.locator(".share").click();
+  await page.waitForSelector(".sheet-preview img", { timeout: 15000 });
+  await shot("share", { full: false });
+  await page.locator(".sheet-close").click();
+  await page.waitForSelector(".sheet-backdrop", { state: "detached", timeout: 5000 });
 });
 await step("coach", async () => {
   await page.locator(".coach-btn").click();
@@ -189,13 +203,25 @@ await step("moment-ask", async () => {
   await page.waitForFunction((n) => document.querySelectorAll(".chat-msg.assistant:not(.typing)").length > n, before, { timeout: 10000 });
   await page.locator(".tabs .tab").nth(0).click();
 });
-for (const [i, name] of ["phases", "deaths", "build", "charts"].entries()) {
+for (const [i, name] of ["phases", "deaths", "map", "build", "charts"].entries()) {
   await step(name, async () => {
     await page.locator(".tabs .tab").nth(i + 1).click();
     await page.waitForTimeout(250);
     await shot(name);
   });
 }
+await step("draft", async () => {
+  await page.locator('.tabbtn[data-tab="home"]').click();
+  await page.locator(".draft-entry").click();
+  await page.waitForSelector(".draft-hero", { timeout: 10000 });
+  for (const name of ["Tiny", "Clinkz", "Enigma"]) {
+    await page.locator('input[type="search"]').fill(name);
+    await page.locator(".draft-hero", { hasText: name }).first().click();
+  }
+  await page.locator(".draft-go").click();
+  await page.waitForSelector(".draft-row", { timeout: 15000 });
+  await shot("draft");
+});
 await step("profile", async () => {
   await page.locator('.tabbtn[data-tab="profile"]').click();
   await page.waitForSelector(".profile-card", { timeout: 10000 });

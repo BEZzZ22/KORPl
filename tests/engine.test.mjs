@@ -83,3 +83,59 @@ test("Рошан, забранный врагами после нашей выи
   const a = run(m, "Tusk");
   assert.ok(a.findings.some((f) => f.kind === "micro" && /Рошан/.test(f.text)));
 });
+
+// ---------- карта, линия, тайминги, драфт ----------
+import { itemTimings, draftAdvice } from "../docs/engine.js";
+
+test("карта: смерти в драках и обсы команды с координатами", () => {
+  const a = run(copy(), "Tusk");
+  assert.ok(a.map.deaths.length > 0);
+  for (const d of a.map.deaths) assert.ok(d.x >= 64 && d.x <= 192 && d.y >= 64 && d.y <= 192 && typeof d.t === "number");
+  assert.ok(a.map.wards.length > 0);
+  assert.ok(a.map.wards.some((w) => w.mine) || a.map.wards.every((w) => !w.mine));
+  assert.equal(a.map.radiant, true);
+});
+
+test("дуэль на линии: каждые 2 минуты до 10:00, обе стороны", () => {
+  const a = run(copy(), "Invoker");
+  assert.equal(a.lane.opponent, a.facts.lane_opponent);
+  assert.deepEqual(a.lane.rows.map((r) => r.m), [2, 4, 6, 8, 10]);
+  for (const r of a.lane.rows) for (const k of ["lh", "nw", "xp"]) assert.ok(r[k].every((v) => typeof v === "number"), `${k} ${r.m}`);
+});
+
+test("тайминги: медиана по играм, вердикт и винрейт до и после", () => {
+  const rows = [
+    { item: "black_king_bar", time: 1200, games: "10", wins: "7" },
+    { item: "black_king_bar", time: 1500, games: "20", wins: "12" },
+    { item: "black_king_bar", time: 1800, games: "30", wins: "12" },
+    { item: "blink", time: 900, games: "3", wins: "2" },
+  ];
+  const out = itemTimings([{ key: "black_king_bar", item: "Black King Bar", time: 1900 }, { key: "blink", item: "Blink Dagger", time: 800 }, { key: "black_king_bar", item: "Black King Bar", time: 2500 }], rows);
+  assert.equal(out.length, 1); // у Blink мало игр, повтор BKB не считается
+  assert.equal(out[0].usual, 1500);
+  assert.equal(out[0].verdict, "late");
+  assert.equal(out[0].wr_by, 63);
+  assert.equal(out[0].wr_after, 40);
+});
+
+test("драфт: лучший свой герой против врагов и предметы против их механик", () => {
+  const enemies = [6, 1]; // Drow Ranger, Anti-Mage — без механик в базе пусть будет только один
+  const pool = [{ hero_id: 100, games: 40, win: 22 }, { hero_id: 74, games: 30, win: 12 }, { hero_id: 21, games: 2, win: 2 }];
+  const matchups = {
+    100: [{ hero_id: 6, games_played: 100, wins: 60 }, { hero_id: 1, games_played: 80, wins: 44 }],
+    74: [{ hero_id: 6, games_played: 100, wins: 40 }, { hero_id: 1, games_played: 80, wins: 36 }],
+    21: [{ hero_id: 6, games_played: 5, wins: 5 }],
+  };
+  const kb = { heroes: { [od.heroKey(56)]: ["invis"] }, mechanics: { invis: { name: "невидимость", core: ["dust"], support: ["dust", "ward_sentry"], roles: ["core", "support"] } } };
+  const out = draftAdvice({ enemies: [...enemies, 56], pool, matchups, knowledge: kb, od, role: "support" });
+  assert.deepEqual(out.picks.map((p) => p.hero_id), [100, 74]); // у 21 мало игр в матчапах
+  assert.equal(out.picks[0].vs[0].hero_id, 6);
+  assert.deepEqual(out.items.map((i) => i.key), ["dust", "ward_sentry"]);
+  assert.equal(out.items[0].why, "невидимость");
+});
+
+test("словарь: список героев по алфавиту", () => {
+  const list = od.heroList();
+  assert.ok(list.length > 100);
+  assert.ok(list.every((h, i) => i === 0 || list[i - 1].name.localeCompare(h.name) <= 0));
+});

@@ -343,6 +343,8 @@ export function createDictionary({ heroes, items, abilities }) {
   }
   const od = {
     items,
+    heroList: () => Object.values(heroes).map((h) => ({ id: h.id, name: h.localized_name, img: h.img }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
     heroName: (id) => heroNames[id] ?? `герой #${id}`,
     heroKey: (id) => heroKeys[id] ?? "",
     heroImage: (id) => heroImages[id],
@@ -591,6 +593,8 @@ class MatchAnalyzer {
       phases: this.phases(),
       moments: this.moments(),
       episodes: this.episodes(),
+      map: this.mapData(),
+      lane: this.laneDuel(),
       pro_build: proBuild,
       compare,
       verdict: this.verdict(scores, overall),
@@ -2288,6 +2292,50 @@ class MatchAnalyzer {
       .sort((a, b) => a.time - b.time).map(({ weight, ...e }) => e);
   }
 
+  // ---------- карта и линия ----------
+
+  // Точки для миникарты: где умирал в драках (OpenDota даёт позицию только для смертей в драках)
+  // и где стояли обсы команды: свои отдельно, снесённые врагом отдельно. Координаты — клетки карты 64..192
+  mapData() {
+    const idx = this.match.players.indexOf(this.p);
+    const deaths = [];
+    for (const tf of this.match.teamfights || []) {
+      for (const [x, ys] of Object.entries(((tf.players || [])[idx] || {}).deaths_pos || {})) {
+        for (const [y, n] of Object.entries(ys)) {
+          for (let i = 0; i < n; i++) deaths.push({ x: parseFloat(x), y: parseFloat(y), t: this.fightDeathTime(tf), enemy_half: enemyHalf(parseFloat(x), parseFloat(y), this.p.isRadiant) });
+        }
+      }
+    }
+    const wards = [];
+    for (const a of this.allies) {
+      const left = new Map((a.obs_left_log || []).filter((w) => "ehandle" in w).map((w) => [w.ehandle, w.time]));
+      for (const w of a.obs_log || []) {
+        if (typeof w.x !== "number" || typeof w.y !== "number") continue;
+        const life = left.has(w.ehandle) ? left.get(w.ehandle) - w.time : null;
+        wards.push({ x: w.x, y: w.y, t: w.time, mine: a === this.p, dewarded: life != null && life < OBSERVER_LIFETIME - 10, enemy_half: enemyHalf(w.x, w.y, this.p.isRadiant) });
+      }
+    }
+    return { radiant: this.p.isRadiant, deaths, wards };
+  }
+
+  // Дуэль с оппонентом по линии минута в минуту до 10:00: крипы, нетворс и опыт
+  laneDuel() {
+    const o = this.opponent, p = this.p;
+    if (!o || !p.lh_t || !o.lh_t || this.minutes < 6) return null;
+    const at = (s, m) => (s && s.length ? atMinute(s, m) : null);
+    const rows = [];
+    for (let m = 2; m <= Math.min(10, this.minutes); m += 2) {
+      rows.push({
+        m,
+        lh: [at(p.lh_t, m), at(o.lh_t, m)],
+        dn: [at(p.dn_t, m), at(o.dn_t, m)],
+        nw: [at(p.networth_t || p.gold_t, m), at(o.networth_t || o.gold_t, m)],
+        xp: [at(p.xp_t, m), at(o.xp_t, m)],
+      });
+    }
+    return { opponent: this.oppName, opponent_id: o.hero_id, rows };
+  }
+
   // ---------- оценки и итоги ----------
 
   computeScores() {
@@ -2379,6 +2427,80 @@ class MatchAnalyzer {
       team_gold_adv: this.teamAdv,
     };
   }
+}
+
+// Тайминги предметов против всех игр на герое. rows — OpenDota scenarios/itemTimings:
+// корзины по времени покупки (time — конец корзины в секундах), игры и победы в каждой
+export function itemTimings(items, rows, minGames = 15) {
+  const byItem = new Map();
+  for (const r of rows || []) {
+    const g = Number(r.games) || 0;
+    if (!g || !r.item) continue;
+    if (!byItem.has(r.item)) byItem.set(r.item, []);
+    byItem.get(r.item).push({ t: Number(r.time), g, w: Number(r.wins) || 0 });
+  }
+  const winrate = (xs) => {
+    const g = sum(xs.map((x) => x.g));
+    return g >= 5 ? Math.round((sum(xs.map((x) => x.w)) / g) * 100) : null;
+  };
+  const seen = new Set();
+  const out = [];
+  for (const it of items || []) {
+    if (seen.has(it.key)) continue;
+    seen.add(it.key);
+    const b = (byItem.get(it.key) || []).sort((x, y) => x.t - y.t);
+    const total = sum(b.map((x) => x.g));
+    if (total < minGames) continue;
+    // Медиана по играм: к этому времени предмет собирает половина игроков на герое
+    let acc = 0, usual = b[b.length - 1].t;
+    for (const x of b) { acc += x.g; if (acc >= total / 2) { usual = x.t; break; } }
+    out.push({
+      key: it.key, item: it.item, time: it.time, usual, games: total,
+      verdict: it.time > usual + 180 ? "late" : it.time <= usual - 180 ? "early" : "ok",
+      wr_by: winrate(b.filter((x) => x.t <= usual)), wr_after: winrate(b.filter((x) => x.t > usual)),
+    });
+  }
+  return out;
+}
+
+// Драфт до игры: кого из своих героев взять против этих врагов и что собирать.
+// pool — [{hero_id, games, win}] свои герои, matchups — {hero_id: [{hero_id, games_played, wins}]} по каждому из них
+export function draftAdvice({ enemies, pool, matchups, knowledge, od, role = "core", minGames = 20 }) {
+  const picks = [];
+  for (const h of pool || []) {
+    const rows = new Map((matchups[h.hero_id] || []).map((m) => [m.hero_id, m]));
+    const vs = [];
+    for (const e of enemies) {
+      const m = rows.get(e);
+      if (m && m.games_played >= minGames) vs.push({ hero_id: e, name: od.heroName(e), wr: m.wins / m.games_played, games: m.games_played });
+    }
+    if (vs.length < Math.min(2, enemies.length)) continue;
+    // Своя игра на герое: винрейт со сглаживанием к 50%, чтобы 3 игры из 3 не перевешивали всё
+    const own = ((h.win || 0) + 5) / ((h.games || 0) + 10);
+    const matchup = sum(vs.map((v) => v.wr)) / vs.length;
+    picks.push({ hero_id: h.hero_id, name: od.heroName(h.hero_id), games: h.games, own_wr: own, matchup_wr: matchup,
+      score: matchup * 0.7 + own * 0.3, vs: vs.sort((a, b) => b.wr - a.wr) });
+  }
+  picks.sort((a, b) => b.score - a.score);
+  // Предметы против механик врагов: каждая механика даёт свои предметы для роли
+  const votes = new Map();
+  for (const e of enemies) {
+    const key = od.heroKey(e);
+    for (const tag of (knowledge.heroes[key] || [])) {
+      const mech = knowledge.mechanics[tag];
+      if (!mech || !mech.roles.includes(role)) continue;
+      for (const item of mech[role] || []) {
+        const v = votes.get(item) || { key: item, item: od.itemName(item), n: 0, why: new Set(), from: new Set() };
+        v.n += 1;
+        v.why.add(mech.name);
+        v.from.add(od.heroName(e));
+        votes.set(item, v);
+      }
+    }
+  }
+  const items = [...votes.values()].sort((a, b) => b.n - a.n).slice(0, 5)
+    .map((v) => ({ key: v.key, item: v.item, why: [...v.why].join(", "), from: [...v.from].join(", ") }));
+  return { picks: picks.slice(0, 3), items };
 }
 
 export function analyze(match, player, od, knowledge, texts, proItems, heroBench, norms, matchups) {

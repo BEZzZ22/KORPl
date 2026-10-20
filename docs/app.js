@@ -1,7 +1,7 @@
 // Telegram Mini App: разбор матча Dota 2 внутри Телеграма.
 import {
-  analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, CATEGORIES, BAD, WARN, GOOD,
-} from "./engine.js?v=15";
+  analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, CATEGORIES, BAD, WARN, GOOD,
+} from "./engine.js?v=16";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -392,6 +392,7 @@ async function homeScreen() {
     h("div", { class: "card" },
       h("div", { class: "row" }, h("div", { class: "grow" }, matchInput), h("button", { onclick: openMatch }, "Разобрать")),
     ),
+    h("button", { class: "ghost draft-entry", type: "button", onclick: () => { haptic(); go(draftScreen); } }, "Драфт перед игрой: кого пикнуть и что собирать"),
   ];
   if (!account) {
     render(...nodes, accountForm());
@@ -414,7 +415,8 @@ async function homeScreen() {
       api(`/players/${account}/refresh`, { method: "POST" }).catch(() => {});
       return;
     }
-    list.replaceChildren(...matches.slice(0, 15).map((m) => matchListItem(m, account)));
+    const fresh = freshMatchCard(matches[0], account);
+    list.replaceChildren(...[fresh, ...matches.slice(fresh ? 1 : 0, 15).map((m) => matchListItem(m, account))].filter(Boolean));
   } catch {
     list.replaceChildren(h("p", { class: "error" }, "OpenDota не отвечает. Попробуй позже."));
   }
@@ -701,6 +703,94 @@ async function heroStatsScreen(heroId) {
   );
 }
 
+// ---------- драфт до игры ----------
+
+const DRAFT_POOL = 12; // своих героев проверяем против врагов
+
+async function draftScreen() {
+  section = "home";
+  const seq = navSeq;
+  const account = await storage.get("account_id");
+  if (stale(seq)) return;
+  const enemies = [];
+  let role = "core";
+  const all = dictionary.heroList();
+  const chosen = h("div", { class: "draft-chosen" });
+  const grid = h("div", { class: "draft-grid" });
+  const result = h("div", { class: "draft-result" });
+  const search = h("input", { type: "search", placeholder: "Найди врага: имя героя", "aria-label": "Поиск героя" });
+  const goBtn = h("button", { type: "button", class: "draft-go" }, "Подсказать пик и сборку");
+  const roleBtn = (value, label) => h("button", { type: "button", class: "seg", "aria-pressed": String(role === value), onclick: (e) => {
+    role = value;
+    for (const b of e.currentTarget.parentNode.children) b.setAttribute("aria-pressed", String(b === e.currentTarget));
+  } }, label);
+  const drawChosen = () => {
+    chosen.replaceChildren(...enemies.map((id) => h("button", { type: "button", class: "draft-pick", "aria-label": `Убрать ${dictionary.heroName(id)}`,
+      onclick: () => { enemies.splice(enemies.indexOf(id), 1); hapticTick(); drawChosen(); drawGrid(); } },
+    heroImg(id), h("span", {}, dictionary.heroName(id)))),
+    ...Array.from({ length: 5 - enemies.length }, () => h("div", { class: "draft-pick empty" })));
+    goBtn.disabled = enemies.length < 2;
+  };
+  const drawGrid = () => {
+    const q = search.value.trim().toLowerCase();
+    const list = all.filter((x) => !enemies.includes(x.id) && (!q || x.name.toLowerCase().includes(q))).slice(0, q ? 40 : 60);
+    grid.replaceChildren(...list.map((x) => h("button", { type: "button", class: "draft-hero", "aria-label": x.name, disabled: enemies.length >= 5,
+      onclick: () => { if (enemies.length < 5) { enemies.push(x.id); hapticTick(); search.value = ""; drawChosen(); drawGrid(); } } },
+    img(x.img, "hero-img"), h("span", {}, x.name))));
+  };
+  search.addEventListener("input", drawGrid);
+  goBtn.onclick = async () => {
+    if (!account) { result.replaceChildren(h("p", { class: "muted" }, "Привяжи аккаунт на «Главной»: подсказываю из твоих героев.")); return; }
+    goBtn.disabled = true;
+    haptic("medium");
+    result.replaceChildren(h("div", { class: "center" }, h("div", { class: "spinner" }), h("div", { class: "muted small" }, "Смотрю твоих героев против этих врагов...")));
+    try {
+      const heroes = ((await api(`/players/${account}/heroes`)) || []).filter((x) => x.games >= 3)
+        .sort((a, b) => b.games - a.games).slice(0, DRAFT_POOL);
+      const matchups = {};
+      // по очереди: OpenDota режет частые запросы
+      for (const x of heroes) matchups[x.hero_id] = await heroMatchups(x.hero_id);
+      if (stale(seq)) return;
+      const advice = draftAdvice({ enemies: [...enemies], pool: heroes, matchups, knowledge, od: dictionary, role });
+      result.replaceChildren(draftResult(advice));
+    } catch {
+      result.replaceChildren(h("p", { class: "error" }, "OpenDota не отвечает. Попробуй ещё раз."));
+    } finally {
+      goBtn.disabled = enemies.length < 2;
+    }
+  };
+  drawChosen();
+  drawGrid();
+  render(
+    h("div", { class: "page-head" }, h("h1", {}, "Драфт перед игрой")),
+    h("p", { class: "muted" }, "Выбери врагов, которых видишь на пике. Подскажу, кого из твоих героев взять и что собирать."),
+    h("div", { class: "card" },
+      h("div", { class: "seg-row" }, roleBtn("core", "Я кор"), roleBtn("support", "Я саппорт")),
+      chosen, goBtn),
+    result,
+    h("h2", {}, "Враги"),
+    search, grid,
+  );
+}
+
+function draftResult(advice) {
+  const pct = (x) => `${Math.round(x * 100)}%`;
+  return h("div", {},
+    h("h2", {}, "Кого пикнуть из твоих"),
+    advice.picks.length ? h("div", { class: "card" }, ...advice.picks.map((p, i) => h("div", { class: "draft-row" },
+      h("div", { class: "plan-num" }, String(i + 1)), heroImg(p.hero_id),
+      h("div", { class: "grow" },
+        h("div", { class: "hn" }, p.name),
+        h("div", { class: "small muted" }, p.vs.map((v) => `${v.name} ${pct(v.wr)}`).join(" · ")),
+        h("div", { class: "small muted" }, `твоих игр: ${p.games}`)),
+      h("b", { class: p.matchup_wr >= 0.5 ? "win-text" : "loss-text" }, pct(p.matchup_wr)))),
+    h("p", { class: "small muted" }, "Процент — как герой выигрывает против этих врагов по всем играм OpenDota."))
+      : h("p", { class: "muted" }, "Мало данных по твоим героям против этих врагов. Сыграй больше на 3–4 героях."),
+    advice.items.length > 0 && h("h2", {}, "Что собирать"),
+    advice.items.length > 0 && h("div", { class: "card" }, ...advice.items.map((it) => h("div", { class: "why-row" },
+      itemChip(it.key, "chip need"), h("div", { class: "small muted" }, `против: ${it.why} (${it.from})`)))));
+}
+
 function matchEmpty() {
   section = "match";
   render(h("div", { class: "match-empty" },
@@ -709,6 +799,30 @@ function matchEmpty() {
     h("p", { class: "muted" }, "Открой матч на «Главной» — разбор появится здесь."),
     h("button", { onclick: () => navRoot("home", homeScreen) }, "На главную"),
   ));
+}
+
+const FRESH_HOURS = 12;
+
+// Последняя катка за полдня: большой блок сверху, а разбор реплея заказываем сразу,
+// чтобы к нажатию «Разобрать» он уже был готов
+function freshMatchCard(m, account) {
+  if (!m || Date.now() / 1000 - (m.start_time + (m.duration || 0)) > FRESH_HOURS * 3600) return null;
+  const flag = `req:${m.match_id}`;
+  if (!safeLocal.get(flag)) {
+    safeLocal.set(flag, "1");
+    api(`/request/${m.match_id}`, { method: "POST" }).catch(() => {});
+  }
+  const won = (m.player_slot < 128) === m.radiant_win;
+  const ago = Math.max(1, Math.round((Date.now() / 1000 - m.start_time - (m.duration || 0)) / 60));
+  const when = ago < 60 ? `${ago} ${plural(ago, "минуту", "минуты", "минут")} назад` : `${Math.round(ago / 60)} ${plural(Math.round(ago / 60), "час", "часа", "часов")} назад`;
+  return h("button", { class: `fresh-match ${won ? "win" : "loss"}`, type: "button", onclick: () => { haptic("medium"); go(matchScreen, m.match_id, null, Number(account)); } },
+    h("div", { class: "fresh-label" }, "Последняя катка"),
+    h("div", { class: "row" },
+      heroImg(m.hero_id, "hero-img fresh-img"),
+      h("div", { class: "grow" },
+        h("div", { class: "fresh-hero" }, dictionary.heroName(m.hero_id)),
+        h("div", { class: "small muted" }, `${won ? "Победа" : "Поражение"} · ${m.kills}/${m.deaths}/${m.assists} · ${when}`))),
+    h("div", { class: "fresh-cta" }, "Разобрать"));
 }
 
 function matchListItem(m, account) {
@@ -743,7 +857,10 @@ async function matchScreen(matchId, slot, accountId, attempt = 0) {
     return;
   }
   if (!isParsed(match)) {
-    if (attempt === 0) api(`/request/${matchId}`, { method: "POST" }).catch(() => {});
+    if (attempt === 0) {
+      api(`/request/${matchId}`, { method: "POST" }).catch(() => {});
+      watchParse(matchId);
+    }
     if (attempt >= PARSE_POLL_MAX) {
       errorScreen("Реплей так и не разобрался. Попробуй позже.", () => go(matchScreen, matchId, slot, accountId));
       return;
@@ -752,6 +869,7 @@ async function matchScreen(matchId, slot, accountId, attempt = 0) {
       h("div", { class: "spinner" }),
       h("p", { class: "display" }, "Реплей разбирается"),
       h("p", { class: "small muted" }, "Обычно 1-5 минут. Страница обновится сама."),
+      watched.has(matchId) && h("p", { class: "small muted" }, "Можешь закрыть приложение: бот напишет в Телеграм, когда разбор будет готов."),
     ));
     pollTimer = setTimeout(() => matchScreen(matchId, slot, accountId, attempt + 1), PARSE_POLL_MS);
     return;
@@ -783,6 +901,14 @@ async function matchScreen(matchId, slot, accountId, attempt = 0) {
   analysisScreen(a);
 }
 
+// Подписка на уведомление: воркер проверит подпись Телеграма и напишет в личку, когда реплей разберётся
+const watched = new Set();
+function watchParse(matchId) {
+  if (!COACH_URL || !tg || !tg.initData || watched.has(matchId)) return;
+  watched.add(matchId);
+  postCoach({ mode: "watch", match_id: matchId, initData: tg.initData }).catch(() => watched.delete(matchId));
+}
+
 // Разбираем только свои игры: либо аккаунт не привязан, либо тебя нет в матче
 async function notYourMatch() {
   const seq = navSeq;
@@ -803,6 +929,7 @@ const TABS = [
   ["Обзор", overviewTab],
   ["Фазы", phasesTab],
   ["Смерти", killersTab],
+  ["Карта", mapTab],
   ["Сборка", buildTab],
   ["Графики", chartsTab],
 ];
@@ -879,15 +1006,138 @@ function analysisScreen(a) {
   lens.place(0, true);
 }
 
-// Шеринг: короткий вердикт + прямая ссылка на этот матч в приложении (растит бота)
-function shareMatch(a) {
+// Шеринг: короткий вердикт + ссылка на бота (растит бота)
+function shareLink(a) {
   const f = a.facts;
   const link = `https://t.me/${BOT_USERNAME}?startapp`;
   const text = `${f.hero} · ${f.won ? "Победа" : "Поражение"} · оценка ${a.overall}/10\n${a.verdict}`;
   const url = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`;
-  haptic("medium");
   if (tg && tg.openTelegramLink) tg.openTelegramLink(url);
   else window.open(url, "_blank");
+}
+
+// Переносит текст по ширине и рисует не больше maxLines строк
+function drawWrapped(ctx, text, x, y, width, lineHeight, maxLines) {
+  const words = String(text).split(/\s+/);
+  const lines = [];
+  let line = "";
+  for (const w of words) {
+    const next = line ? `${line} ${w}` : w;
+    if (ctx.measureText(next).width > width && line) { lines.push(line); line = w; } else line = next;
+  }
+  if (line) lines.push(line);
+  const shown = lines.slice(0, maxLines);
+  if (lines.length > maxLines) shown[maxLines - 1] = shown[maxLines - 1].replace(/\s*\S*$/, "") + "…";
+  shown.forEach((l, i) => ctx.fillText(l, x, y + i * lineHeight));
+  return y + shown.length * lineHeight;
+}
+
+// Карточка 1080×1920 для истории: герой, итог, оценка, цифры и главный вывод тренера
+async function renderCard(a) {
+  const f = a.facts;
+  const W = 1080, H = 1920, P = 96;
+  const canvas = document.createElement("canvas");
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  try { await Promise.all(["800 120px Manrope", "600 48px Manrope"].map((s) => document.fonts.load(s))); } catch { /* системный шрифт */ }
+  const font = (w, s) => `${w} ${s}px Manrope, -apple-system, "Segoe UI", sans-serif`;
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, "#150a08"); bg.addColorStop(1, "#040303");
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  const glow = ctx.createRadialGradient(W * 0.7, 260, 20, W * 0.7, 260, 900);
+  glow.addColorStop(0, f.won ? "rgba(255,140,60,0.45)" : "rgba(215,38,61,0.45)"); glow.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = "#8f817a"; ctx.font = font(600, 40);
+  ctx.fillText("Разбор катки", P, 200);
+  ctx.fillStyle = "#e9bd63"; ctx.font = font(800, 130);
+  drawWrapped(ctx, f.hero, P, 350, W - 2 * P, 140, 2);
+  ctx.font = font(700, 48);
+  ctx.fillStyle = f.won ? "#e9bd63" : "#ff4d4d";
+  ctx.fillText(`${f.won ? "Победа" : "Поражение"} · ${f.duration}`, P, 470);
+
+  // Оценка: большое число и дуга
+  const cx = W - P - 150, cy = 700, r = 140;
+  ctx.lineWidth = 26; ctx.lineCap = "round";
+  ctx.strokeStyle = "rgba(255,255,255,0.08)"; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+  const arc = ctx.createLinearGradient(cx - r, cy - r, cx + r, cy + r);
+  arc.addColorStop(0, "#ffb36b"); arc.addColorStop(0.55, "#ff3b2a"); arc.addColorStop(1, "#b3122b");
+  ctx.strokeStyle = arc; ctx.beginPath(); ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * a.overall) / 10); ctx.stroke();
+  ctx.fillStyle = "#f2eadf"; ctx.font = font(800, 110); ctx.textAlign = "center";
+  ctx.fillText(a.overall.toFixed(1), cx, cy + 38);
+  ctx.font = font(600, 34); ctx.fillStyle = "#8f817a"; ctx.fillText("из 10", cx, cy + 92);
+  ctx.textAlign = "left";
+
+  const stats = [["KDA", f.kda], ["GPM", String(f.gpm)], ["XPM", String(f.xpm)]];
+  stats.forEach(([label, value], i) => {
+    const y = 600 + i * 120;
+    ctx.fillStyle = "#8f817a"; ctx.font = font(600, 34); ctx.fillText(label, P, y);
+    ctx.fillStyle = "#f2eadf"; ctx.font = font(800, 64); ctx.fillText(value, P, y + 62);
+  });
+
+  const coach = safeLocal.get(coachKey(a));
+  const main = (coach && parseCoach(coach).main) || a.verdict;
+  ctx.fillStyle = "rgba(255,255,255,0.06)"; ctx.fillRect(P, 1000, W - 2 * P, 2);
+  ctx.fillStyle = "#8f817a"; ctx.font = font(600, 38); ctx.fillText(coach ? "Тренер говорит" : "Вердикт", P, 1090);
+  ctx.fillStyle = "#f2eadf"; ctx.font = font(700, 56);
+  let y = drawWrapped(ctx, main, P, 1180, W - 2 * P, 74, 6);
+  const top = ((a.summary || {}).problems || [])[0];
+  if (top) {
+    ctx.fillStyle = "#ff9a3d"; ctx.font = font(700, 44);
+    drawWrapped(ctx, `Главная ошибка: ${top.title}`, P, y + 50, W - 2 * P, 58, 2);
+  }
+  ctx.fillStyle = "#8f817a"; ctx.font = font(600, 40);
+  ctx.fillText(`Разбери свою катку: @${BOT_USERNAME}`, P, H - 140);
+  return canvas.toDataURL("image/png");
+}
+
+// Шторка «Поделиться»: картинка в историю, сохранить картинку или ссылка в чат
+function shareMatch(a) {
+  haptic("medium");
+  const canStory = Boolean(tg && tg.shareToStory && tg.isVersionAtLeast && tg.isVersionAtLeast("7.8"));
+  const canSave = Boolean(tg && tg.downloadFile && tg.isVersionAtLeast && tg.isVersionAtLeast("8.0"));
+  const preview = h("div", { class: "sheet-preview" }, h("div", { class: "spinner" }));
+  const status = h("p", { class: "small muted", role: "status" });
+  let cardUrl = null, dataUrl = null;
+  const close = () => { sheet.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  // Ссылка на картинку нужна Телеграму: загружаем её в воркер один раз
+  const upload = async () => {
+    if (cardUrl) return cardUrl;
+    if (!dataUrl) throw Object.assign(new Error("Картинка ещё рисуется, секунду."), { fromCoach: true });
+    status.textContent = "Готовлю картинку...";
+    const data = await postCoach({ mode: "card", png: dataUrl });
+    cardUrl = data.url;
+    status.textContent = "";
+    return cardUrl;
+  };
+  const act = (label, fn, primary = false) => h("button", { type: "button", class: primary ? "sheet-btn" : "sheet-btn ghost", onclick: async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try { await fn(); } catch (err) { status.textContent = coachError(err); } finally { btn.disabled = false; }
+  } }, label);
+  const actions = h("div", { class: "sheet-actions" },
+    canStory && act("Выложить в историю", async () => {
+      tg.shareToStory(await upload(), { text: `${a.facts.hero}: ${a.overall.toFixed(1)}/10. Разбор в @${BOT_USERNAME}` });
+    }, true),
+    act(canSave ? "Сохранить картинку" : "Открыть картинку", async () => {
+      const url = await upload();
+      if (canSave) tg.downloadFile({ url, file_name: `razbor-${a.facts.match_id}.png` });
+      else if (tg && tg.openLink) tg.openLink(url);
+      else window.open(url, "_blank");
+    }, !canStory),
+    act("Ссылка в чат", async () => shareLink(a)));
+  const sheet = h("div", { class: "sheet-backdrop", onclick: (e) => { if (e.target === sheet) close(); } },
+    h("div", { class: "sheet", role: "dialog", "aria-modal": "true", "aria-label": "Поделиться разбором" },
+      h("div", { class: "sheet-grip", "aria-hidden": "true" }),
+      preview, actions, status,
+      h("button", { type: "button", class: "sheet-close ghost", onclick: close }, "Закрыть")));
+  document.body.append(sheet);
+  document.addEventListener("keydown", onKey);
+  renderCard(a).then((url) => {
+    dataUrl = url;
+    preview.replaceChildren(h("img", { src: url, alt: "Карточка разбора" }));
+  }).catch(() => { preview.replaceChildren(h("p", { class: "muted" }, "Картинка не нарисовалась. Можно отправить ссылку.")); });
 }
 
 function stat(value, label) {
@@ -1358,6 +1608,7 @@ function draftBlock(a) {
 
 function phasesTab(a) {
   return h("div", {},
+    laneDuelBlock(a),
     ...a.phases.map((ph) => h("div", { class: `card phase ${ph.verdict}` },
       h("div", { class: "phase-title" }, h("span", {}, ph.title), h("span", { class: "small" }, PHASE_LABEL[ph.verdict])),
       h("p", {}, ph.text),
@@ -1382,6 +1633,103 @@ function phasesTab(a) {
         }, h("time", {}, m.clock), h("span", {}, m.text));
       }))),
   );
+}
+
+// ---------- миникарта: смерти в драках и обсы ----------
+
+// Клетки OpenDota 64..192 -> координаты SVG 0..128 (север сверху)
+const mapX = (x) => Math.max(2, Math.min(126, x - 64));
+const mapY = (y) => Math.max(2, Math.min(126, 192 - y));
+
+function minimap(points, { label }) {
+  const lane = (d) => svg("path", { d, class: "mm-lane" });
+  return svg("svg", { class: "minimap", viewBox: "0 0 128 128", role: "img", "aria-label": label },
+    svg("defs", {}, svg("radialGradient", { id: "mm-bg", cx: "50%", cy: "50%", r: "70%" },
+      svg("stop", { offset: "0%", "stop-color": "#1b1514" }), svg("stop", { offset: "100%", "stop-color": "#0a0807" }))),
+    svg("rect", { x: 0, y: 0, width: 128, height: 128, rx: 10, fill: "url(#mm-bg)" }),
+    // река идёт с северо-запада на юго-восток через центр
+    svg("path", { d: "M4 10 C 40 40, 52 58, 64 64 S 92 92, 124 118", class: "mm-river" }),
+    lane("M14 116 L14 14 L114 14"), lane("M14 116 L114 116 L114 14"), lane("M16 112 L112 16"),
+    svg("rect", { x: 4, y: 104, width: 20, height: 20, rx: 4, class: "mm-base radiant" }),
+    svg("rect", { x: 104, y: 4, width: 20, height: 20, rx: 4, class: "mm-base dire" }),
+    ...points);
+}
+
+function mapTab(a) {
+  const m = a.map || { deaths: [], wards: [] };
+  const deathDots = m.deaths.map((d) => svg("g", { class: "mm-death", transform: `translate(${mapX(d.x).toFixed(1)} ${mapY(d.y).toFixed(1)})` },
+    svg("title", {}, `смерть ${mmss(d.t)}`),
+    svg("path", { d: "M-2.6 -2.6 L2.6 2.6 M-2.6 2.6 L2.6 -2.6" })));
+  const wardDots = m.wards.map((w) => svg("circle", {
+    cx: mapX(w.x).toFixed(1), cy: mapY(w.y).toFixed(1), r: w.mine ? 2.6 : 2,
+    class: `mm-ward${w.mine ? " mine" : ""}${w.dewarded ? " dewarded" : ""}`,
+  }, svg("title", {}, `обс ${mmss(w.t)}${w.mine ? ", твой" : ""}${w.dewarded ? ", снесли" : ""}`)));
+  const side = m.radiant ? "Твоя база слева внизу (Свет)." : "Твоя база справа вверху (Тьма).";
+  const far = m.deaths.filter((d) => d.enemy_half).length;
+  const mine = m.wards.filter((w) => w.mine);
+  const dewarded = m.wards.filter((w) => w.dewarded).length;
+  const deep = m.wards.filter((w) => w.enemy_half).length;
+  return h("div", {},
+    h("h2", {}, "Где умирал в драках"),
+    h("div", { class: "card map-card" },
+      m.deaths.length ? minimap(deathDots, { label: `Смерти в драках на карте: ${m.deaths.length}` }) : h("p", { class: "muted" }, "В больших драках ты не умирал."),
+      m.deaths.length > 0 && h("p", { class: "small muted" },
+        `${m.deaths.length} ${plural(m.deaths.length, "смерть", "смерти", "смертей")} в драках, из них на вражеской половине: ${far}. ${side} Смерти вне больших драк OpenDota без координат не отдаёт.`)),
+    h("h2", {}, "Обсы команды"),
+    h("div", { class: "card map-card" },
+      m.wards.length ? minimap(wardDots, { label: `Обсы команды на карте: ${m.wards.length}` }) : h("p", { class: "muted" }, "Обсов за игру не было."),
+      m.wards.length > 0 && h("div", { class: "legend" },
+        h("span", {}, h("i", { class: "lg-ward mine" }), `твои: ${mine.length}`),
+        h("span", {}, h("i", { class: "lg-ward" }), `команды: ${m.wards.length - mine.length}`),
+        h("span", {}, h("i", { class: "lg-ward dewarded" }), `снесли раньше времени: ${dewarded}`)),
+      m.wards.length > 0 && h("p", { class: "small muted" }, `На вражеской половине: ${deep} из ${m.wards.length}. ${side}`)),
+  );
+}
+
+// ---------- линия минута в минуту ----------
+
+function laneDuelBlock(a) {
+  const l = a.lane;
+  if (!l || !l.rows.length) return null;
+  const diff = (pair, fmt = num) => {
+    const [me, opp] = pair;
+    if (me == null || opp == null) return h("td", { class: "muted" }, "—");
+    const d = me - opp;
+    return h("td", {}, h("b", {}, fmt(me)), h("span", { class: `delta ${d > 0 ? "win-text" : d < 0 ? "loss-text" : "muted"}` }, d === 0 ? "=" : (d > 0 ? "+" : "−") + fmt(Math.abs(d))));
+  };
+  return h("div", {},
+    h("h2", {}, `Линия против ${l.opponent}`),
+    h("div", { class: "card lane-duel" },
+      h("table", {},
+        h("thead", {}, h("tr", {}, h("th", {}, "мин"), h("th", {}, "крипы"), h("th", {}, "нетворс"), h("th", {}, "опыт"))),
+        h("tbody", {}, ...l.rows.map((r) => h("tr", {}, h("th", {}, String(r.m)), diff(r.lh, String), diff(r.nw), diff(r.xp))))),
+      h("p", { class: "small muted" }, "Твоё значение и разница с оппонентом. Зелёное — ты впереди.")));
+}
+
+// ---------- тайминги предметов против всех игр на герое ----------
+
+const timingCache = new Map();
+function itemTimingBlock(a) {
+  const core = (a.items || []).filter((it) => it.time > 0);
+  if (!core.length) return null;
+  const box = h("div", {}, h("h2", {}, "Тайминги предметов"), h("div", { class: "card small muted" }, "Сравниваю с играми на герое..."));
+  const seq = navSeq;
+  (async () => {
+    if (!timingCache.has(a.facts.hero_id)) timingCache.set(a.facts.hero_id, await api(`/scenarios/itemTimings?hero_id=${a.facts.hero_id}`));
+    if (stale(seq)) return;
+    const rows = itemTimings(core, timingCache.get(a.facts.hero_id)).slice(0, 5);
+    if (!rows.length) { box.remove(); return; }
+    box.replaceChildren(h("h2", {}, "Тайминги предметов"), h("div", { class: "card" },
+      ...rows.map((r) => h("div", { class: "timing-row" },
+        img(dictionary.itemImage(r.key), null, ""),
+        h("div", { class: "grow" },
+          h("div", {}, r.item),
+          h("div", { class: "small muted" }, `обычно к ${mmss(r.usual)}` +
+            (r.wr_by != null && r.wr_after != null ? ` · до этого побеждают в ${r.wr_by}%, позже в ${r.wr_after}%` : ""))),
+        h("b", { class: r.verdict === "late" ? "loss-text" : r.verdict === "early" ? "win-text" : "" }, mmss(r.time)))),
+      h("p", { class: "small muted" }, "Твоё время справа. Статистика OpenDota по публичным играм на этом герое.")));
+  })().catch(() => { if (!stale(seq)) box.remove(); });
+  return box;
 }
 
 function killersTab(a) {
@@ -1457,7 +1805,7 @@ function buildTab(a) {
       h("div", { class: "item-row" }, img(dictionary.itemImage(it.key), null, ""), h("span", {}, it.item), h("time", {}, mmss(it.time))))),
   );
   if (!pro && !yours && !planBlock) return h("p", { class: "muted" }, "Крупных предметов не было.");
-  return h("div", {}, planBlock, pro, yours);
+  return h("div", {}, planBlock, itemTimingBlock(a), pro, yours);
 }
 
 function chartsTab(a) {
@@ -1646,7 +1994,11 @@ async function boot() {
     // Иначе свайп по графику сворачивает приложение вместо подсказки
     if (tg.isVersionAtLeast && tg.isVersionAtLeast("7.7") && tg.disableVerticalSwipes) tg.disableVerticalSwipes();
   }
-  if (!booted) buildTabbar();
+  if (!booted) {
+    buildTabbar();
+    // Офлайн-кэш: открытые разборы и справочники работают без сети
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
   booted = true;
   loading("Разжигаю огонь...");
   try {
