@@ -1,7 +1,19 @@
 // Telegram Mini App: разбор матча Dota 2 внутри Телеграма.
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, CATEGORIES, BAD, WARN, GOOD,
-} from "./engine.js?v=5";
+} from "./engine.js?v=6";
+
+// Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
+const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
+const ROMAN = ["", "I", "II", "III", "IV", "V"];
+const BOT_USERNAME = "DotaRazbor_bot";
+
+// Иконки нижней навигации (контурные, под CSP: собираются в JS, без innerHTML)
+const NAV_ICONS = {
+  home: "M3 11.5 12 4l9 7.5M5 10v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9",
+  match: "M4 5h16M4 5v14M4 19h16M8 15l3-4 2 2 3-5",
+  profile: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM5 20a7 7 0 0 1 14 0",
+};
 
 const API = "https://api.opendota.com/api";
 const STEAM_CDN = "https://cdn.cloudflare.steamstatic.com";
@@ -18,6 +30,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
 const app = document.getElementById("app");
 let dictionary = null, knowledge = null, texts = null, itemIds = null, norms = {}, glossary = [];
 let pollTimer = null;
+let section = "home", lastAnalysis = null, tabbar = null;
 const proCache = new Map();
 // Подсказки графиков прячутся по тапу вне графика: один общий обработчик на документ
 const chartHiders = new Set();
@@ -58,6 +71,7 @@ function render(...nodes) {
   chartHiders.clear();
   app.replaceChildren(h("div", { class: "fade-in" }, ...nodes));
   window.scrollTo(0, 0);
+  updateTabbar();
 }
 
 function img(path, cls, alt = "") {
@@ -161,6 +175,44 @@ function back() {
   go(prev ? prev[0] : homeScreen, ...(prev ? prev[1] : []));
 }
 
+// Переход на корень вкладки: сбрасываем историю внутри вкладки
+function navRoot(sec, screen, ...args) {
+  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+  navStack.length = 0;
+  section = sec;
+  if (tg && tg.BackButton) tg.BackButton.hide();
+  go(screen, ...args);
+}
+
+// Нижняя навигация: собираем один раз, держим вне #app, чтобы не пересобирать при каждом рендере
+function tabButton(tab, label) {
+  const icon = svg("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, svg("path", { d: NAV_ICONS[tab] }));
+  return h("button", {
+    class: "tabbtn", "data-tab": tab, "aria-label": label,
+    onclick: () => {
+      haptic();
+      if (tab === "home") navRoot("home", homeScreen);
+      else if (tab === "profile") navRoot("profile", profileScreen);
+      else if (tab === "match") lastAnalysis ? navRoot("match", analysisScreen, lastAnalysis) : navRoot("match", matchEmpty);
+    },
+  }, icon, h("span", {}, label));
+}
+
+function buildTabbar() {
+  tabbar = h("nav", { class: "tabbar", role: "tablist" },
+    tabButton("home", "Главная"), tabButton("match", "Разбор"), tabButton("profile", "Профиль"));
+  document.body.append(tabbar);
+}
+
+function updateTabbar() {
+  if (!tabbar) return;
+  for (const btn of tabbar.children) {
+    const t = btn.dataset.tab;
+    btn.classList.toggle("active", t === section);
+    if (t === "match") btn.classList.toggle("disabled", !lastAnalysis);
+  }
+}
+
 // ---------- экраны ----------
 
 function loading(text) {
@@ -175,6 +227,7 @@ function errorScreen(message, retry) {
 }
 
 async function homeScreen() {
+  section = "home";
   const account = await storage.get("account_id");
   const matchInput = h("input", { inputmode: "numeric", placeholder: "ID матча или ссылка", "aria-label": "ID матча" });
   const openMatch = () => {
@@ -183,10 +236,12 @@ async function homeScreen() {
     else matchInput.focus();
   };
   const nodes = [
-    h("div", { class: "hero-brand" },
+    h("div", { class: "app-top" },
       h("div", { class: "sigil" }),
-      h("h1", {}, "Dota-тренер"),
-      h("p", { class: "muted" }, "Разбор каждой твоей ошибки — от линии до последней драки."),
+      h("div", { class: "t" },
+        h("h1", {}, "Dota-тренер"),
+        h("p", {}, "Разбор каждой ошибки — от линии до последней драки"),
+      ),
     ),
     h("div", { class: "card" },
       h("div", { class: "row" }, h("div", { class: "grow" }, matchInput), h("button", { onclick: openMatch }, "Разобрать")),
@@ -241,6 +296,114 @@ function accountForm() {
     h("div", { class: "row" }, h("div", { class: "grow" }, input), h("button", { onclick: save }, "Ок")),
     status,
   );
+}
+
+// ---------- ранг ----------
+
+function rankLabel(tier) {
+  if (!tier) return "Калибровка";
+  const medal = Math.floor(tier / 10), stars = tier % 10;
+  if (medal < 1 || medal > 8) return "Калибровка";
+  return MEDALS[medal - 1] + (medal < 8 && stars ? ` ${ROMAN[stars] || stars}` : "");
+}
+
+function rankPip(tier) {
+  const medal = tier ? Math.floor(tier / 10) : 0;
+  const col = ["#9b8576", "#8fa36b", "#7fae8a", "#7f8fd0", "#c08adf", "#6fc9d6", "#ead6a0", "#ff6a2a"][medal - 1] || "#8f817a";
+  return svg("svg", { class: "pip", viewBox: "0 0 24 24", "aria-hidden": "true" },
+    svg("path", {
+      d: "M12 3 4 7v5c0 5 3.4 7.6 8 9 4.6-1.4 8-4 8-9V7l-8-4Z",
+      fill: col, "fill-opacity": "0.9", stroke: "rgba(0,0,0,0.3)", "stroke-width": "0.6",
+    }),
+    svg("path", { d: "M12 8.5l1.1 2.3 2.5.3-1.8 1.7.5 2.5L12 14l-2.3 1.3.5-2.5-1.8-1.7 2.5-.3L12 8.5Z", fill: "#060606", "fill-opacity": "0.55" }));
+}
+
+// ---------- экран «Профиль» (ранг-медаль, форма, любимые герои) ----------
+
+async function profileScreen() {
+  section = "profile";
+  const account = await storage.get("account_id");
+  if (!account) {
+    render(h("div", { class: "page-head" }, h("h1", {}, "Профиль")),
+      h("p", { class: "muted" }, "Привяжи аккаунт — покажу ранг, форму и любимых героев."), accountForm());
+    return;
+  }
+  loading("Открываю профиль...");
+  let player, wl, matches, heroes;
+  try {
+    [player, wl, matches, heroes] = await Promise.all([
+      api(`/players/${account}`),
+      api(`/players/${account}/wl?limit=30`),
+      api(`/players/${account}/recentMatches`),
+      api(`/players/${account}/heroes`),
+    ]);
+  } catch {
+    errorScreen("OpenDota не отвечает.", profileScreen);
+    return;
+  }
+  if (!player || !player.profile) {
+    render(h("div", { class: "page-head" }, h("h1", {}, "Профиль")),
+      h("div", { class: "card muted" }, "OpenDota потерял этот аккаунт. Привяжи заново."),
+      h("button", { class: "ghost", onclick: () => { storage.set("account_id", ""); go(homeScreen); } }, "Сменить аккаунт"));
+    return;
+  }
+
+  const prof = player.profile;
+  const avatar = prof.avatarfull || prof.avatarmedium;
+  const wins = (wl && wl.win) || 0, losses = (wl && wl.lose) || 0, total = wins + losses;
+  const winrate = total ? Math.round((wins / total) * 100) : 0;
+  const recent = (matches || []).slice(0, 20);
+  const dots = recent.map((m) => {
+    const won = (m.player_slot < 128) === m.radiant_win;
+    return h("span", { class: `dot ${won ? "win" : "loss"}`, title: won ? "Победа" : "Поражение" });
+  });
+  const topHeroes = (heroes || []).filter((hx) => hx.games > 0).sort((a, b) => b.games - a.games).slice(0, 6);
+
+  render(
+    h("div", { class: "card" },
+      h("div", { class: "profile-card" },
+        avatar ? h("img", { class: "avatar", src: avatar, alt: "", loading: "lazy" }) : h("div", { class: "avatar" }),
+        h("div", { class: "grow" },
+          h("div", { class: "profile-name" }, prof.personaname || "Инкогнито"),
+          h("div", { class: "rank-medal" }, rankPip(player.rank_tier), rankLabel(player.rank_tier)),
+        ),
+      ),
+      h("div", { class: "profile-metrics" },
+        h("div", { class: "metric" }, h("b", {}, String(winrate) + "%"), h("span", {}, "винрейт")),
+        h("div", { class: "metric" }, h("b", {}, String(wins)), h("span", {}, "побед")),
+        h("div", { class: "metric" }, h("b", {}, String(losses)), h("span", {}, "поражений")),
+      ),
+    ),
+    recent.length > 0 && h("h2", {}, "Форма — последние игры"),
+    recent.length > 0 && h("div", { class: "card" },
+      h("div", { class: "form-strip" }, ...dots),
+      h("div", { class: "small muted" }, `${recent.filter((m) => (m.player_slot < 128) === m.radiant_win).length} побед из ${recent.length}`),
+    ),
+    topHeroes.length > 0 && h("h2", {}, "Любимые герои"),
+    topHeroes.length > 0 && h("div", { class: "card" }, ...topHeroes.map((hx) => {
+      const wr = hx.games ? Math.round((hx.win / hx.games) * 100) : 0;
+      return h("div", { class: "hero-stat" },
+        heroImg(hx.hero_id),
+        h("div", { class: "grow" },
+          h("div", { class: "hn" }, dictionary.heroName(hx.hero_id)),
+          h("div", { class: "hg" }, `${hx.games} игр`),
+          h("div", { class: "wrbar" }, h("i", { "data-pct": wr })),
+        ),
+        h("div", { class: `wr ${wr >= 50 ? "win-text" : "loss-text"}` }, `${wr}%`),
+      );
+    })),
+    h("button", { class: "ghost", onclick: () => { storage.set("account_id", ""); navRoot("home", homeScreen); } }, "Сменить аккаунт"),
+  );
+}
+
+function matchEmpty() {
+  section = "match";
+  render(h("div", { class: "match-empty" },
+    h("div", { class: "sigil" }),
+    h("h1", {}, "Разбор пуст"),
+    h("p", { class: "muted" }, "Открой матч на «Главной» — разбор появится здесь."),
+    h("button", { onclick: () => navRoot("home", homeScreen) }, "На главную"),
+  ));
 }
 
 function matchListItem(m, account) {
@@ -327,6 +490,8 @@ const TABS = [
 ];
 
 function analysisScreen(a) {
+  section = "match";
+  lastAnalysis = a;
   const f = a.facts;
   const content = h("div");
   const tabs = h("div", { class: "tabs", role: "tablist" });
@@ -354,12 +519,28 @@ function analysisScreen(a) {
           "Это Турбо: золото и опыт идут быстрее, а нормы разбора рассчитаны на обычную игру. Оценки могут быть неточными."),
         f.lane_opponent && h("div", { class: "small muted" }, `Линия против ${f.lane_opponent}`),
         h("div", { class: "stats" }, stat(f.kda, "KDA"), stat(f.gpm, "GPM"), stat(f.xpm, "XPM"), stat(`${f.last_hits}/${f.denies}`, "LH/DN")),
+        h("button", { class: "share", onclick: () => shareMatch(a) },
+          svg("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" },
+            svg("path", { d: "M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v14" })),
+          "Поделиться разбором"),
       ),
     ),
     tabs,
     content,
   );
   select(0);
+}
+
+// Шеринг: короткий вердикт + прямая ссылка на этот матч в приложении (растит бота)
+function shareMatch(a) {
+  const f = a.facts;
+  const slot = f.slot != null ? `_s${f.slot}` : "";
+  const link = `https://t.me/${BOT_USERNAME}?startapp=m${f.match_id}${slot}`;
+  const text = `${f.hero} · ${f.won ? "Победа" : "Поражение"} · оценка ${a.overall}/10\n${a.verdict}`;
+  const url = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`;
+  haptic("medium");
+  if (tg && tg.openTelegramLink) tg.openTelegramLink(url);
+  else window.open(url, "_blank");
 }
 
 function stat(value, label) {
@@ -711,6 +892,7 @@ async function boot() {
     // Иначе свайп по графику сворачивает приложение вместо подсказки
     if (tg.isVersionAtLeast && tg.isVersionAtLeast("7.7") && tg.disableVerticalSwipes) tg.disableVerticalSwipes();
   }
+  buildTabbar();
   loading("Разжигаю огонь...");
   try {
     const [heroes, items, abilities, ids, kb, tx] = await Promise.all([

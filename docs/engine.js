@@ -1523,6 +1523,7 @@ class MatchAnalyzer {
     const p = this.p;
     return {
       match_id: this.match.match_id,
+      slot: p.player_slot,
       game_mode: this.match.game_mode ?? null,
       hero: this.hero,
       hero_id: p.hero_id,
