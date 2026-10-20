@@ -52,6 +52,23 @@ const ACTIVE_ITEMS = ["black_king_bar", "blink", "force_staff", "hurricane_pike"
   "nullifier", "diffusal_blade", "disperser", "mjollnir", "pipe", "crimson_guard", "blade_mail", "sphere", "satanic",
   "wind_waker", "overwhelming_blink", "swift_blink", "arcane_blink"];
 const MAX_COUNTER_ITEMS = 3;
+// Контроль, который можно распознать по описанию умения; БКБ и диспел зависят от полей bkbpierce и dispellable
+const CONTROL_KINDS = [
+  ["stun", /stun/, "стан", true],
+  ["hex", /\bhex|transforms? .{0,30}into/, "хекс", true],
+  ["hard", /sleep|fear|taunt|banish|petrif|cyclone|forced to|mute/, "жёсткий контроль", true],
+  ["silence", /silence/, "сайленс", false],
+  ["root", /\broot|ensnare|entangle|immobiliz/, "рут", false],
+  ["disarm", /disarm/, "дизарм", false],
+  ["slow", /slow/, "замедление", false],
+];
+const ITEM_CONTROL = {
+  sheepstick: ["hex", true], abyssal_blade: ["stun", true], orchid: ["silence", false], bloodthorn: ["silence", false],
+  rod_of_atos: ["root", false], gleipnir: ["root", false], heavens_halberd: ["disarm", false],
+};
+const BUILD_MIN_SCORE = 2;
+const BUILD_MAX_ITEMS = 4;
+
 const DETECTION_ITEMS = new Set(["dust", "ward_sentry", "gem"]);
 const PRO_MIN_COUNT = 3;
 const PRO_BUILD_SIZE = 6;
@@ -306,7 +323,10 @@ export function createDictionary({ heroes, items, abilities }) {
     heroImages[h.id] = h.img;
   }
   for (const [key, a] of Object.entries(abilities)) {
-    if (a.dname) abilityInfo[key] = { dname: a.dname, dmg_type: damageType(a.dmg_type) };
+    if (a.dname) {
+      const one = (v) => (Array.isArray(v) ? String(v[0] ?? "") : String(v ?? ""));
+      abilityInfo[key] = { dname: a.dname, dmg_type: damageType(a.dmg_type), desc: one(a.desc).toLowerCase(), bkb: one(a.bkbpierce), disp: one(a.dispellable) };
+    }
   }
   const od = {
     items,
@@ -329,6 +349,7 @@ export function createDictionary({ heroes, items, abilities }) {
       // Неизвестный скилл: «drow_ranger_multishot» -> «Drow Ranger Multishot»
       return key.includes("_") ? key.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ") : key;
     },
+    abilityInfo: (key) => abilityInfo[key] || null,
     sourceType(key) {
       if (key === "null" || key === "") return "Physical";
       return abilityInfo[key] ? abilityInfo[key].dmg_type : null;
@@ -531,6 +552,7 @@ class MatchAnalyzer {
     this.checkGame();
     const killers = this.checkKillers();
     this.checkItemization();
+    this.checkDispel();
     const proBuild = this.proBuild();
     this.checkProBuild(proBuild);
     this.checkRoshan();
@@ -560,6 +582,7 @@ class MatchAnalyzer {
       verdict: this.verdict(scores, overall),
       items: this.coreItems(),
       draft: this.draftReview(),
+      build_plan: this.buildPlan(),
     };
   }
 
@@ -1199,7 +1222,12 @@ class MatchAnalyzer {
       for (const [t, v] of byType) if (mainType === null || v > byType.get(mainType)) mainType = t;
       const share = mainType && total ? pyRound((byType.get(mainType) / total) * 100) : 0;
       const mechanics = this.relevantMechanics(this.k.heroes[key] || [], mainType, enemy, key);
-      const [missing, had] = this.pickCounters(mechanics, mainType, owned);
+      const threat = this.threatProfile([enemy]);
+      const ranked = this.rankCounters(threat).slice(0, 5);
+      let missing = ranked.filter((r) => !owned.has(r.key)).map((r) => r.key).slice(0, MAX_COUNTER_ITEMS);
+      let had = ranked.filter((r) => owned.has(r.key)).map((r) => r.key);
+      if (!ranked.length) [missing, had] = this.pickCounters(mechanics, mainType, owned);
+      const whyByKey = Object.fromEntries(ranked.map((r) => [r.key, r.why]));
       const name = this.od.heroName(enemy.hero_id);
       killers.push({
         hero: name,
@@ -1212,6 +1240,8 @@ class MatchAnalyzer {
         damage_by_type: Object.fromEntries(byType),
         sources: sources.slice(0, 4),
         disables: this.disablesFrom(enemy).slice(0, 3),
+        control: threat.controls.slice(0, 4).map((c) => ({ name: c.name, count: c.count, label: c.label, bkb_blocks: c.bkbBlocks, dispellable: c.dispellable })),
+        counter_why: whyByKey,
         mechanics: mechanics.map((m) => this.k.mechanics[m].name),
         tips: mechanics.map((m) => this.k.mechanics[m].tip.replaceAll("{hero}", name)),
         counters: missing.map((k) => this.od.itemName(k)),
@@ -1269,6 +1299,151 @@ class MatchAnalyzer {
           ? `Цель на следующую катку: ${k.counters[0]} к 20-й минуте, если снова против ${k.hero}`
           : `Цель на следующую катку: не больше одной смерти от ${k.hero}`);
     }
+  }
+
+  // ---------- что реально происходило с тобой: урон и контроль по всем врагам ----------
+
+  classifyControl(ability) {
+    if (ability in ITEM_CONTROL) {
+      const [kind, hard] = ITEM_CONTROL[ability];
+      const label = CONTROL_KINDS.find((k) => k[0] === kind)[2];
+      return { kind, label, hard, bkbBlocks: true, dispellable: kind !== "stun" && kind !== "hex" };
+    }
+    const info = this.od.abilityInfo ? this.od.abilityInfo(ability) : null;
+    if (!info || !info.desc) return null;
+    const found = CONTROL_KINDS.find((k) => k[1].test(info.desc));
+    if (!found) return null;
+    return { kind: found[0], label: found[2], hard: found[3], bkbBlocks: info.bkb !== "Yes", dispellable: info.disp === "Yes" };
+  }
+
+  controlFrom(enemy) {
+    const myKey = this.od.heroKey(this.p.hero_id);
+    const result = [];
+    for (const [ability, targets] of Object.entries(enemy.ability_targets || {})) {
+      const count = (targets || {})[myKey] ?? 0;
+      if (count < 1) continue;
+      const c = this.classifyControl(ability);
+      if (c) result.push({ ability, name: this.od.sourceName(ability), count, ...c });
+    }
+    return result.sort((a, b) => b.count - a.count);
+  }
+
+  threatProfile(enemies) {
+    const byType = {};
+    let total = 0, auto = 0, magicBlock = 0;
+    const controls = [];
+    for (const e of enemies) {
+      const [t, sources] = this.damageFrom(e);
+      total += t;
+      for (const src of sources) {
+        if (src.type) byType[src.type] = (byType[src.type] || 0) + src.damage;
+        if (src.key === "null" || src.key === "") auto += src.damage;
+        const ai = this.od.abilityInfo ? this.od.abilityInfo(src.key) : null;
+        if (src.type === "Magical" && ai && ai.bkb !== "Yes") magicBlock += src.damage;
+      }
+      controls.push(...this.controlFrom(e));
+    }
+    const share = (t) => (total ? (byType[t] || 0) / total : 0);
+    const sumBy = (f) => sum(controls.filter(f).map((c) => c.count));
+    return {
+      total, byType, controls,
+      magic: share("Magical"), magicBlock: total ? magicBlock / total : 0, phys: share("Physical"), pure: share("Pure"), auto: total ? auto / total : 0,
+      hard: sumBy((c) => c.hard),
+      hardBlock: sumBy((c) => c.hard && c.bkbBlocks),
+      soft: sumBy((c) => !c.hard && c.kind !== "slow"),
+      softDispel: sumBy((c) => !c.hard && c.kind !== "slow" && c.dispellable),
+      silence: sumBy((c) => c.kind === "silence"),
+      anyDispel: sumBy((c) => c.dispellable),
+    };
+  }
+
+  // Предметы под обстановку: у каждого свой счёт по тому, от чего тебя реально били
+  rankCounters(t, minutes = this.minutes) {
+    const core = this.core;
+    const pct = (x) => Math.round(x * 100);
+    const rows = [
+      ["black_king_bar", core ? 1 : 0.5, t.hardBlock * 0.9 + t.silence * 0.4 * (t.hardBlock ? 0 : 1) + t.magicBlock * 6,
+        () => {
+          const n = t.hardBlock + (t.hardBlock ? 0 : t.silence);
+          const parts = [];
+          if (n) parts.push(`${n} ${plural(n, "контроль", "контроля", "контролей")} на тебе БКБ блокирует`);
+          if (t.magicBlock >= 0.25) parts.push(`${pct(t.magicBlock)}% урона по тебе идёт магией, которую он режет`);
+          return parts.join(", плюс ") || "защита от магии и контроля";
+        }],
+      ["manta", core ? 1 : 0, t.softDispel * 0.9,
+        () => `${t.softDispel} ${plural(t.softDispel, "сайленс/рут/дизарм", "сайленса/рута/дизарма", "сайленсов/рутов/дизармов")} на тебе, Manta снимает их диспелом`],
+      ["cyclone", 1, t.anyDispel * 0.7 + t.hard * 0.15,
+        () => `дешёвый диспел: снимает ${t.anyDispel} ${plural(t.anyDispel, "контроль", "контроля", "контролей")} на тебе и спасает от добивания`],
+      ["lotus_orb", 1, t.anyDispel * 0.6 + t.hard * 0.3,
+        () => `диспел плюс отражение: ${t.anyDispel + t.hard} ${plural(t.anyDispel + t.hard, "контроль", "контроля", "контролей")} на тебе`],
+      ["sphere", core ? 1 : 0, t.hardBlock * 0.7,
+        () => `${t.hardBlock} жёстких контролей по одной цели, Linken's блокирует первый из них`],
+      ["aeon_disk", core ? 1 : 0, t.magic >= 0.4 && t.total > 8000 ? t.magic * 6 : 0,
+        () => `${pct(t.magic)}% урона магией и много урона разом: Aeon Disk спасает от добивания`],
+      ["glimmer_cape", core ? 0 : 1, t.magic * 6,
+        () => `${pct(t.magic)}% урона по тебе магией, Glimmer режет магию и прячет от таргета`],
+      ["pipe", core ? 0 : 1, t.magic * 5.5,
+        () => `${pct(t.magic)}% урона магией: Pipe снимает его с всей команды`],
+      ["hood_of_defiance", core ? 1 : 0.6, t.magic * 4.5,
+        () => `${pct(t.magic)}% урона магией, а такой предмет самый дешёвый способ его срезать`],
+      ["ghost", 1, t.phys * 3.5 + t.auto * 1.5,
+        () => `${pct(t.phys)}% урона физическим: Ghost Scepter даёт неуязвимость к нему на время драки`],
+      ["heavens_halberd", core ? 1 : 0.3, t.auto * 6,
+        () => `${pct(t.auto)}% урона пришло автоатаками: Halberd отключает атаку и даёт уклонение`],
+      ["assault", core ? (minutes >= 28 ? 1 : 0) : 0, t.auto * 5 + t.phys * 1.5,
+        () => `${pct(t.auto)}% урона автоатаками: Assault Cuirass даёт броню, а она в лейте решает`],
+      ["shivas_guard", 1, t.phys * 3 + t.magic * 1.2,
+        () => `броня и замедление против физики (${pct(t.phys)}% урона по тебе), плюс режет лечение врагов`],
+      ["solar_crest", core ? 0 : 1, t.auto * 4,
+        () => `${pct(t.auto)}% урона автоатаками: Solar Crest снимает броню врагу и прибавляет её союзнику`],
+      ["butterfly", core ? (minutes >= 30 ? 1 : 0) : 0, t.auto * 3.5,
+        () => `${pct(t.auto)}% урона автоатаками, а уклонение режет часть из них`],
+    ];
+    const popular = new Set(this.proFilter(rows.map((r) => r[0])) || []);
+    const items = this.od.items || {};
+    return rows
+      .filter(([key, w]) => w > 0 && (!Object.keys(items).length || key in items))
+      .map(([key, w, base, why]) => ({ key, score: base * w + (popular.has(key) ? 0.6 : 0), why: why(), popular: popular.has(key) }))
+      .filter((r) => r.score >= BUILD_MIN_SCORE)
+      .sort((a, b) => b.score - a.score);
+  }
+
+  buildPlan() {
+    if (this.minutes < 15) return null;
+    const t = this.threatProfile(this.enemies);
+    if (t.total < 3000) return null;
+    const owned = this.ownedItems();
+    const bought = new Map((this.p.purchase_log || []).map((x) => [x.key, x.time]));
+    const ranked = this.rankCounters(t);
+    const items = ranked.slice(0, BUILD_MAX_ITEMS + 2).map((r) => ({
+      key: r.key, item: this.od.itemName(r.key), why: r.why, popular: r.popular,
+      owned: owned.has(r.key), time: bought.has(r.key) ? bought.get(r.key) : null,
+    }));
+    const missing = items.filter((i) => !i.owned).slice(0, BUILD_MAX_ITEMS);
+    const have = items.filter((i) => i.owned);
+    const facts = [];
+    const pct = (x) => Math.round(x * 100);
+    if (t.total) {
+      const main = Object.entries(t.byType).sort((a, b) => b[1] - a[1])[0];
+      if (main) facts.push(`Основной урон по тебе: ${this.damageTypeNames[main[0]]} (${pct(main[1] / t.total)}%)${t.auto >= 0.4 ? `, автоатаки ${pct(t.auto)}%` : ""}`);
+    }
+    if (t.hard + t.soft > 0) {
+      const top = t.controls.slice(0, 3).map((c) => `${c.name} ×${c.count} (${c.label})`).join(", ");
+      facts.push(`Контроль на тебе: ${top}`);
+    }
+    return { facts, missing, have };
+  }
+
+  checkDispel() {
+    if (this.minutes < 20 || this.dominant) return;
+    const t = this.threatProfile(this.enemies);
+    if (t.anyDispel < 6 || t.silence + t.softDispel < 4) return;
+    const owned = this.ownedItems();
+    const dispels = ["manta", "cyclone", "lotus_orb", "black_king_bar"].filter((k) => owned.has(k));
+    if (dispels.length) return;
+    const names = ["manta", "cyclone", "lotus_orb"].filter((k) => this.od.itemName(k) && (!Object.keys(this.od.items || {}).length || k in this.od.items))
+      .map((k) => this.od.itemName(k)).join(", ");
+    this.add(ITEMS, WARN, "build_dispel", "build_dispel_tip", { n: t.anyDispel, times_word: timesWord(t.anyDispel), items: names });
   }
 
   // ---------- сборка против пика ----------

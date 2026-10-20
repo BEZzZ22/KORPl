@@ -1,7 +1,7 @@
 // Telegram Mini App: разбор матча Dota 2 внутри Телеграма.
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, CATEGORIES, BAD, WARN, GOOD,
-} from "./engine.js?v=9";
+} from "./engine.js?v=10";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -95,6 +95,78 @@ function scoreColor(score) {
 
 function haptic(type = "light") {
   try { if (tg && tg.isVersionAtLeast("6.1")) tg.HapticFeedback.impactOccurred(type); } catch { /* старый клиент */ }
+}
+
+function hapticTick() {
+  try { if (tg && tg.isVersionAtLeast("6.1")) tg.HapticFeedback.selectionChanged(); } catch { /* старый клиент */ }
+}
+
+// Стеклянная панель вкладок: «линза» едет под пальцем, вкладки переключаются, пока водишь по панели
+// live: переключать сразу (разбор) или только когда отпустил палец (нижняя навигация)
+function glassBar(bar, itemSelector, { live, onPick }) {
+  const lens = h("div", { class: "lens", "aria-hidden": "true" });
+  bar.prepend(lens);
+  const items = () => [...bar.querySelectorAll(itemSelector)];
+  let shown = -1, hover = -1, dragging = false, startX = 0, scrubbed = false;
+  const place = (i, instant = false) => {
+    const el = items()[i];
+    if (!el) return;
+    shown = i;
+    if (instant) lens.classList.add("instant");
+    lens.style.setProperty("--x", `${el.offsetLeft}px`);
+    lens.style.setProperty("--w", `${el.offsetWidth}px`);
+    if (instant) requestAnimationFrame(() => requestAnimationFrame(() => lens.classList.remove("instant")));
+    const target = el.offsetLeft - (bar.clientWidth - el.offsetWidth) / 2;
+    if (bar.scrollWidth > bar.clientWidth + 2) bar.scrollTo({ left: Math.max(0, target), behavior: instant ? "auto" : "smooth" });
+  };
+  const indexAt = (x) => {
+    const list = items();
+    let best = 0, bestDist = Infinity;
+    list.forEach((el, i) => {
+      const r = el.getBoundingClientRect();
+      const d = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
+      if (d < bestDist) { bestDist = d; best = i; }
+    });
+    return best;
+  };
+  const pick = (i) => {
+    if (i === hover) return;
+    hover = i;
+    place(i);
+    hapticTick();
+    if (live) onPick(i);
+  };
+  bar.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    dragging = true; scrubbed = false; startX = e.clientX; hover = shown;
+    bar.classList.add("pressed");
+    try { bar.setPointerCapture(e.pointerId); } catch { /* не критично */ }
+    pick(indexAt(e.clientX));
+  });
+  bar.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    if (Math.abs(e.clientX - startX) > 6) scrubbed = true;
+    const r = bar.getBoundingClientRect();
+    if (e.clientX < r.left + 36) bar.scrollLeft -= 10;
+    else if (e.clientX > r.right - 36) bar.scrollLeft += 10;
+    pick(indexAt(e.clientX));
+  });
+  const end = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    bar.classList.remove("pressed");
+    if (!live && e.type !== "pointercancel" && hover >= 0) onPick(hover);
+    else if (!live) place(Math.max(0, items().findIndex((el) => el.classList.contains("active"))));
+  };
+  bar.addEventListener("pointerup", end);
+  bar.addEventListener("pointercancel", end);
+  // Клавиатура и скринридеры: обычный click без указателя
+  bar.addEventListener("click", (e) => {
+    if (e.detail !== 0) return;
+    const i = items().indexOf(e.target.closest(itemSelector));
+    if (i >= 0) { hover = i; place(i); onPick(i); }
+  });
+  return { place, current: () => shown };
 }
 
 async function api(path, { method = "GET", timeout = 20000 } = {}) {
@@ -201,32 +273,36 @@ function navRoot(sec, screen, ...args) {
 }
 
 // Нижняя навигация: собираем один раз, держим вне #app, чтобы не пересобирать при каждом рендере
+const NAV_TABS = ["home", "match", "profile"];
+
 function tabButton(tab, label) {
   const icon = svg("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, svg("path", { d: NAV_ICONS[tab] }));
-  return h("button", {
-    class: "tabbtn", "data-tab": tab, "aria-label": label,
-    onclick: () => {
-      haptic();
-      if (tab === "home") navRoot("home", homeScreen);
-      else if (tab === "profile") navRoot("profile", profileScreen);
-      else if (tab === "match") lastAnalysis ? navRoot("match", analysisScreen, lastAnalysis) : navRoot("match", matchEmpty);
-    },
-  }, icon, h("span", {}, label));
+  return h("button", { class: "tabbtn", "data-tab": tab, "aria-label": label }, icon, h("span", {}, label));
 }
+
+function goTab(tab) {
+  if (tab === "home") navRoot("home", homeScreen);
+  else if (tab === "profile") navRoot("profile", profileScreen);
+  else if (tab === "match") lastAnalysis ? navRoot("match", analysisScreen, lastAnalysis) : navRoot("match", matchEmpty);
+}
+
+let tabLens = null;
 
 function buildTabbar() {
   tabbar = h("nav", { class: "tabbar", role: "tablist" },
     tabButton("home", "Главная"), tabButton("match", "Разбор"), tabButton("profile", "Профиль"));
   document.body.append(tabbar);
+  tabLens = glassBar(tabbar, ".tabbtn", { live: false, onPick: (i) => { haptic(); goTab(NAV_TABS[i]); } });
 }
 
 function updateTabbar() {
   if (!tabbar) return;
-  for (const btn of tabbar.children) {
+  for (const btn of tabbar.querySelectorAll(".tabbtn")) {
     const t = btn.dataset.tab;
     btn.classList.toggle("active", t === section);
     if (t === "match") btn.classList.toggle("disabled", !lastAnalysis);
   }
+  if (tabLens) tabLens.place(Math.max(0, NAV_TABS.indexOf(section)), tabLens.current() < 0);
 }
 
 // ---------- экраны ----------
@@ -553,13 +629,32 @@ function analysisScreen(a) {
   section = "match";
   lastAnalysis = a;
   const f = a.facts;
-  const content = h("div");
+  const content = h("div", { class: "tab-content" });
   const tabs = h("div", { class: "tabs", role: "tablist" });
+  let index = -1, lens = null;
   const select = (i) => {
-    [...tabs.children].forEach((t, j) => t.classList.toggle("active", i === j));
-    content.replaceChildren(h("div", { class: "fade-in" }, TABS[i][1](a)));
+    const dir = index < 0 ? 0 : Math.sign(i - index);
+    index = i;
+    [...tabs.querySelectorAll(".tab")].forEach((t, j) => { t.classList.toggle("active", i === j); t.setAttribute("aria-selected", String(i === j)); });
+    content.replaceChildren(h("div", { class: dir > 0 ? "slide-from-right" : dir < 0 ? "slide-from-left" : "fade-in" }, TABS[i][1](a)));
+    if (lens) lens.place(i);
   };
-  TABS.forEach(([name], i) => tabs.append(h("button", { class: "tab", role: "tab", onclick: () => { haptic(); select(i); } }, name)));
+  TABS.forEach(([name]) => tabs.append(h("button", { class: "tab", role: "tab" }, name)));
+  lens = glassBar(tabs, ".tab", { live: true, onPick: select });
+  // Свайп по содержимому листает вкладки; графики со своим жестом не трогаем
+  let sx = 0, sy = 0, tracking = false;
+  content.addEventListener("touchstart", (e) => {
+    tracking = e.touches.length === 1 && !e.target.closest(".chart, .frame, input");
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+  }, { passive: true });
+  content.addEventListener("touchend", (e) => {
+    if (!tracking) return;
+    tracking = false;
+    const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
+    if (Math.abs(dx) < 64 || Math.abs(dx) < Math.abs(dy) * 1.6) return;
+    const next = index + (dx < 0 ? 1 : -1);
+    if (next >= 0 && next < TABS.length) { hapticTick(); select(next); window.scrollTo({ top: 0 }); }
+  }, { passive: true });
 
   render(
     h("div", { class: "card hero-head" },
@@ -585,10 +680,11 @@ function analysisScreen(a) {
           "Поделиться разбором"),
       ),
     ),
-    tabs,
+    h("div", { class: "tabs-wrap" }, tabs),
     content,
   );
   select(0);
+  lens.place(0, true);
 }
 
 // Шеринг: короткий вердикт + прямая ссылка на этот матч в приложении (растит бота)
@@ -738,12 +834,18 @@ function killersTab(a) {
         h("span", {}, h("i", { class: t }), `${DAMAGE_TYPES[t]} ${Math.round((v / total) * 100)}%`))),
       h("div", { class: "sub" }, "Чем убивал"),
       ...k.sources.map((s) => h("div", { class: "source" }, h("span", {}, s.name), h("b", {}, num(s.damage)))),
-      k.disables.length > 0 && h("div", { class: "sub" }, "Контроль на тебе"),
-      ...k.disables.map((d) => h("div", { class: "source" }, h("span", {}, d.name), h("b", {}, `×${d.count}`))),
+      k.control && k.control.length > 0 && h("div", { class: "sub" }, "Контроль на тебе"),
+      ...(k.control || []).map((c) => h("div", { class: "source control" },
+        h("span", {}, c.name, h("em", {}, ` ${c.label}`)),
+        h("b", {}, `×${c.count}`),
+        h("div", { class: "ctl-tags" },
+          h("i", { class: c.bkb_blocks ? "yes" : "no" }, c.bkb_blocks ? "БКБ блокирует" : "БКБ пробивает"),
+          h("i", { class: c.dispellable ? "yes" : "no" }, c.dispellable ? "снимается диспелом" : "диспел не снимает")))),
       k.mechanics.length > 0 && h("div", { class: "sub" }, "Опасен: " + k.mechanics.join(", ")),
       ...k.tips.map((t) => h("div", { class: "advice" }, t)),
-      k.counter_keys.length > 0 && h("div", { class: "sub" }, "Что берут на твоём герое против него"),
-      k.counter_keys.length > 0 && h("div", { class: "chips" }, ...k.counter_keys.map((key) => itemChip(key, "chip need"))),
+      k.counter_keys.length > 0 && h("div", { class: "sub" }, "Что брать против этого героя"),
+      ...k.counter_keys.map((key) => h("div", { class: "why-row" }, itemChip(key, "chip need"),
+        k.counter_why && k.counter_why[key] && h("div", { class: "small muted" }, k.counter_why[key]))),
       k.had_counter_keys.length > 0 && h("div", { class: "small muted" }, "Уже было: " + k.had_counters.join(", ")),
       roasts[idx] && h("div", { class: "roast" }, roasts[idx]),
     );
@@ -754,7 +856,25 @@ function itemChip(key, cls = "chip") {
   return h("span", { class: cls }, img(dictionary.itemImage(key), null, ""), dictionary.itemName(key));
 }
 
+function buildPlanBlock(a) {
+  const plan = a.build_plan;
+  if (!plan) return null;
+  return h("div", {},
+    h("h2", {}, "Сборка под эту катку"),
+    h("div", { class: "card plan" },
+      ...plan.facts.map((t) => h("div", { class: "plan-fact" }, t)),
+      plan.missing.length === 0 && h("div", { class: "strength" }, "Ничего особенного против тебя не играло: сборка по про-матчам подходит."),
+      ...plan.missing.map((it, i) => h("div", { class: "plan-item" },
+        h("div", { class: "plan-num" }, String(i + 1)),
+        img(dictionary.itemImage(it.key), null, ""),
+        h("div", { class: "grow" },
+          h("div", { class: "plan-name" }, it.item, it.popular && h("span", { class: "tag" }, "берут про")),
+          h("div", { class: "small muted" }, it.why)))),
+      plan.have.length > 0 && h("div", { class: "small muted" }, "Уже было: " + plan.have.map((it) => it.item).join(", "))));
+}
+
 function buildTab(a) {
+  const planBlock = buildPlanBlock(a);
   const pro = a.pro_build.length > 0 && h("div", {},
     h("h2", {}, `Про-сборка ${a.facts.hero}`),
     h("div", { class: "card" },
@@ -772,8 +892,8 @@ function buildTab(a) {
     h("div", { class: "card" }, ...a.items.map((it) =>
       h("div", { class: "item-row" }, img(dictionary.itemImage(it.key), null, ""), h("span", {}, it.item), h("time", {}, mmss(it.time))))),
   );
-  if (!pro && !yours) return h("p", { class: "muted" }, "Крупных предметов не было.");
-  return h("div", {}, pro, yours);
+  if (!pro && !yours && !planBlock) return h("p", { class: "muted" }, "Крупных предметов не было.");
+  return h("div", {}, planBlock, pro, yours);
 }
 
 function compareTab(a) {
@@ -981,7 +1101,7 @@ async function boot() {
     const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
       api("/constants/heroes"), api("/constants/items"), api("/constants/abilities", { timeout: 40000 }),
       api("/constants/item_ids"),
-      fetch("knowledge.json?v=9").then((r) => r.json()), fetch("texts.json?v=9").then((r) => r.json()),
+      fetch("knowledge.json?v=10").then((r) => r.json()), fetch("texts.json?v=10").then((r) => r.json()),
     ]);
     dictionary = createDictionary({ heroes, items, abilities });
     itemIds = ids;

@@ -408,3 +408,113 @@ button:active { transform: scale(.97); }
 .tabbtn.active span { color: #fff; }
 .tabbtn.disabled { opacity: .38; }
 .tabbtn:active { transform: scale(.95); }
+
+/* ---------- жидкое стекло ---------- */
+
+:root {
+  --spring: cubic-bezier(.3, 1.55, .5, 1);
+  --glass-bg: linear-gradient(160deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04) 55%, rgba(255, 255, 255, 0.08));
+  --glass-edge: inset 0 1px 1px rgba(255, 255, 255, 0.45), inset 0 -1px 2px rgba(255, 255, 255, 0.08), 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+button, .tabs, .tabbar { touch-action: manipulation; -webkit-user-select: none; user-select: none; }
+
+/* общая панель: стекло, размывает то, что за ней */
+.tabs, .tabbar {
+  position: relative;
+  background: var(--glass-bg), rgba(22, 16, 16, 0.55);
+  -webkit-backdrop-filter: blur(24px) saturate(1.9);
+  backdrop-filter: blur(24px) saturate(1.9);
+  border: 0;
+  box-shadow: var(--glass-edge), 0 12px 34px rgba(0, 0, 0, 0.5);
+}
+
+/* «линза» под активной вкладкой: едет за пальцем, при нажатии разбухает как капля */
+.lens {
+  position: absolute; top: 5px; bottom: 5px; left: 0; z-index: 0;
+  width: var(--w, 0px);
+  transform: translate3d(var(--x, 0px), 0, 0) scale(1, 1);
+  border-radius: 18px;
+  background:
+    radial-gradient(120% 90% at 30% 0%, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 55%),
+    linear-gradient(160deg, rgba(255, 150, 90, 0.5), rgba(215, 38, 61, 0.34));
+  -webkit-backdrop-filter: blur(8px) saturate(1.7) brightness(1.2);
+  backdrop-filter: blur(8px) saturate(1.7) brightness(1.2);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.7), inset 0 -2px 4px rgba(255, 255, 255, 0.12), 0 0 0 1px rgba(255, 255, 255, 0.16), 0 8px 22px rgba(215, 38, 61, 0.35);
+  transition: transform .5s var(--spring), width .5s var(--spring), box-shadow .3s, filter .3s;
+  pointer-events: none;
+}
+.lens.instant { transition: none; }
+.pressed .lens {
+  transform: translate3d(var(--x, 0px), 0, 0) scale(1.1, 1.16);
+  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.85), inset 0 -2px 6px rgba(255, 255, 255, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.28), 0 12px 30px rgba(215, 38, 61, 0.5);
+  filter: brightness(1.12);
+}
+
+/* вкладки внутри разбора */
+.tabs-wrap { position: sticky; top: 8px; z-index: 5; margin: 14px 0 8px; }
+.tabs {
+  display: flex; gap: 2px; overflow-x: auto; margin: 0; padding: 5px;
+  border-radius: 23px; scrollbar-width: none; position: relative;
+  touch-action: pan-y; overscroll-behavior-x: contain;
+}
+.tab {
+  position: relative; z-index: 1; flex: none; background: transparent; border: 0;
+  color: rgba(242, 234, 223, 0.62); font: 600 14px/1 var(--sans); letter-spacing: 0;
+  padding: 11px 16px; border-radius: 18px; box-shadow: none;
+  transition: color .25s, transform .4s var(--spring);
+}
+.tab.active { background: transparent; color: #fff; box-shadow: none; border: 0; }
+.tab:active { transform: scale(.94); }
+
+/* нижняя навигация */
+.tabbar { border-radius: 26px; padding: 6px; gap: 0; border: 0; }
+.tabbar .lens { top: 6px; bottom: 6px; border-radius: 20px; }
+.tabbtn { position: relative; z-index: 1; background: transparent; box-shadow: none; border-radius: 20px; color: rgba(242, 234, 223, 0.6); }
+.tabbtn.active { background: transparent; box-shadow: none; color: #fff; }
+.tabbtn.active span { color: #fff; }
+.tabbtn svg { transition: transform .45s var(--spring); }
+.tabbtn.active svg { transform: translateY(-1px) scale(1.12); }
+.pressed .tabbtn.active svg { transform: translateY(-2px) scale(1.22); }
+.tabbtn:active { transform: none; }
+
+/* кнопки: стеклянный янтарь вместо плоской заливки */
+button {
+  position: relative; overflow: hidden;
+  background:
+    radial-gradient(130% 120% at 25% 0%, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0) 52%),
+    linear-gradient(160deg, rgba(255, 140, 80, 0.92), rgba(215, 38, 61, 0.88));
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.55), inset 0 -6px 12px rgba(80, 0, 10, 0.22), 0 10px 26px rgba(215, 38, 61, 0.3);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  transition: transform .45s var(--spring), box-shadow .3s, filter .3s;
+}
+button:active { transform: scale(.95); filter: brightness(1.12); box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.7), 0 4px 14px rgba(215, 38, 61, 0.28); }
+button.ghost { background: transparent; border: 0; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+button.ghost:active { filter: none; transform: scale(.97); }
+.tab, .tabbtn { -webkit-backdrop-filter: none; backdrop-filter: none; overflow: visible; }
+
+/* карточки чуть прозрачнее, как стекло */
+.card { background: var(--glass-bg), rgba(18, 13, 13, 0.7); -webkit-backdrop-filter: blur(14px) saturate(1.4); backdrop-filter: blur(14px) saturate(1.4); box-shadow: var(--glass-edge), 0 8px 26px rgba(0, 0, 0, 0.35); border: 0; }
+
+/* листание вкладок */
+.slide-from-right { animation: slideR .42s var(--spring) both; }
+.slide-from-left { animation: slideL .42s var(--spring) both; }
+@keyframes slideR { from { opacity: 0; transform: translateX(34px); } to { opacity: 1; transform: none; } }
+@keyframes slideL { from { opacity: 0; transform: translateX(-34px); } to { opacity: 1; transform: none; } }
+
+/* сборка под катку и контроль */
+.plan-fact { font-size: 14px; color: var(--muted); margin-bottom: 8px; }
+.plan-item { display: grid; grid-template-columns: 26px 44px 1fr; gap: 11px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+.plan-item img { width: 44px; height: 32px; border-radius: 6px; object-fit: cover; background: var(--card-2); }
+.plan-num { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font: 800 13px/1 var(--sans); background: linear-gradient(160deg, rgba(255, 150, 90, 0.9), rgba(215, 38, 61, 0.85)); color: #fff; }
+.plan-name { font-weight: 700; font-size: 15px; }
+.tag { margin-left: 8px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; color: var(--gold); background: rgba(233, 189, 99, 0.14); }
+.why-row { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.source.control { flex-wrap: wrap; row-gap: 5px; }
+.source.control em { font-style: normal; color: var(--muted); font-size: 12px; }
+.ctl-tags { flex-basis: 100%; display: flex; gap: 6px; flex-wrap: wrap; }
+.ctl-tags i { font-style: normal; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
+.ctl-tags i.yes { color: #8fe0a8; background: rgba(110, 200, 140, 0.14); }
+.ctl-tags i.no { color: #ff9a8a; background: rgba(255, 90, 70, 0.14); }
