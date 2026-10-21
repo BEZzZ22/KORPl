@@ -4,6 +4,9 @@
 // (хватит одного, второй будет запасным). Модели: переменные GROQ_MODEL и GEMINI_MODEL.
 // Какой провайдер первый: переменная COACH_PRIMARY = groq (по умолчанию) или gemini.
 
+// Официальный лор героев с dota2.com (tools/fetch-lore.mjs): тренер рассказывает историю героя по нему, а не выдумывает
+import LORE from "./lore.json" with { type: "json" };
+
 const ALLOWED_ORIGINS = ["https://bezzz22.github.io"];
 const GEMINI_MODEL = "gemini-flash-lite-latest";
 const GROQ_MODEL = "openai/gpt-oss-120b";
@@ -433,7 +436,20 @@ const CHAT_SYSTEM = `Ты тренер по Dota 2. Игрок открыл ра
 - Названия героев, предметов и способностей пиши как в игре на английском (Black King Bar, Tiny). Если не уверен в названии способности, не называй её.
 - Про эту катку опирайся только на сводку. Чего в сводке нет (где стоял, что было видно на карте, кто куда ходил), так и скажи: «в данных этого нет», и дай общий совет, явно назвав его общим.
 - Не выдумывай события, время и числа этой катки. Время и числа бери только из сводки. Факты сводки верны: не спорь с ними (если там «убийца стоял на твоей линии», это не ротация).
-- Общие знания о Доте (механики, предметы, контрпики) давать можно, но без точных цифр урона, откатов и процентов: в патчах они меняются.`;
+- Общие знания о Доте (механики, предметы, контрпики) давать можно, но без точных цифр урона, откатов и процентов: в патчах они меняются.
+- Лор героев (кто он, откуда, его история) тоже про Доту. Рассказывай его только по разделу «Лор», если он дан ниже: своими словами, коротко, без выдуманных деталей. Если про нужного героя лора ниже нет, попроси написать имя героя как в игре, на английском.`;
+
+const LORE_RE = /лор|истори|биограф|предыстор|легенд|кто так|кто он|кто она|откуда (он|она|взял)|прошл\S* (геро|у него|у неё)|почему (его|её) (зовут|называ)/i;
+const LORE_CLIP = 2500;
+const LORE_HEROES = Object.values(LORE).map((h) => ({ ...h, re: new RegExp(`(^|[^a-z])(${[h.name, h.key.replace(/_/g, " ")].map((s) => s.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})([^a-z]|$)`, "i") }));
+
+// Лор к вопросу: только если спрашивают про историю. Герои, названные в вопросе, иначе свой герой игрока
+export function loreFor(question, hero) {
+  if (!LORE_RE.test(question)) return "";
+  let found = LORE_HEROES.map((h) => ({ h, at: question.search(h.re) })).filter((x) => x.at >= 0).sort((a, b) => a.at - b.at).map((x) => x.h);
+  if (!found.length) found = LORE_HEROES.filter((h) => h.name.toLowerCase() === String(hero || "").toLowerCase());
+  return found.slice(0, 2).map((h) => `${h.name} — ${h.short}\n${clipText(h.bio, LORE_CLIP)}`).join("\n\n");
+}
 
 const OFFTOPIC_REPLY = "Я тренер по Доте и говорю только про игру. Спроси про эту катку: моменты, сборку, линию или драки.";
 // Явные попытки увести тренера от Доты отсекаем до запроса к модели: так ключ не тратится
@@ -457,9 +473,10 @@ export function cleanChat(text) {
   return { text: t, offtopic: false };
 }
 
-function chatSystem(raw, coach) {
+function chatSystem(raw, coach, lore = "") {
   const parts = [CHAT_SYSTEM, `Сводка катки:\n${buildPrompt(raw)}`];
   if (coach) parts.push(`Твой разбор этой катки:\n${clipText(coach, 1600)}`);
+  if (lore) parts.push(`Лор:\n${lore}`);
   return parts.join("\n\n");
 }
 
@@ -471,7 +488,7 @@ export async function chat(env, raw, { question, history, coach } = {}, budget =
   const messages = [...chatHistory(history), { role: "user", content: q }];
   // Gemini требует, чтобы переписка начиналась с user
   while (messages[0].role !== "user") messages.shift();
-  return firstAnswer(env, messages, chatSystem(raw, coach), budget, cleanChat);
+  return firstAnswer(env, messages, chatSystem(raw, coach, loreFor(q, raw && raw.hero)), budget, cleanChat);
 }
 
 // Без попыток с подсказками: ответ первого провайдера, который ответил

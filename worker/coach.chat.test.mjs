@@ -1,7 +1,16 @@
 // Тесты Claude, чата, сравнения, KV (кэш, расход), уведомлений и карточек: node --test worker/
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker, { buildPrompt, normalize, ask, chat, cleanChat, compare, telegramUser, checkWatches, usageStats } from "./coach.js";
+import worker, { buildPrompt, normalize, ask, chat, cleanChat, compare, telegramUser, checkWatches, usageStats, loreFor } from "./coach.js";
+
+test("loreFor: лор только на вопрос про историю; герой из вопроса, иначе свой", () => {
+  assert.equal(loreFor("что собирать против Tiny?", "Tusk"), "");
+  assert.match(loreFor("расскажи историю моего героя", "Tusk"), /^Tusk — [\s\S]*Имир/);
+  const both = loreFor("кто такой Invoker и какой лор у Pudge?", "Tusk");
+  assert.match(both, /^Invoker — /);
+  assert.match(both, /\n\nPudge — /);
+  assert.doesNotMatch(both, /Имир/);
+});
 
 const raw = {
   hero: "Juggernaut", role: "керри (поз. 1)", rank: "Страж", won: false, kda: "3/9/4", duration: 2400,
