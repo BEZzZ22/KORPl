@@ -2,7 +2,7 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric,
   CATEGORIES, BAD, WARN, GOOD,
-} from "./engine.js?v=22";
+} from "./engine.js?v=23";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -89,6 +89,15 @@ function imgFallback(e) {
   const el = e.currentTarget;
   if (el.src.startsWith(STEAM_CDN)) el.src = STEAM_MIRROR + el.src.slice(STEAM_CDN.length);
   else el.classList.add("img-missing");
+}
+
+// Вертикальный портрет, как в сетке героев в Доте. У новых героев (Muerta, Marci…) его нет — тогда обычная картинка, обрезанная по центру
+function portrait(x) {
+  return h("img", { src: `${STEAM_CDN}/apps/dota2/images/heroes/${x.key}_vert.jpg`, class: "hero-vert", alt: x.name, loading: "lazy",
+    onerror: (e) => {
+      const el = e.currentTarget;
+      if (!el.classList.contains("wide")) { el.classList.add("wide"); el.src = STEAM_CDN + x.img; } else imgFallback(e);
+    } });
 }
 
 function heroImg(heroId, cls = "hero-img") {
@@ -841,14 +850,15 @@ async function draftScreen() {
   const drawGrid = () => {
     const q = search.value.trim().toLowerCase();
     const list = all.filter((x) => !enemies.includes(x.id) && (!q || x.name.toLowerCase().includes(q)));
-    const tile = (x) => h("button", { type: "button", class: "draft-hero", "aria-label": x.name, disabled: enemies.length >= 5,
+    const tile = (x) => h("button", { type: "button", class: "draft-hero", "aria-label": x.name, title: x.name, disabled: enemies.length >= 5,
       onclick: () => { if (enemies.length < 5) { enemies.push(x.id); hapticTick(); search.value = ""; drawChosen(); drawGrid(); } } },
-    img(x.img, "hero-img"), h("span", {}, x.name));
+    portrait(x));
     const groups = HERO_ATTRS.map(([attr, label]) => [label, attr, list.filter((x) => x.attr === attr)])
       .concat([["Другие", "", list.filter((x) => !HERO_ATTRS.some(([a]) => a === x.attr))]]);
-    grid.replaceChildren(...groups.filter(([, , xs]) => xs.length).flatMap(([label, attr, xs]) =>
-      [h("div", { class: `draft-attr ${attr}` }, label), ...xs.map(tile)]));
-    if (!list.length) grid.append(h("p", { class: "muted small draft-attr" }, "Нет такого героя. Имя пиши по-английски, как в игре."));
+    grid.replaceChildren(...groups.filter(([, , xs]) => xs.length).map(([label, attr, xs]) =>
+      h("section", { class: `attr-block ${attr}` }, h("div", { class: "draft-attr" }, h("i", { "aria-hidden": "true" }), label),
+        h("div", { class: "attr-tiles" }, ...xs.map(tile)))));
+    if (!list.length) grid.append(h("p", { class: "muted small" }, "Нет такого героя. Имя пиши по-английски, как в игре."));
   };
   search.addEventListener("input", drawGrid);
   goBtn.onclick = async () => {

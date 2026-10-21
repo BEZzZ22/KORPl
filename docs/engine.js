@@ -343,7 +343,7 @@ export function createDictionary({ heroes, items, abilities }) {
   }
   const od = {
     items,
-    heroList: () => Object.values(heroes).map((h) => ({ id: h.id, name: h.localized_name, img: h.img, attr: h.primary_attr }))
+    heroList: () => Object.values(heroes).map((h) => ({ id: h.id, name: h.localized_name, img: h.img, attr: h.primary_attr, key: h.name.replace("npc_dota_hero_", "") }))
       .sort((a, b) => a.name.localeCompare(b.name)),
     heroName: (id) => heroNames[id] ?? `герой #${id}`,
     heroKey: (id) => heroKeys[id] ?? "",

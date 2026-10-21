@@ -148,7 +148,8 @@ async function handleRoute(route) {
     return url.pathname.endsWith(`/r/${match.match_id}.json`) ? route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(REPLAY) }) : route.fulfill({ status: 404, body: "" });
   }
   if (url.hostname === "telegram.org") return route.fulfill({ status: 200, contentType: "text/javascript", body: "" });
-  if (/steamstatic\.com$/.test(url.hostname)) return route.fulfill({ status: 200, contentType: "image/png", body: PLACEHOLDER });
+  // UI_IMAGES=1 — настоящие картинки Steam (посмотреть вид глазами), иначе заглушка
+  if (/steamstatic\.com$/.test(url.hostname)) return process.env.UI_IMAGES ? route.continue() : route.fulfill({ status: 200, contentType: "image/png", body: PLACEHOLDER });
   if (/fonts\.(googleapis|gstatic)\.com$/.test(url.hostname)) return process.env.UI_OFFLINE ? route.abort() : route.continue();
   return route.abort();
 }
@@ -270,9 +271,21 @@ await step("draft", async () => {
   await page.locator('.tabbtn[data-tab="home"]').click();
   await page.locator(".draft-entry").click();
   await page.waitForSelector(".draft-hero", { timeout: 10000 });
+  // сетка как в Доте: Сила, Ловкость, Интеллект, Универсальные; портреты без подписей
+  const blocks = await page.locator(".attr-block .draft-attr").allTextContents();
+  if (blocks.join(",") !== "Сила,Ловкость,Интеллект,Универсальные") throw new Error(`блоки атрибутов: ${blocks}`);
+  if (process.env.UI_IMAGES) {
+    // все портреты сразу, а не по мере прокрутки; потом список тех, что не загрузились
+    await page.evaluate(() => document.querySelectorAll(".hero-vert").forEach((i) => { i.loading = "eager"; }));
+    await page.waitForTimeout(6000);
+    const broken = await page.evaluate(() => [...document.querySelectorAll(".hero-vert")]
+      .filter((i) => !i.complete || !i.naturalWidth || i.classList.contains("img-missing")).map((i) => `${i.alt} ${i.src}`));
+    console.log(`портретов без картинки: ${broken.length}${broken.length ? `\n${broken.join("\n")}` : ""}`);
+  }
+  await shot("draft-grid");
   for (const name of ["Tiny", "Clinkz", "Enigma"]) {
     await page.locator('input[type="search"]').fill(name);
-    await page.locator(".draft-hero", { hasText: name }).first().click();
+    await page.locator(`.draft-hero[aria-label="${name}"]`).first().click();
   }
   await page.locator(".draft-go").click();
   await page.waitForSelector(".draft-row", { timeout: 15000 });
