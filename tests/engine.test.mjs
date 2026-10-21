@@ -447,3 +447,29 @@ test("сборка под пик на настоящем docs/builds.json: у к
     assert.ok(plan.counters.every((c) => !core.has(c.key)));
   }
 });
+
+import { skillPlan } from "../docs/engine.js";
+
+test("прокачка: очки к 10 уровню против про, ульта, первый скилл и таланты (выбор — взятый раньше)", () => {
+  const b = {
+    heroes: { 85: { 5: { g: 400 } } },
+    skills: { 85: { 5: { first: 1, first_share: 96, ult: 4, p10: { 1: 3.8, 2: 1.4, 3: 3.4, 4: 1 }, talents: [[1, [11, 80], [12, 20]], [2, [21, 55], [22, 45]]] } } },
+    names: { 85: { 1: "Decay", 2: "Soul Rip", 3: "Tombstone", 4: "Flesh Golem", 11: "+Decay Damage", 12: "-Tombstone Cooldown", 21: "A", 22: "B" } },
+  };
+  // максил Soul Rip вместо Decay, ульту не взял, на 1 уровне Tombstone, на 10 — непопулярный талант (а на 30 добрал второй)
+  const ups = [3, 2, 2, 3, 2, 2, 1, 3, 3, 12, 1, 1, 4, 21, 4, 4, 11];
+  const sp = skillPlan(b, 85, 5, ups);
+  assert.deepEqual(sp.abilities.map((a) => [a.name, a.you]), [["Decay", 1], ["Tombstone", 4], ["Soul Rip", 4], ["Flesh Golem", 0]]);
+  assert.ok(sp.notes.some((n) => /Про первым максят Decay/.test(n)), sp.notes.join(" | "));
+  assert.ok(sp.notes.some((n) => /Flesh Golem так и не взята/.test(n)));
+  assert.ok(sp.notes.some((n) => /На 1 уровне про почти всегда \(96%\) берут Decay, ты взял Tombstone/.test(n)));
+  assert.ok(sp.notes.some((n) => /На 10 уровне про в 80% берут «\+Decay Damage», ты взял «-Tombstone Cooldown»/.test(n)));
+  assert.equal(sp.talents[0].options.find((o) => o.id === 11).picked, false);
+  assert.ok(!sp.notes.some((n) => /На 15 уровне/.test(n))); // 55% — не повод
+  // без прокачки игрока (драфт) — только про
+  const pro = skillPlan(b, 85, 4);
+  assert.equal(pro.pos, 5);
+  assert.equal(pro.abilities[0].you, null);
+  assert.deepEqual(pro.notes, []);
+  assert.equal(skillPlan({ skills: {} }, 1, 1), null);
+});

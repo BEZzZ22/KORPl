@@ -636,6 +636,7 @@ class MatchAnalyzer {
       draft: this.draftReview(),
       build_plan: this.buildPlan(),
       item_plan: this.itemPlan(),
+      skill_plan: skillPlan(this.builds, this.p.hero_id, this.pos, this.p.ability_upgrades_arr),
     };
   }
 
@@ -3206,6 +3207,59 @@ export function itemPlan({ builds, guides, od, knowledge, heroId, pos, enemies =
     early: base.early.map(mark), core, counters, notes,
     sit: base.sit.filter((r) => !counters.some((c) => c.key === r[0])).slice(0, 8).map(row),
     core_have: owned ? coreKeys.filter((r) => r.owned).length : null, core_total: coreKeys.length, turbo,
+  };
+}
+
+// ---------- прокачка ----------
+
+const TALENT_LEVEL = { 1: 10, 2: 15, 3: 20, 4: 25 };
+
+// Прокачка про на позиции против прокачки игрока (upgrades — ability_upgrades_arr OpenDota: id по порядку уровней).
+// К 10 уровню: сколько очков в каждой способности; таланты: что берут на каждом уровне
+export function skillPlan(builds, heroId, pos, upgrades = null) {
+  const byPos = builds && builds.skills && builds.skills[heroId];
+  if (!byPos) return null;
+  const used = byPos[pos] ? pos : Object.keys(byPos).map(Number)
+    .sort((a, b) => (POS_GROUP(b) === POS_GROUP(pos)) - (POS_GROUP(a) === POS_GROUP(pos)) || ((builds.heroes[heroId] || {})[b] || {}).g - ((builds.heroes[heroId] || {})[a] || {}).g)[0];
+  const sp = byPos[used];
+  if (!sp) return null;
+  const names = (builds.names && builds.names[heroId]) || {};
+  const name = (id) => names[id] || String(id);
+  const ups = Array.isArray(upgrades) ? upgrades : null;
+  const you = {};
+  if (ups) for (const id of ups.slice(0, 10)) you[id] = (you[id] || 0) + 1;
+  const abilities = Object.entries(sp.p10).map(([id, avg]) => ({ id: Number(id), name: name(id), pro: avg, you: ups ? you[id] || 0 : null, ult: Number(id) === sp.ult }))
+    .sort((a, b) => a.ult - b.ult || b.pro - a.pro);
+  // к 30 уровню берут оба таланта ряда: выбор — тот, что взят раньше
+  const at = (id) => (ups ? ups.indexOf(id) : -1);
+  const talents = (sp.talents || []).map(([tier, ...opts]) => {
+    const chosen = ups ? opts.map(([id]) => id).filter((id) => at(id) >= 0).sort((a, b) => at(a) - at(b))[0] : null;
+    return {
+      level: TALENT_LEVEL[tier] || tier,
+      options: opts.map(([id, rate]) => ({ id, name: name(id), rate, picked: ups ? id === chosen : null })),
+    };
+  });
+  const notes = [];
+  if (ups && ups.length >= 10) {
+    const basic = abilities.filter((a) => !a.ult);
+    // максит первым не то, что про: в главный скилл про недовложился, в другой — перевложился
+    const proTop = basic[0];
+    const over = [...basic].filter((a) => a !== proTop).sort((a, b) => (b.you - b.pro) - (a.you - a.pro))[0];
+    if (proTop && over && proTop.you <= proTop.pro - 1.5 && over.you - over.pro >= 1.5) {
+      notes.push(`Про первым максят ${proTop.name}: к 10 уровню в среднем ${tenths(proTop.pro)}, у тебя ${proTop.you}, зато в ${over.name} ${over.you} (у про ${tenths(over.pro)})`);
+    }
+    if (sp.first && sp.first_share >= 90 && ups[0] !== sp.first) notes.push(`На 1 уровне про почти всегда (${sp.first_share}%) берут ${name(sp.first)}, ты взял ${name(ups[0])}`);
+    const ult = abilities.find((a) => a.ult);
+    if (ult && ult.pro >= 0.9 && ult.you === 0) notes.push(`К 10 уровню ${ult.name} так и не взята, а про берут её на 6`);
+    for (const t of talents) {
+      const mine = t.options.find((o) => o.picked), best = [...t.options].sort((a, b) => b.rate - a.rate)[0];
+      if (mine && best && mine.id !== best.id && best.rate >= 70) notes.push(`На ${t.level} уровне про в ${best.rate}% берут «${best.name}», ты взял «${mine.name}»`);
+    }
+  }
+  const firstPick = ups && ups.length ? ups[0] : null;
+  return {
+    pos: used, want: pos, abilities, talents, notes,
+    first: sp.first ? { id: sp.first, name: name(sp.first), share: sp.first_share, you: firstPick == null ? null : firstPick === sp.first } : null,
   };
 }
 

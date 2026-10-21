@@ -1,8 +1,8 @@
 // Telegram Mini App: разбор матча Dota 2 внутри Телеграма.
 import {
-  analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan,
+  analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan, skillPlan,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
-} from "./engine.js?v=28";
+} from "./engine.js?v=29";
 import { aegisBadge, openShowcase } from "./aegis.js?v=1";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
@@ -927,7 +927,8 @@ function draftPlanPanel(heroId, enemies, role) {
         type: "button", class: `pos-chip ${byPos[p] ? "" : "rare"}`, "aria-pressed": String(p === pos),
         onclick: () => { if (p !== pos) { pos = p; hapticTick(); draw(); } },
       }, `поз. ${p}`))),
-      plan ? itemPlanCard(plan) : h("p", { class: "muted small" }, "По этому герою пока нет сборок."));
+      plan ? itemPlanCard(plan) : h("p", { class: "muted small" }, "По этому герою пока нет сборок."),
+      skillCard(skillPlan(builds, heroId, pos)));
   };
   draw();
   return box;
@@ -1464,7 +1465,8 @@ function coachPayload(a) {
     hero: f.hero, role: s.role || "", rank: s.rank || "", won: f.won, kda: f.kda, duration: f.duration,
     problems: (s.problems || []).slice(0, 3).map((p) => ({ title: p.title, fact: p.fact, action: p.action })),
     strengths: (s.strengths || []).slice(0, 2).map((x) => ({ title: x.title, fact: x.fact })),
-    micro: a.findings.filter((x) => x.kind === "micro" && x.severity !== GOOD).slice(0, 4).map((x) => ({ text: x.text, tip: x.tip })),
+    micro: [...a.findings.filter((x) => x.kind === "micro" && x.severity !== GOOD).map((x) => ({ text: x.text, tip: x.tip })),
+      ...((a.skill_plan && a.skill_plan.notes) || []).map((t) => ({ text: `Прокачка: ${t}` }))].slice(0, 4),
     plan: a.build_plan ? a.build_plan.missing.slice(0, 3).map((i) => ({ item: i.item, why: i.why })) : [],
     draft: a.draft ? a.draft.notes.slice(0, 2).map((n) => n.text) : [],
     episodes: (a.episodes || []).slice(0, 4).map((e) => ({ clock: e.clock, kind: e.kind, facts: e.facts })),
@@ -2323,7 +2325,8 @@ function laneDuelBlock(a) {
 
 const timingCache = new Map();
 function itemTimingBlock(a) {
-  const core = (a.items || []).filter((it) => it.time > 0);
+  // готовые предметы: компонент, ушедший в сборку (Demon Edge в Daedalus), сравнивать нет смысла
+  const core = ((a.timeline && a.timeline.items) || a.items || []).filter((it) => it.time > 0);
   if (!core.length) return null;
   const box = h("div", {}, h("h2", {}, "Тайминги предметов"), h("div", { class: "card small muted" }, "Сравниваю с играми на герое..."));
   const seq = navSeq;
@@ -2447,15 +2450,38 @@ function itemPlanCard(p, { after = false, facts = [] } = {}) {
     after && p.turbo && h("p", { class: "small muted" }, "Это турбо: время покупки с обычными играми про не сравниваю."));
 }
 
+const tenth = (x) => String(Math.round(x * 10) / 10).replace(".", ",");
+
+// Прокачка: очки в способностях к 10 уровню и таланты — у тебя и у про на этой позиции
+function skillCard(sp, { after = false } = {}) {
+  if (!sp) return null;
+  const head = after ? [h("span", {}, ""), h("b", {}, "ты"), h("b", {}, "про")] : [h("span", {}, ""), h("b", {}, "про")];
+  return h("div", { class: "card skills" },
+    h("div", { class: "small muted" }, sp.pos === sp.want ? "Очков в способностях к 10 уровню и таланты, по про-матчам на этой позиции."
+      : `На позиции ${sp.want} про его почти не играют: прокачка ${POS_GEN[sp.pos]}.`),
+    ...sp.notes.map((t) => h("p", { class: "small plan-extra" }, t)),
+    h("div", { class: `sk-grid ${after ? "" : "pro-only"}` }, ...head,
+      ...sp.abilities.flatMap((ab) => [
+        h("span", { class: "sk-name" }, ab.name, ab.ult && h("small", {}, " ульта")),
+        after && h("span", { class: `sk-v ${ab.you != null && Math.abs(ab.you - ab.pro) >= 1.5 ? "off" : ""}` }, String(ab.you ?? "—")),
+        h("span", { class: "sk-v muted" }, tenth(ab.pro)),
+      ].filter(Boolean))),
+    sp.first && h("p", { class: "small muted" }, `На 1 уровне про берут ${sp.first.name} (${sp.first.share}%).`),
+    sp.talents.length > 0 && h("div", { class: "ip-label" }, "Таланты"),
+    ...sp.talents.map((t) => h("div", { class: "sk-talent" }, h("b", {}, String(t.level)),
+      ...t.options.map((o) => h("span", { class: `sk-opt ${o.picked ? "picked" : ""} ${o.rate >= 60 ? "pop" : ""}` }, o.name, h("small", {}, ` ${o.rate}%`))))));
+}
+
 function buildTab(a) {
   const plan = a.item_plan && h("div", {}, h("h2", {}, "Сборка под этот пик"), itemPlanCard(a.item_plan, { after: true, facts: a.item_plan.facts || [] }));
+  const skills = a.skill_plan && h("div", {}, h("h2", {}, "Прокачка"), skillCard(a.skill_plan, { after: true }));
   const yours = a.items.length > 0 && h("div", {},
     h("h2", {}, "Твои предметы"),
     h("div", { class: "card" }, ...a.items.map((it) =>
       h("div", { class: "item-row" }, img(dictionary.itemImage(it.key), null, ""), h("span", {}, it.item), h("time", {}, mmss(it.time))))),
   );
-  if (!plan && !yours) return h("p", { class: "muted" }, "Крупных предметов не было.");
-  return h("div", {}, plan, itemTimingBlock(a), yours);
+  if (!plan && !yours && !skills) return h("p", { class: "muted" }, "Крупных предметов не было.");
+  return h("div", {}, plan, skills, itemTimingBlock(a), yours);
 }
 
 const HINT_KEY = "charts_hint_seen";

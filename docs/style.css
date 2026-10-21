@@ -865,3 +865,17 @@ body { background: transparent; }
 .pos-chip:active { transform: none; }
 .own-heroes { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 8px; margin-top: 10px; }
 .own-hero-name { margin: 14px 0 8px; font-size: 18px; }
+
+/* прокачка */
+.skills .sk-grid { display: grid; grid-template-columns: 1fr 44px 44px; gap: 8px 10px; align-items: center; margin-top: 10px; font-size: 14px; }
+.skills .sk-grid.pro-only { grid-template-columns: 1fr 44px; }
+.skills .sk-grid > b { font-size: 11px; color: var(--muted); text-transform: uppercase; text-align: right; }
+.skills .sk-name small { color: var(--muted); font-size: 11px; }
+.skills .sk-v { text-align: right; font: 700 14px/1 var(--display); font-variant-numeric: tabular-nums; }
+.skills .sk-v.off { color: #f0a54a; }
+.skills .sk-talent { display: grid; grid-template-columns: 28px 1fr 1fr; gap: 8px; align-items: stretch; padding: 6px 0; border-top: 1px solid var(--line); font-size: 12.5px; }
+.skills .sk-talent > b { font: 700 13px/1 var(--display); color: var(--aegis); align-self: center; }
+.skills .sk-opt { padding: 6px 8px; border-radius: 8px; background: rgba(255, 255, 255, 0.03); color: var(--muted); }
+.skills .sk-opt.pop { color: var(--text); }
+.skills .sk-opt.picked { box-shadow: inset 0 0 0 1.5px var(--radiant); color: var(--text); }
+.skills .sk-opt small { color: var(--muted); }

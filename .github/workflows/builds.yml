@@ -1,0 +1,52 @@
+# Сборки под героя и позицию: раз в неделю пересчитываем по про-матчам текущего патча (OpenDota explorer)
+# и обновляем гайды Хана из Steam. После нового патча сборки подтянутся сами, как только про сыграют матчи.
+# Секреты не нужны: OpenDota и Steam публичные, коммит делает встроенный GITHUB_TOKEN.
+name: Сборки героев
+
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: builds
+  cancel-in-progress: false
+
+jobs:
+  builds:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Сборки про по позициям
+        run: node tools/fetch-builds.mjs
+
+      - name: Гайды Хана
+        # Steam иногда отвечает ошибкой: старый файл лучше, чем упавшая сборка
+        run: node tools/fetch-khan-builds.mjs || git checkout docs/khan_builds.json
+
+      - name: Проверка
+        run: |
+          node -e '
+            const b = require("./docs/builds.json");
+            const pos = Object.values(b.heroes).reduce((s, h) => s + Object.keys(h).length, 0);
+            if (b.matches < 500 || pos < 150) { console.error(`мало данных: матчей ${b.matches}, позиций ${pos}`); process.exit(1); }
+            console.log(`патч ${b.patch}: матчей ${b.matches}, позиций ${pos}`);
+          '
+
+      - name: Сохранить
+        run: |
+          git config user.name "builds-bot"
+          git config user.email "builds-bot@users.noreply.github.com"
+          git add docs/builds.json docs/khan_builds.json
+          git diff --cached --quiet && { echo "без изменений"; exit 0; }
+          git commit -q -m "Сборки: $(node -p 'const b=require("./docs/builds.json"); `патч ${b.patch}, ${b.matches} матчей`')"
+          git push -q

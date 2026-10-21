@@ -25,8 +25,17 @@ const sql = (q) => get(`/explorer?sql=${encodeURIComponent(q)}`).then((j) => j.r
 
 const patches = await get("/constants/patch");
 const patch = patches.find((p) => p.name === process.argv[2]) || patches[patches.length - 1];
-const since = Math.floor(new Date(patch.date).getTime() / 1000);
+let since = Math.floor(new Date(patch.date).getTime() / 1000);
+let label = patch.name;
 const items = await get("/constants/items");
+// В первые недели патча про-матчей мало: считаем вместе с прошлым патчем, чтобы сборки не были случайными
+const MIN_MATCHES = 1500;
+const [{ n: fresh }] = await get(`/explorer?sql=${encodeURIComponent(`select count(*) n from matches where start_time > ${since} and duration > 1200`)}`).then((j) => j.rows);
+if (+fresh < MIN_MATCHES && patches.indexOf(patch) > 0) {
+  const prev = patches[patches.indexOf(patch) - 1];
+  since = Math.floor(new Date(prev.date).getTime() / 1000);
+  label = `${prev.name}–${patch.name}`;
+}
 
 const BASE = `base as (
  select pm.match_id, pm.hero_id, pm.player_slot, pm.lane_role, pm.net_worth,
@@ -74,6 +83,22 @@ union all select hero_id, pos, enemy, '__total', n from tot`));
   await sleep(500);
 }
 
+// 4. Прокачка: какой скилл берут на 1 уровне, сколько очков в каждом к 10 уровню, какие таланты
+const skillRows = [];
+for (let a = 1; a <= 160; a += 8) {
+  skillRows.push(...await sql(`with ${BASE}, pos as (select *, ${POS} as pos from base where hero_id between ${a} and ${a + 7}),
+up as (
+ select p.hero_id, p.pos, u.ab, u.lvl
+ from pos p join player_matches pm on pm.match_id = p.match_id and pm.player_slot = p.player_slot, unnest(pm.ability_upgrades_arr) with ordinality u(ab, lvl))
+select hero_id, pos, ab, sum(case when lvl = 1 then 1 else 0 end) l1, sum(case when lvl <= 10 then 1 else 0 end) p10, count(*) n
+from up group by 1,2,3`));
+  await sleep(500);
+}
+const abilityIds = await get("/constants/ability_ids");
+const heroAbilities = await get("/constants/hero_abilities");
+const abilities = await get("/constants/abilities");
+const heroKeys = Object.fromEntries(Object.values(await get("/constants/heroes")).map((h) => [h.id, h.name]));
+
 // ---------- сборка по позиции ----------
 const STANDALONE = new Set(["blink", "aghanims_shard", "gem"]);
 const isFinal = (k) => STANDALONE.has(k) || (!!items[k] && !!items[k].components && !/dispenser|recipe/.test(k) && !/consumable/.test(items[k].qual || ""));
@@ -114,6 +139,53 @@ for (const gm of games) {
   const b = buildFor(rows, g, +gm.pos);
   delete b._byKey;
   (heroes[gm.hero_id] = heroes[gm.hero_id] || {})[gm.pos] = { g, wr: pct(+gm.w, g), ...b };
+}
+
+// ---------- прокачка ----------
+// Название таланта без цифр (в справочнике вместо них подстановки): «+{s:bonus} Decay Damage» -> «+Decay Damage»
+const talentName = (key) => String((abilities[key] || {}).dname || key).replace(/\{s:[^}]+\}(s|%)?/g, "").replace(/^([+-])\s+/, "$1")
+  .replace(/\s+/g, " ").trim().replace(/^of /, "");
+const skills = {}, names = {};
+for (const gm of games) {
+  const g = +gm.g;
+  if (g < 20) continue;
+  const heroKey = heroKeys[gm.hero_id];
+  const ha = heroAbilities[heroKey];
+  if (!ha) continue;
+  const rows = skillRows.filter((x) => x.hero_id === gm.hero_id && x.pos === gm.pos);
+  const keyOf = (id) => abilityIds[String(id)];
+  const basic = new Set(ha.abilities.filter((k) => k && k !== "generic_hidden"));
+  const p10 = {}, l1 = [];
+  for (const r of rows) {
+    const k = keyOf(r.ab);
+    if (!basic.has(k)) continue;
+    p10[r.ab] = Math.round((+r.p10 / g) * 10) / 10;
+    if (+r.l1) l1.push([+r.ab, +r.l1]);
+  }
+  const first = l1.sort((a, b) => b[1] - a[1])[0];
+  // таланты: на каждом уровне (10, 15, 20, 25) доля левого и правого среди тех, кто взял хоть один
+  const talents = [];
+  const byTier = {};
+  for (const t of ha.talents || []) (byTier[t.level] = byTier[t.level] || []).push(t.name);
+  for (const [tier, pair] of Object.entries(byTier)) {
+    const counts = pair.map((k) => {
+      const id = Object.keys(abilityIds).find((i) => abilityIds[i] === k);
+      const r = id && rows.find((x) => String(x.ab) === id);
+      return { id: id ? +id : null, n: r ? +r.n : 0 };
+    });
+    const total = counts.reduce((s2, c) => s2 + c.n, 0);
+    if (total < 10 || counts.some((c) => c.id == null)) continue;
+    talents.push([+tier, ...counts.map((c) => [c.id, Math.round((c.n / total) * 100)])]);
+  }
+  (skills[gm.hero_id] = skills[gm.hero_id] || {})[gm.pos] = { first: first ? first[0] : null, first_share: first ? Math.round((first[1] / g) * 100) : null, p10, talents };
+  // имена: способности героя и таланты, по id из ability_upgrades_arr
+  const hn = (names[gm.hero_id] = names[gm.hero_id] || {});
+  for (const id of Object.keys(p10)) hn[id] = (abilities[keyOf(id)] || {}).dname || keyOf(id);
+  for (const t of talents) for (const [id] of t.slice(1)) hn[id] = talentName(keyOf(id));
+  // ульта — последняя прокачиваемая способность в списке героя (у Undying: decay, soul_rip, tombstone, …, flesh_golem)
+  const idOf = (k) => Object.keys(abilityIds).find((i) => abilityIds[i] === k);
+  const ultKey = [...ha.abilities].reverse().find((k) => basic.has(k) && p10[idOf(k)] != null);
+  skills[gm.hero_id][gm.pos].ult = ultKey ? +idOf(ultKey) : null;
 }
 
 // ---------- против кого что берут ----------
@@ -169,6 +241,6 @@ for (const [k, n] of obs) {
 }
 for (const grp of Object.values(vs)) for (const [e, list] of Object.entries(grp)) grp[e] = list.sort((a, b) => b[1] - a[1]).slice(0, 6);
 
-const out = { patch: patch.name, since: patch.date.slice(0, 10), fetched: new Date().toISOString().slice(0, 10), matches: +total, heroes, vs };
+const out = { patch: label, since: new Date(since * 1000).toISOString().slice(0, 10), fetched: new Date().toISOString().slice(0, 10), matches: +total, heroes, vs, skills, names };
 writeFileSync(new URL("../docs/builds.json", import.meta.url), JSON.stringify(out));
-console.log(`патч ${patch.name}: матчей ${total}, героев ${Object.keys(heroes).length}, позиций ${Object.values(heroes).reduce((s, h) => s + Object.keys(h).length, 0)}`);
+console.log(`патч ${label}: матчей ${total}, героев ${Object.keys(heroes).length}, позиций ${Object.values(heroes).reduce((s, h) => s + Object.keys(h).length, 0)}`);
