@@ -150,36 +150,82 @@ function medal(score) {
   return el;
 }
 
-// Знак приложения: Аегис Бессмертного. Золотой щит с рогами, грань по центру и камень;
-// плавает и поворачивается в 3D (style.css .aegis). id градиентов уникальны: знак бывает на экране не один
+// Знак приложения: Аегис чемпионов. Круглый щит с завитком-волной сверху справа, волна через поле,
+// розетка с камнем в центре, камни по ободу. Объём настоящий: под лицевой стороной стопка силуэтов
+// (толщина ребра в CSS 3D), щит поворачивается, по металлу бежит блик, пальцем можно покрутить.
+// id градиентов уникальны: знак бывает на экране не один
+const AEGIS_RIM = "M98 14C50 16 14 52 14 104C14 152 52 190 100 190C148 190 186 152 186 106C186 84 179 66 168 54C178 46 183 36 184 22C166 22 146 28 132 40C122 26 112 16 98 14Z";
+const AEGIS_EDGE = 9; // слоёв ребра
 let aegisSeq = 0;
 function aegis() {
   const id = `ae${++aegisSeq}`;
-  const shield = "M32 3C37 9 45 10 53 7L60 5C58 15 58 25 56 34C53 48 44 60 32 69C20 60 11 48 8 34C6 25 6 15 4 5L11 7C19 10 27 9 32 3Z";
-  const inner = "M32 11C36 15 43 16 50 14C49 22 49 29 47.5 35C45 45 39.5 54 32 60C24.5 54 19 45 16.5 35C15 29 15 22 14 14C21 16 28 15 32 11Z";
-  return h("div", { class: "aegis", role: "img", "aria-label": "Аегис" },
-    svg("svg", { viewBox: "0 0 64 72", "aria-hidden": "true" },
-      svg("defs", {},
-        svg("linearGradient", { id: `${id}g`, x1: "0", y1: "0", x2: "1", y2: "1" },
-          svg("stop", { offset: "0", "stop-color": "#fbe7b4" }),
-          svg("stop", { offset: ".45", "stop-color": "#d7a957" }),
-          svg("stop", { offset: ".7", "stop-color": "#f3d595" }),
-          svg("stop", { offset: "1", "stop-color": "#8d6428" })),
-        svg("linearGradient", { id: `${id}i`, x1: "0", y1: "0", x2: "0", y2: "1" },
-          svg("stop", { offset: "0", "stop-color": "#2b2215" }),
-          svg("stop", { offset: "1", "stop-color": "#0d0b08" })),
-        svg("radialGradient", { id: `${id}j`, cx: ".38", cy: ".32", r: ".7" },
-          svg("stop", { offset: "0", "stop-color": "#fff3cf" }),
-          svg("stop", { offset: ".35", "stop-color": "#f0b44c" }),
-          svg("stop", { offset: "1", "stop-color": "#7a3f10" }))),
-      svg("path", { d: shield, fill: `url(#${id}g)` }),
-      svg("path", { d: inner, fill: `url(#${id}i)`, stroke: "#f6dda4", "stroke-opacity": ".55", "stroke-width": ".8" }),
-      svg("path", { d: "M32 13V58", stroke: "#e8c27a", "stroke-opacity": ".35", "stroke-width": "1" }),
-      svg("path", { d: "M20 20C25 22 29 22 32 20C35 22 39 22 44 20", fill: "none", stroke: "#e8c27a", "stroke-opacity": ".5", "stroke-width": "1.2", "stroke-linecap": "round" }),
-      svg("circle", { cx: "32", cy: "34", r: "8.5", fill: `url(#${id}g)` }),
-      svg("circle", { cx: "32", cy: "34", r: "6.2", fill: `url(#${id}j)` }),
-      svg("ellipse", { cx: "30", cy: "31.5", rx: "2.2", ry: "1.4", fill: "#fff", opacity: ".75" }),
-      svg("path", { d: "M11 9C14 20 15 31 19 40", fill: "none", stroke: "#fff", "stroke-opacity": ".45", "stroke-width": "1.2", "stroke-linecap": "round" })));
+  const stop = (offset, color, opacity) => svg("stop", { offset, "stop-color": color, ...(opacity != null ? { "stop-opacity": opacity } : {}) });
+  const gem = (cx, cy, r) => [
+    svg("circle", { cx, cy, r: r + 1.8, fill: `url(#${id}g)`, stroke: "#5a3a12", "stroke-width": ".8" }),
+    svg("circle", { cx, cy, r, fill: `url(#${id}r)` }),
+    svg("ellipse", { cx: cx - r * 0.3, cy: cy - r * 0.35, rx: r * 0.38, ry: r * 0.24, fill: "#fff", opacity: ".8" }),
+  ];
+  const petals = Array.from({ length: 8 }, (_, i) => svg("ellipse", {
+    cx: "100", cy: "89", rx: "5.5", ry: "11", fill: `url(#${id}g)`, stroke: "#4a2f0e", "stroke-width": ".7",
+    transform: `rotate(${i * 45} 100 106)` }));
+  const curl = (d, w = 1.6) => svg("path", { d, fill: "none", stroke: `url(#${id}g)`, "stroke-width": w, "stroke-linecap": "round", opacity: ".55" });
+  const face = svg("svg", { class: "aegis-face", viewBox: "0 0 200 200", "aria-hidden": "true" },
+    svg("defs", {},
+      // золото обода: свет сверху слева, тень снизу справа
+      svg("linearGradient", { id: `${id}g`, x1: "0", y1: "0", x2: "1", y2: "1" },
+        stop("0", "#fff1c4"), stop(".22", "#f0c66a"), stop(".5", "#b8862f"), stop(".72", "#f3d28a"), stop("1", "#6e4613")),
+      // поле: тёмная бронза
+      svg("radialGradient", { id: `${id}f`, cx: ".42", cy: ".38", r: ".75" },
+        stop("0", "#7a5428"), stop(".55", "#4b3014"), stop("1", "#24160a")),
+      svg("radialGradient", { id: `${id}r`, cx: ".38", cy: ".32", r: ".75" },
+        stop("0", "#ffb3a8"), stop(".3", "#e8383a"), stop(".75", "#8e0d16"), stop("1", "#4a0408")),
+      // блик, который бежит по щиту
+      svg("linearGradient", { id: `${id}s`, x1: "0", y1: "0", x2: "1", y2: ".35" },
+        stop("0", "#fff", 0), stop(".44", "#fff", 0), stop(".5", "#fff8e0", 0.55), stop(".56", "#fff", 0), stop("1", "#fff", 0),
+        svg("animateTransform", { attributeName: "gradientTransform", type: "translate", values: "-1.2 0; 1.2 0; 1.2 0", keyTimes: "0; .55; 1", dur: "6s", repeatCount: "indefinite" })),
+      svg("clipPath", { id: `${id}c` }, svg("path", { d: AEGIS_RIM }))),
+    svg("path", { d: AEGIS_RIM, fill: `url(#${id}g)` }),
+    // поле внутри обода
+    svg("path", { d: AEGIS_RIM, fill: "#2a1a0b", transform: "translate(100 106) scale(.86) translate(-100 -106)" }),
+    svg("path", { d: AEGIS_RIM, fill: `url(#${id}f)`, stroke: "#2b1a08", "stroke-width": "1.2", transform: "translate(100 106) scale(.84) translate(-100 -106)" }),
+    // чеканка: волна через поле и завитки по обе стороны
+    svg("path", { d: "M42 58C78 40 122 66 104 102C86 138 126 170 166 146", fill: "none", stroke: "#2a1708", "stroke-width": "9", "stroke-linecap": "round" }),
+    svg("path", { d: "M42 58C78 40 122 66 104 102C86 138 126 170 166 146", fill: "none", stroke: `url(#${id}g)`, "stroke-width": "4.5", "stroke-linecap": "round" }),
+    curl("M44 116c8-16 30-14 30 2c0 10-14 12-16 3"), curl("M58 150c10-8 26-4 24 8"), curl("M40 96c6-6 14-4 14 3", 1.2),
+    curl("M130 66c10-10 30-4 26 10c-3 9-15 8-14 0"), curl("M150 92c8 2 12 12 4 16", 1.2), curl("M126 140c6 6 4 14-4 14", 1.2),
+    curl("M70 76c-8 2-12 10-6 15c5 3 10-2 6-6", 1.2), curl("M84 160c-10-2-16 6-10 12", 1.2), curl("M148 120c6-8 18-6 16 4", 1.2),
+    // внутренний ободок
+    svg("path", { d: AEGIS_RIM, fill: "none", stroke: `url(#${id}g)`, "stroke-width": "1.4", opacity: ".55", transform: "translate(100 106) scale(.78) translate(-100 -106)" }),
+    // розетка и камень в центре
+    ...petals,
+    svg("circle", { cx: "100", cy: "106", r: "12.5", fill: `url(#${id}g)`, stroke: "#4a2f0e", "stroke-width": ".8" }),
+    ...gem(100, 106, 8.5),
+    // камни по ободу
+    ...gem(98, 21, 4.6), ...gem(178, 28, 4), ...gem(182, 122, 4.2), ...gem(128, 183, 4.2), ...gem(70, 183, 4.2), ...gem(22, 128, 4.2),
+    // фаска: светлая кромка сверху слева
+    svg("path", { d: "M96 17C52 20 19 54 18 100", fill: "none", stroke: "#fff6d6", "stroke-opacity": ".6", "stroke-width": "1.6", "stroke-linecap": "round" }),
+    svg("rect", { width: "200", height: "200", fill: `url(#${id}s)`, "clip-path": `url(#${id}c)` }));
+  // ребро: силуэты один под другим, от светлого к тёмному
+  const edge = Array.from({ length: AEGIS_EDGE }, (_, i) => svg("svg", { class: "aegis-edge", viewBox: "0 0 200 200", "aria-hidden": "true", "data-i": String(i + 1) },
+    svg("path", { d: AEGIS_RIM, fill: i < 2 ? "#c99a45" : i < 6 ? "#8c6223" : "#5a3c12" })));
+  edge.forEach((el, i) => el.style.setProperty("--i", String(i + 1)));
+  const spin = h("div", { class: "aegis-spin" }, ...edge.reverse(), face);
+  const tilt = h("div", { class: "aegis-tilt" }, spin);
+  const box = h("div", { class: "aegis", role: "img", "aria-label": "Аегис чемпионов" }, tilt);
+  // Покрутить пальцем: щит наклоняется за касанием и плавно возвращается
+  const turn = (e) => {
+    const r = box.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width - 0.5) * 2, y = ((e.clientY - r.top) / r.height - 0.5) * 2;
+    tilt.style.setProperty("--ry", `${Math.max(-1, Math.min(1, x)) * 35}deg`);
+    tilt.style.setProperty("--rx", `${Math.max(-1, Math.min(1, -y)) * 25}deg`);
+  };
+  box.addEventListener("pointerdown", (e) => { box.classList.add("held"); turn(e); hapticTick(); });
+  box.addEventListener("pointermove", (e) => { if (box.classList.contains("held") || e.pointerType === "mouse") turn(e); });
+  const release = () => { box.classList.remove("held"); tilt.style.setProperty("--rx", "0deg"); tilt.style.setProperty("--ry", "0deg"); };
+  box.addEventListener("pointerup", release);
+  box.addEventListener("pointerleave", release);
+  box.addEventListener("pointercancel", release);
+  return box;
 }
 
 // Ачивка: монета в 3D. Аверс со знаком, реверс со счётом; открытая золотая и иногда сама крутится
