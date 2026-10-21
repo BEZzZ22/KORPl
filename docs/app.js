@@ -2482,7 +2482,8 @@ async function boot() {
     return;
   }
   const { matchId, slot, account } = startParams();
-  if (account) storage.set("account_id", String(account));
+  // ?account= из ссылки нужен только, чтобы найти игрока в матче: в привязку его не пишем.
+  // Старый бот вшивал аккаунт в кнопку меню, и каждый запуск возвращал его поверх «Сменить»
   // история и задачи с других устройств: в фоне, экран не ждёт
   storage.get("account_id").then((acc) => acc && syncProfile(acc)).catch(() => {});
   if (matchId) {

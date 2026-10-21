@@ -73,6 +73,17 @@ async def main():
         await bot.set_chat_menu_button(
             menu_button=MenuButtonWebApp(text="Приложение", web_app=WebAppInfo(url=f"{WEBAPP_URL}/"))
         )
+        # Старый бот ставил в чат свою кнопку с ?account=: она перебивает общую и
+        # возвращает старый аккаунт при каждом запуске. Без menu_button — сброс на общую
+        store = Storage(DB_PATH)
+        try:
+            for tg_id in store.tg_ids():
+                try:
+                    await bot.set_chat_menu_button(chat_id=tg_id)
+                except Exception as e:  # чат удалён или бот заблокирован
+                    log.info("Кнопку в чате %s не сбросить: %s", tg_id, e)
+        finally:
+            store.close()
         log.info("Кнопка «Приложение» стоит, бот молчит: всё в приложении")
     finally:
         await bot.session.close()

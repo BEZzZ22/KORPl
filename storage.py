@@ -38,6 +38,10 @@ class Storage:
         )
         self.db.commit()
 
+    def tg_ids(self) -> list[int]:
+        """Все, кто когда-либо привязывал аккаунт в боте."""
+        return [row[0] for row in self.db.execute("SELECT tg_id FROM users")]
+
     def take_ai_quota(self, tg_id: int, daily_limit: int) -> bool:
         """Списывает один ИИ-разбор. False, если лимит на сегодня исчерпан."""
         today = date.today().isoformat()
