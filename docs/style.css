@@ -218,9 +218,10 @@ button.ghost:active { transform: scale(.98); filter: none; }
 .match-item::after { content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 3px; border-radius: 0 3px 3px 0; background: var(--radiant); }
 .match-item.loss::after { background: var(--dire); }
 .match-item .hero-img { width: 60px; height: 34px; }
-.match-item:active { filter: brightness(1.15); }
+/* нажатие: плитка проседает в глубину верхним краем, как физическая */
+.match-item { transform-origin: 50% 100%; }
+.match-item:active { filter: brightness(1.15); transform: perspective(700px) rotateX(7deg) scale(.985); }
 .result { font-weight: 800; }
-.draft-entry { width: 100%; margin: 0 0 6px; text-align: left; padding: 12px 4px; }
 
 /* ---------- профиль ---------- */
 
@@ -633,8 +634,9 @@ details.timeline-box > summary { font-weight: 800; }
 @keyframes rise { from { opacity: 0; transform: translate3d(0, 10px, 0) scale(.985); } }
 .slide-from-right { animation: slideR .42s var(--spring) both; }
 .slide-from-left { animation: slideL .42s var(--spring) both; }
-@keyframes slideR { from { opacity: 0; transform: translateX(28px); } }
-@keyframes slideL { from { opacity: 0; transform: translateX(-28px); } }
+/* вкладки разбора: соседняя страница выезжает, развернувшись в глубину, как грань куба */
+@keyframes slideR { from { opacity: 0; transform: perspective(1200px) translateX(36px) rotateY(-9deg); } }
+@keyframes slideL { from { opacity: 0; transform: perspective(1200px) translateX(-36px) rotateY(9deg); } }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
@@ -648,8 +650,13 @@ details.timeline-box > summary { font-weight: 800; }
 .row > button.ghost { margin-top: 18px; }
 .draft-entry { display: flex; align-items: center; gap: 14px; width: 100%; margin: 0 0 6px; padding: 14px 16px; text-align: left; color: var(--text);
   border-radius: var(--r-lg); background: linear-gradient(165deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.01)), var(--slab); box-shadow: var(--lift); }
-.draft-entry .de-icon { flex: none; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: rgba(232, 194, 122, 0.12); }
-.draft-entry .de-icon svg { width: 22px; height: 22px; stroke: var(--aegis); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+/* иконка драфта: золотая плитка с фаской, при нажатии переворачивается к тебе */
+.draft-entry .de-icon { flex: none; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center;
+  background: radial-gradient(circle at 30% 22%, rgba(255, 255, 255, .7), transparent 40%), linear-gradient(160deg, #f6dda4, #c9984a 60%, #8d6428);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .7), inset 0 -3px 0 rgba(90, 60, 15, .45), 0 8px 16px -6px rgba(232, 194, 122, .55);
+  transition: transform .45s var(--spring); }
+.draft-entry:active .de-icon { transform: perspective(300px) rotateY(-28deg) rotateX(10deg); }
+.draft-entry .de-icon svg { width: 22px; height: 22px; stroke: #3a2608; fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 .draft-entry b { display: block; font-size: 15px; }
 .draft-entry span { font-size: 13px; color: var(--muted); font-weight: 600; }
 .draft-entry::after { content: ""; margin-left: auto; width: 8px; height: 8px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(-45deg); }

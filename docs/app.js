@@ -201,7 +201,7 @@ function glassBar(bar, itemSelector, { live, onPick }) {
   const items = () => [...bar.querySelectorAll(itemSelector)];
   const S = { x: 0, sx: 1, sy: 1, vx: 0, vsx: 0, vsy: 0 };
   const T = { x: 0, sx: 1, sy: 1 };
-  let active = -1, hover = -1, dragging = false, pressed = false, raf = 0, last = 0, timer = 0, width = 0, lastTarget = 0;
+  let active = -1, hover = -1, dragging = false, pressed = false, raf = 0, last = 0, timer = 0, width = 0;
   const reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   const geometry = (i) => {
@@ -2464,7 +2464,7 @@ async function boot() {
     const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
       api("/constants/heroes"), api("/constants/items"), api("/constants/abilities", { timeout: 40000 }),
       api("/constants/item_ids"),
-      fetch("knowledge.json?v=12").then((r) => r.json()), fetch("texts.json?v=15").then((r) => r.json()),
+      fetch("knowledge.json?v=12").then((r) => r.json()), fetch("texts.json?v=16").then((r) => r.json()),
     ]);
     dictionary = createDictionary({ heroes, items, abilities });
     itemIds = ids;
