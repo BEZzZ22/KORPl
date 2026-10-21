@@ -178,7 +178,7 @@ button.ghost:active { transform: scale(.98); filter: none; }
 /* Аегис чемпионов в 3D из официальных фото: лицо (--front), оборот, ребро из слоёв силуэта.
    Толщина ребра — доля ширины знака: --size задаётся на месте использования */
 .aegis { --size: 72px; --step: calc(var(--size) * .0062); position: relative; width: var(--size); height: var(--size); margin: 0 auto 12px;
-  perspective: calc(var(--size) * 6); touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
+  perspective: calc(var(--size) * 6); touch-action: pan-y; cursor: grab; user-select: none; -webkit-user-select: none; }
 .aegis.held { cursor: grabbing; }
 .aegis::after { /* отсвет на «столе» под щитом */
   content: ""; position: absolute; left: 12%; right: 12%; bottom: -12%; height: 18%; border-radius: 50%;
@@ -351,9 +351,9 @@ button.ghost:active { transform: scale(.98); filter: none; }
 }
 .tabs { display: flex; padding: 4px; border-radius: 999px; }
 .tab {
-  position: relative; z-index: 1; flex: 1 1 0; min-width: 0; padding: 12px 0; border-radius: 999px;
-  background: transparent; box-shadow: none; color: rgba(236, 234, 228, 0.55);
-  font: 700 12.5px/1 var(--sans); letter-spacing: -.01em; text-align: center; transition: color .3s ease;
+  position: relative; z-index: 1; flex: 1 1 auto; min-width: 0; padding: 12px 4px; border-radius: 999px;
+  background: transparent; box-shadow: none; color: rgba(236, 234, 228, 0.55); white-space: nowrap;
+  font: 700 clamp(11px, 3.2vw, 12.5px)/1 var(--sans); letter-spacing: -.01em; text-align: center; transition: color .3s ease;
 }
 .tab.hot, .tab.active { color: #fff; }
 .tab:active { transform: none; filter: none; }
@@ -616,7 +616,7 @@ details.timeline-box > summary { font-weight: 800; }
 .seg { flex: 1; padding: 11px; border-radius: var(--r-sm); background: transparent; box-shadow: none; color: var(--muted); font-weight: 800; }
 .seg[aria-pressed="true"] { color: #1a1206; background: linear-gradient(180deg, #f3d595, #e2b866); }
 .seg:active { transform: none; }
-.draft-chosen { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-bottom: 14px; }
+.draft-chosen { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: start; gap: 6px; margin-bottom: 14px; }
 .draft-pick { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 0; background: transparent; box-shadow: none; color: var(--text); font: 700 10.5px/1.2 var(--sans); text-align: center; }
 .draft-pick .hero-img { width: 100%; height: auto; aspect-ratio: 16 / 9; border-radius: 9px; box-shadow: 0 0 0 2px rgba(242, 85, 90, 0.6); }
 .draft-pick.empty { aspect-ratio: 16 / 9; border-radius: 9px; background: rgba(8, 9, 12, 0.4); box-shadow: inset 0 0 0 1px var(--line-2); }
@@ -640,7 +640,10 @@ details.timeline-box > summary { font-weight: 800; }
 .hero-vert { display: block; width: 100%; height: auto; aspect-ratio: 235 / 272; object-fit: cover; }
 .hero-vert.wide { object-position: 50% 30%; }
 .img-missing { opacity: 0; }
-.draft-row { display: flex; align-items: flex-start; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+/* шапка (номер, герой, имя) в строку, объяснения под ней на всю ширину: на узком экране текст не жмётся в столбик */
+.draft-row { display: grid; grid-template-columns: auto auto 1fr; align-items: center; column-gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.draft-row > .grow { display: contents; }
+.draft-row .draft-why, .draft-row .small.muted { grid-column: 1 / -1; }
 .draft-row .plan-num, .draft-row .hero-img { flex: none; margin-top: 2px; }
 .draft-why { margin: 6px 0 0; line-height: 1.45; color: var(--text-2, inherit); }
 .draft-why b { color: var(--gold, inherit); font-weight: 700; }
@@ -690,7 +693,7 @@ details.timeline-box > summary { font-weight: 800; }
 @keyframes slideL { from { opacity: 0; transform: perspective(1200px) translateX(-36px) rotateY(9deg); } }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+  *, *::before, *::after { animation-duration: .001ms !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
   .backdrop i { animation: none; }
   .tilt { transform: none; }
 }
@@ -718,7 +721,8 @@ body { background: transparent; }
 
 /* ---------- прогресс: задачи, ачивки, неделя ---------- */
 .goal-card { display: flex; flex-direction: column; gap: 14px; }
-.goal-head { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 4px; font-size: 13px; font-weight: 800; color: var(--muted); }
+.goal-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 4px; font-size: 13px; font-weight: 800; color: var(--muted); }
+.goal-head b { flex: none; white-space: nowrap; }
 .goal-result p, .goal-next p { margin: 0; font-weight: 700; }
 .goal-result { padding: 12px 14px; border-radius: var(--r-md); background: rgba(8, 9, 12, 0.45); }
 .goal-result.done { background: rgba(79, 209, 165, 0.1); }

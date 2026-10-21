@@ -109,7 +109,8 @@ export async function takeAsk(env, who, now = Date.now(), limit = ASK_PER_USER_D
   if (used >= limit) return null;
   const put = (n) => env.COACH_KV.put(key, String(n), { expirationTtl: 2 * 86400 });
   await put(used + 1);
-  return { left: limit - used - 1, refund: () => put(used) };
+  // возврат — минус один от текущего: за время ответа мог пройти ещё вопрос
+  return { left: limit - used - 1, refund: async () => put(Math.max(0, (Number(await env.COACH_KV.get(key)) || 1) - 1)) };
 }
 
 const duration = (d) => (Number.isFinite(Number(d)) && Number(d) > 0 ? `${Math.round(Number(d) / 60)} мин` : clip(d, 12));

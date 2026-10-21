@@ -650,6 +650,7 @@ async function profileScreen() {
         h("div", { class: "metric" }, h("b", {}, String(wins)), h("span", {}, plural(wins, "победа", "победы", "побед"))),
         h("div", { class: "metric" }, h("b", {}, String(losses)), h("span", {}, plural(losses, "поражение", "поражения", "поражений"))),
       ),
+      total > 0 && h("div", { class: "small muted" }, `За ${plural(total, "последнюю", "последние", "последние")} ${total} ${plural(total, "игру", "игры", "игр")}`),
     ),
     recent.length > 0 && h("h2", {}, "Форма — последние игры"),
     recent.length > 0 && h("div", { class: "card" },
@@ -878,15 +879,19 @@ async function draftScreen() {
     result.replaceChildren(h("div", { class: "center" }, h("div", { class: "spinner" }),
       h("div", { class: "muted small" }, account ? "Смотрю твоих героев против этих врагов..." : "Ищу контрпики...")));
     try {
-      const [counter, all, last] = await Promise.all([counterpicks(),
+      const [counter, mine, last] = await Promise.all([counterpicks(),
         account ? api(`/players/${account}/heroes`) : [], account ? api(`/players/${account}/recentMatches`) : []]);
       const recent = {};
       for (const m of (last || []).slice(0, 20)) recent[m.hero_id] = (recent[m.hero_id] || 0) + 1;
-      const pool = (all || []).filter((x) => x.games >= 3);
+      const pool = (mine || []).filter((x) => x.games >= 3);
       // цифры матчапов OpenDota только по самым игранным: запросы идут по одному
       const top = pool.slice().sort((a, b) => (recent[b.hero_id] || 0) - (recent[a.hero_id] || 0) || b.games - a.games).slice(0, DRAFT_POOL);
       const matchups = {};
-      for (const x of top) matchups[x.hero_id] = await heroMatchups(x.hero_id);
+      // по 4 разом: по одному 12 запросов шли до 10 секунд, все сразу OpenDota режет
+      for (let i = 0; i < top.length; i += 4) {
+        const part = top.slice(i, i + 4);
+        (await Promise.all(part.map((x) => heroMatchups(x.hero_id)))).forEach((rows, j) => { matchups[part[j].hero_id] = rows; });
+      }
       if (stale(seq)) return;
       const advice = draftAdvice({ enemies: [...enemies], pool, recent, matchups, counter, knowledge, od: dictionary, role });
       result.replaceChildren(draftResult(advice, Boolean(account)));
@@ -917,6 +922,22 @@ function counterpicks() {
   return counterCache;
 }
 
+// Объяснение из статьи dota2.ru коротко: без вводной вроде «Вариант для мидеров.», до ~150 знаков по целым предложениям
+const WHY_MAX = 140;
+function shortWhy(text) {
+  // пункт списка из статьи «Lion (Mana Drain);» — оставляем только способность
+  const skill = /^[^()]+\(([^)]+?)\)?[;.]?$/.exec(String(text).trim());
+  if (skill && text.length < 60) return `всё решает ${skill[1]}.`;
+  const parts = String(text).split(/(?<=[.!?])\s+/).filter(Boolean);
+  if (parts.length > 1 && parts[0].length < 40) parts.shift();
+  let out = parts[0] || "";
+  for (const s of parts.slice(1)) {
+    if (out.length + s.length + 1 > WHY_MAX) break;
+    out += ` ${s}`;
+  }
+  return out.length > WHY_MAX + 20 ?`${out.slice(0, WHY_MAX).replace(/[\s,;:—-]+\S*$/, "")}…` : out;
+}
+
 // Один пик: почему он (по статьям dota2.ru), кто его контрит и цифры
 function draftPick(p, i, mine) {
   const pct = (x) => `${Math.round(x * 100)}%`;
@@ -930,7 +951,7 @@ function draftPick(p, i, mine) {
     h("div", { class: "plan-num" }, String(i + 1)), heroImg(p.hero_id),
     h("div", { class: "grow" },
       h("div", { class: "hn" }, p.name),
-      ...p.why.slice(0, 2).map((r) => h("p", { class: "draft-why small" }, h("b", {}, `Против ${r.name}: `), r.why)),
+      ...p.why.slice(0, 2).map((r) => h("p", { class: "draft-why small" }, h("b", {}, `Против ${r.name}: `), shortWhy(r.why))),
       !p.why.length && h("p", { class: "draft-why small" }, "По статистике OpenDota выигрывает у этих врагов чаще, чем проигрывает."),
       p.threats.length > 0 && h("p", { class: "draft-why small loss-text" },
         `Осторожно: ${p.threats.map((t) => t.name).join(", ")} ${p.threats.length > 1 ? "контрят" : "контрит"} его.`),
@@ -1180,7 +1201,7 @@ function analysisScreen(a) {
 function shareLink(a) {
   const f = a.facts;
   const link = `https://t.me/${BOT_USERNAME}?startapp`;
-  const text = `${f.hero} · ${f.won ? "Победа" : "Поражение"} · оценка ${a.overall}/10\n${a.verdict}`;
+  const text = `${f.hero} · ${f.won ? "Победа" : "Поражение"} · оценка ${a.overall.toFixed(1)}/10\n${a.verdict}`;
   const url = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`;
   if (tg && tg.openTelegramLink) tg.openTelegramLink(url);
   else window.open(url, "_blank");
@@ -1323,7 +1344,7 @@ function shareMatch(a) {
     }, true),
     act(canSave ? "Сохранить картинку" : "Открыть картинку", async () => {
       const url = await upload();
-      if (canSave) tg.downloadFile({ url, file_name: `razbor-${a.facts.match_id}.png` });
+      if (canSave) tg.downloadFile({ url, file_name: `razbor-${a.facts.match_id}.${url.endsWith(".png") ? "png" : "jpg"}` });
       else if (tg && tg.openLink) tg.openLink(url);
       else window.open(url, "_blank");
     }, !canStory),
@@ -1434,7 +1455,9 @@ function parseCoach(text) {
     if (step) into.push(step[1]);
     else main.push(line.replace(/^главное\s*:\s*/i, ""));
   }
-  return { main: main.join(" "), moments, steps };
+  // после «Главное:» модель часто пишет с маленькой буквы
+  const lead = main.join(" ");
+  return { main: lead.charAt(0).toUpperCase() + lead.slice(1), moments, steps };
 }
 
 // coach3: моменты с фактами о линии и размене; старые ответы писались по другим фактам и рядом с новыми врут
@@ -1653,7 +1676,10 @@ function trackProgress(a) {
 }
 
 const GOAL_STATUS = { done: "Выполнено", failed: "Не вышло", skip: "В этой катке не проверить" };
-const goalText = (text) => String(text || "").replace(/^Цель на следующую катку:\s*/, "");
+const goalText = (text) => {
+  const s = String(text || "").replace(/^Цель на следующую катку:\s*/, "");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+};
 
 // Задача с прошлой катки (итог) и задача на следующую
 function goalBlock(a) {

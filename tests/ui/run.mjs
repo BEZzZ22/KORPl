@@ -119,7 +119,8 @@ const cardSizes = [];
 process.env.PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS = "1";
 const browser = await chromium.launch({ headless: !process.env.UI_HEADED });
 const context = await browser.newContext({
-  viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true, locale: "ru-RU", serviceWorkers: "block",
+  // UI_WIDTH=320 — проверить узкий телефон
+  viewport: { width: Number(process.env.UI_WIDTH) || 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true, locale: "ru-RU", serviceWorkers: "block",
   colorScheme: "dark", reducedMotion: process.env.UI_MOTION ? "no-preference" : "reduce",
 });
 // Привязанный аккаунт и одна уже открытая раньше катка, чтобы было с чем сравнить
@@ -156,7 +157,8 @@ async function handleRoute(route) {
 await context.route("**/*", handleRoute);
 
 const page = await context.newPage();
-page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
+page.setDefaultTimeout(10000);
+page.on("pageerror",(e) => errors.push(`pageerror: ${e.message}`));
 page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(`console: ${m.text()}`); });
 
 const only = process.env.UI_ONLY ? new Set(process.env.UI_ONLY.split(",")) : null;
@@ -190,6 +192,12 @@ await step("home", async () => {
     }
   }
 });
+// Приложение не запустилось (синтаксис, импорт): дальше каждый шаг ждал бы таймаут, падаем сразу
+if (errors.some((e) => e.startsWith("pageerror")) && !(await page.$(".app-top"))) {
+  console.error(errors.join("\n"));
+  await browser.close();
+  process.exit(1);
+}
 await step("overview", async () => {
   // свежая катка открывается из большого блока сверху
   await page.locator(".fresh-match").click();
