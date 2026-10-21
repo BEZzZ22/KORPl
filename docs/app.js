@@ -2,7 +2,7 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric,
   CATEGORIES, BAD, WARN, GOOD,
-} from "./engine.js?v=19";
+} from "./engine.js?v=20";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -132,6 +132,57 @@ function medal(score) {
   el.style.setProperty("--p", String(Math.max(0, Math.min(100, score * 10))));
   return el;
 }
+
+// Знак приложения: Аегис Бессмертного. Золотой щит с рогами, грань по центру и камень;
+// плавает и поворачивается в 3D (style.css .aegis). id градиентов уникальны: знак бывает на экране не один
+let aegisSeq = 0;
+function aegis() {
+  const id = `ae${++aegisSeq}`;
+  const shield = "M32 3C37 9 45 10 53 7L60 5C58 15 58 25 56 34C53 48 44 60 32 69C20 60 11 48 8 34C6 25 6 15 4 5L11 7C19 10 27 9 32 3Z";
+  const inner = "M32 11C36 15 43 16 50 14C49 22 49 29 47.5 35C45 45 39.5 54 32 60C24.5 54 19 45 16.5 35C15 29 15 22 14 14C21 16 28 15 32 11Z";
+  return h("div", { class: "aegis", role: "img", "aria-label": "Аегис" },
+    svg("svg", { viewBox: "0 0 64 72", "aria-hidden": "true" },
+      svg("defs", {},
+        svg("linearGradient", { id: `${id}g`, x1: "0", y1: "0", x2: "1", y2: "1" },
+          svg("stop", { offset: "0", "stop-color": "#fbe7b4" }),
+          svg("stop", { offset: ".45", "stop-color": "#d7a957" }),
+          svg("stop", { offset: ".7", "stop-color": "#f3d595" }),
+          svg("stop", { offset: "1", "stop-color": "#8d6428" })),
+        svg("linearGradient", { id: `${id}i`, x1: "0", y1: "0", x2: "0", y2: "1" },
+          svg("stop", { offset: "0", "stop-color": "#2b2215" }),
+          svg("stop", { offset: "1", "stop-color": "#0d0b08" })),
+        svg("radialGradient", { id: `${id}j`, cx: ".38", cy: ".32", r: ".7" },
+          svg("stop", { offset: "0", "stop-color": "#fff3cf" }),
+          svg("stop", { offset: ".35", "stop-color": "#f0b44c" }),
+          svg("stop", { offset: "1", "stop-color": "#7a3f10" }))),
+      svg("path", { d: shield, fill: `url(#${id}g)` }),
+      svg("path", { d: inner, fill: `url(#${id}i)`, stroke: "#f6dda4", "stroke-opacity": ".55", "stroke-width": ".8" }),
+      svg("path", { d: "M32 13V58", stroke: "#e8c27a", "stroke-opacity": ".35", "stroke-width": "1" }),
+      svg("path", { d: "M20 20C25 22 29 22 32 20C35 22 39 22 44 20", fill: "none", stroke: "#e8c27a", "stroke-opacity": ".5", "stroke-width": "1.2", "stroke-linecap": "round" }),
+      svg("circle", { cx: "32", cy: "34", r: "8.5", fill: `url(#${id}g)` }),
+      svg("circle", { cx: "32", cy: "34", r: "6.2", fill: `url(#${id}j)` }),
+      svg("ellipse", { cx: "30", cy: "31.5", rx: "2.2", ry: "1.4", fill: "#fff", opacity: ".75" }),
+      svg("path", { d: "M11 9C14 20 15 31 19 40", fill: "none", stroke: "#fff", "stroke-opacity": ".45", "stroke-width": "1.2", "stroke-linecap": "round" })));
+}
+
+// Ачивка: монета в 3D. Аверс со знаком, реверс со счётом; открытая золотая и иногда сама крутится
+const ACH_ICONS = {
+  clean_lane: ["M5 21 10 3", "M19 21 14 3", "M12 6v2", "M12 11v2", "M12 16v3"],
+  no_feed: ["M12 20s-7-4.3-7-9.6A4 4 0 0 1 12 8a4 4 0 0 1 7 2.4c0 5.3-7 9.6-7 9.6Z"],
+  teamplayer: ["M14.5 17.5 3 6V3h3l11.5 11.5", "M13 19l6-6", "M16 16l4 4", "M19 21l2-2", "M14.5 6.5 18 3h3v3l-3.5 3.5", "M5 14l4 4", "M7 17l-3 3", "M3 19l2 2"],
+  buttons: ["M13 2 4 14h7l-1 8 9-12h-7l1-8Z"],
+  farmer: ["M8 13A5 5 0 1 0 8 3a5 5 0 0 0 0 10Z", "M18.1 10.4a5 5 0 1 1-6.7 7.2", "M7 6h1v4", "M16.7 13.9l.7.7-2.8 2.8"],
+  eyes: ["M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z", "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"],
+  alive: ["M3 12h4l2-5 4 10 2-5h6"],
+  goals5: ["M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z", "M8 12l3 3 5-6"],
+};
+function achCoin(x) {
+  return h("span", { class: "coin", "aria-hidden": "true" },
+    h("span", { class: "coin-face" }, svg("svg", { viewBox: "0 0 24 24" }, (ACH_ICONS[x.id] || ACH_ICONS.goals5).map((d) => svg("path", { d })))),
+    h("span", { class: "coin-face coin-back" }, x.done ? "✓" : `${x.have}/${x.need}`));
+}
+
+const games = (n) => `${n} ${plural(n, "игра", "игры", "игр")}`;
 
 function haptic(type = "light") {
   try { if (tg && tg.isVersionAtLeast("6.1")) tg.HapticFeedback.impactOccurred(type); } catch { /* старый клиент */ }
@@ -424,7 +475,7 @@ async function homeScreen() {
   };
   const nodes = [
     h("div", { class: "app-top" },
-      h("div", { class: "sigil" }),
+      aegis(),
       h("div", { class: "t" },
         h("h1", {}, "Dota-тренер"),
         h("p", {}, "Разбор каждой ошибки — от линии до последней драки"),
@@ -568,14 +619,14 @@ async function profileScreen() {
       ),
       h("div", { class: "profile-metrics" },
         h("div", { class: "metric" }, h("b", {}, String(winrate) + "%"), h("span", {}, "винрейт")),
-        h("div", { class: "metric" }, h("b", {}, String(wins)), h("span", {}, "побед")),
-        h("div", { class: "metric" }, h("b", {}, String(losses)), h("span", {}, "поражений")),
+        h("div", { class: "metric" }, h("b", {}, String(wins)), h("span", {}, plural(wins, "победа", "победы", "побед"))),
+        h("div", { class: "metric" }, h("b", {}, String(losses)), h("span", {}, plural(losses, "поражение", "поражения", "поражений"))),
       ),
     ),
     recent.length > 0 && h("h2", {}, "Форма — последние игры"),
     recent.length > 0 && h("div", { class: "card" },
       h("div", { class: "form-strip" }, ...dots),
-      h("div", { class: "small muted" }, `${recent.filter((m) => (m.player_slot < 128) === m.radiant_win).length} побед из ${recent.length}`),
+      h("div", { class: "small muted" }, `${((w) => `${w} ${plural(w, "победа", "победы", "побед")}`)(recent.filter((m) => (m.player_slot < 128) === m.radiant_win).length)} из ${recent.length}`),
     ),
     trendBlock(recent),
     ...progressBlocks(account),
@@ -587,7 +638,7 @@ async function profileScreen() {
         heroImg(hx.hero_id),
         h("div", { class: "grow" },
           h("div", { class: "hn" }, dictionary.heroName(hx.hero_id)),
-          h("div", { class: "hg" }, `${hx.games} игр`),
+          h("div", { class: "hg" }, games(hx.games)),
           h("div", { class: "wrbar" }, h("i", { "data-pct": wr })),
         ),
         h("div", { class: `wr ${wr >= 50 ? "win-text" : "loss-text"}` }, `${wr}%`),
@@ -619,7 +670,7 @@ function trendBlock(recent) {
     return h("div", { class: "score-row trend" }, h("span", {}, label), h("span", { class: "muted" }, `${fmt(b)} → ${fmt(a)}`), h("b", { class: cls }, mark));
   });
   return h("div", {}, h("h2", {}, "Тренд"), h("div", { class: "card" }, ...rows,
-    h("div", { class: "small muted" }, `Последние ${fresh.length} игр против предыдущих ${old.length}`)));
+    h("div", { class: "small muted" }, `${plural(fresh.length, "Последняя", "Последние", "Последние")} ${games(fresh.length)} против ${plural(old.length, "предыдущей", "предыдущих", "предыдущих")} ${old.length}`)));
 }
 
 // Герои с низким винрейтом за всё время — на них стоит меньше играть или разобрать отдельно
@@ -629,7 +680,7 @@ function weakHeroesBlock(heroes) {
   if (!weak.length) return null;
   return h("div", {}, h("h2", {}, "Не заходят"),
     h("div", { class: "card" }, ...weak.map((hx) => h("div", { class: "problem-fact" },
-      `${dictionary.heroName(hx.hero_id)}: ${Math.round((hx.win / hx.games) * 100)}% побед за ${hx.games} игр. Пока лучше не пикай его в рейтинг.`))));
+      `${dictionary.heroName(hx.hero_id)}: ${Math.round((hx.win / hx.games) * 100)}% побед за ${hx.games} ${plural(hx.games, "игру", "игры", "игр")}. Пока лучше не пикай его в рейтинге.`))));
 }
 
 // ---------- экран «Статистика по герою» (только свои игры) ----------
@@ -710,7 +761,7 @@ async function heroStatsScreen(heroId) {
     const mean = (arr) => Math.round(arr.reduce((s, m) => s + (m.gold_per_min || 0), 0) / arr.length);
     const a = mean(last.slice(0, half)), b = mean(last.slice(half));
     const wa = last.slice(0, half).filter(won).length, wb = last.slice(half).filter(won).length;
-    trend = h("div", {}, h("h2", {}, `Тренд за последние ${last.length} игр`), h("div", { class: "card" },
+    trend = h("div", {}, h("h2", {}, `Тренд за последние ${last.length} ${plural(last.length, "игру", "игры", "игр")}`), h("div", { class: "card" },
       sparkline(last),
       h("div", { class: "small muted" }, `GPM: ${a} → ${b}. Побед: ${wa} из ${half} → ${wb} из ${last.length - half}. Точка — игра, золотая — победа.`)));
   }
@@ -724,7 +775,7 @@ async function heroStatsScreen(heroId) {
         heroImg(f.id),
         h("div", { class: "grow" },
           h("div", { class: "hn" }, dictionary.heroName(f.id)),
-          h("div", { class: "hg" }, `${f.g} игр: ${f.w} побед, ${f.g - f.w} поражений`)),
+          h("div", { class: "hg" }, `${games(f.g)}: ${f.w} ${plural(f.w, "победа", "победы", "побед")}, ${f.g - f.w} ${plural(f.g - f.w, "поражение", "поражения", "поражений")}`)),
         h("div", { class: `wr ${fwr >= 50 ? "win-text" : "loss-text"}` }, `${fwr}%`));
     }),
     h("div", { class: "small muted" }, "Только враги, против которых было 5+ игр.")));
@@ -732,14 +783,14 @@ async function heroStatsScreen(heroId) {
   render(head,
     h("div", { class: "card" },
       h("div", { class: "profile-metrics" },
-        h("div", { class: "metric" }, h("b", {}, String(list.length)), h("span", {}, "игр")),
+        h("div", { class: "metric" }, h("b", {}, String(list.length)), h("span", {}, plural(list.length, "игра", "игры", "игр"))),
         h("div", { class: "metric" }, h("b", { class: wr >= 50 ? null : "loss-text" }, `${wr}%`), h("span", {}, "винрейт")),
-        h("div", { class: "metric" }, h("b", {}, String(wins)), h("span", {}, "побед")),
+        h("div", { class: "metric" }, h("b", {}, String(wins)), h("span", {}, plural(wins, "победа", "победы", "побед"))),
       ),
       row("Средний KDA", `${avg((m) => m.kills).toFixed(1)}/${avg((m) => m.deaths).toFixed(1)}/${avg((m) => m.assists).toFixed(1)}`),
       row("GPM / XPM", `${Math.round(avg((m) => m.gold_per_min))} / ${Math.round(avg((m) => m.xp_per_min))}`),
       row("Добитые крипы", String(Math.round(avg((m) => m.last_hits)))),
-      list.length < 10 && h("div", { class: "small muted" }, "Мало игр, выводы появятся от 10 игр."),
+      list.length < 10 && h("div", { class: "small muted" }, "Мало игр: выводы появятся, когда наберётся 10."),
     ),
     trend,
     list.length >= 10 && foesBlock,
@@ -840,7 +891,7 @@ function draftResult(advice) {
 function matchEmpty() {
   section = "match";
   render(h("div", { class: "match-empty" },
-    h("div", { class: "sigil" }),
+    aegis(),
     h("h1", {}, "Разбор пуст"),
     h("p", { class: "muted" }, "Открой матч на «Главной» — разбор появится здесь."),
     h("button", { onclick: () => navRoot("home", homeScreen) }, "На главную"),
@@ -914,7 +965,7 @@ async function matchScreen(matchId, slot, accountId, attempt = 0) {
     render(h("div", { class: "center" },
       h("div", { class: "spinner" }),
       h("p", { class: "display" }, "Реплей разбирается"),
-      h("p", { class: "small muted" }, "Обычно 1-5 минут. Страница обновится сама."),
+      h("p", { class: "small muted" }, "Обычно 1–5 минут. Страница обновится сама."),
       watched.has(matchId) && h("p", { class: "small muted" }, "Можешь закрыть приложение: бот напишет в Телеграм, когда разбор будет готов."),
     ));
     pollTimer = setTimeout(() => matchScreen(matchId, slot, accountId, attempt + 1), PARSE_POLL_MS);
@@ -1008,9 +1059,16 @@ function analysisScreen(a) {
   TABS.forEach(([name]) => tabs.append(h("button", { class: "tab", role: "tab" }, name)));
   lens = glassBar(tabs, ".tab", { live: true, onPick: select });
   // Свайп по содержимому листает вкладки; графики со своим жестом не трогаем
+  // и всё, что само листается вбок (чипсы вопросов тренеру, таблицы): иначе прокрутка ряда уводит на соседнюю вкладку
+  const scrollsX = (el) => {
+    for (; el && el !== content; el = el.parentElement) {
+      if (el.scrollWidth > el.clientWidth + 1 && /auto|scroll/.test(getComputedStyle(el).overflowX)) return true;
+    }
+    return false;
+  };
   let sx = 0, sy = 0, tracking = false;
   content.addEventListener("touchstart", (e) => {
-    tracking = e.touches.length === 1 && !e.target.closest(".chart, .frame, input");
+    tracking = e.touches.length === 1 && !e.target.closest(".chart, .frame, input, textarea, .chat-chips, .chat-list, .chat-row")&& !scrollsX(e.target);
     sx = e.touches[0].clientX; sy = e.touches[0].clientY;
   }, { passive: true });
   content.addEventListener("touchend", (e) => {
@@ -1564,8 +1622,12 @@ function progressBlocks(account) {
 
   const ach = achievements(list, done);
   blocks.push(h("h2", {}, "Ачивки"));
-  blocks.push(h("div", { class: "ach-grid" }, ...ach.map((x) => h("div", { class: `ach ${x.done ? "on" : ""}`, title: x.desc },
-    h("div", { class: "ach-medal", "aria-hidden": "true" }),
+  blocks.push(h("div", { class: "ach-grid" }, ...ach.map((x, n) => h("button", {
+    class: `ach ${x.done ? "on" : ""} coin-delay-${n % 4}`, type: "button", title: x.desc,
+    // тап переворачивает монету: на обороте прогресс
+    onclick: (e) => { hapticTick(); e.currentTarget.classList.toggle("flip"); },
+  },
+    achCoin(x),
     h("b", {}, x.title),
     h("span", {}, x.desc),
     !x.done && h("div", { class: "ach-bar" }, h("i", { "data-pct": Math.round((x.have / x.need) * 100) })),
@@ -1596,7 +1658,7 @@ function rankGoalBlock(list) {
   }).filter(Boolean);
   if (!rows.length) return null;
   return h("div", {}, h("h2", {}, `До ранга ${nr.rank}`), h("div", { class: "card" }, ...rows,
-    h("p", { class: "small muted" }, `Твоё среднее за последние ${same.length} ${plural(same.length, "разобранную катку", "разобранные катки", "разобранных каток")} на этой позиции → медиана игроков ранга ${nr.rank}.`)));
+    h("p", { class: "small muted" }, `Слева твоё среднее по ${same.length} ${plural(same.length, "разобранной катке", "разобранным каткам", "разобранным каткам")} на этой позиции, справа медиана игроков ранга ${nr.rank}.`)));
 }
 
 const WEEK_FIELDS = ["hero_id", "kills", "deaths", "assists", "gold_per_min", "duration", "player_slot", "radiant_win", "start_time", "game_mode"];
@@ -1704,7 +1766,7 @@ function friendsBlock(account) {
   const add = async () => {
     const id = toAccountId(input.value);
     if (!id || String(id) === String(account)) { status.textContent = "Это не похоже на Friend ID друга."; return; }
-    if (friends.some((f) => f.account_id === id)) { status.textContent = "Он уже в списке."; return; }
+    if (friends.some((f) => f.account_id === id)) { status.textContent = "Этот игрок уже в списке."; return; }
     status.textContent = "Ищу...";
     try {
       const p = await api(`/players/${id}`);
@@ -2038,14 +2100,14 @@ function replayBlock(a) {
       minimap(dots, { label: "Тепловая карта твоих позиций" }),
       h("div", { class: "zones" }, zoneRow("Линия", r.zones.lane), zoneRow("Мидгейм", r.zones.mid), zoneRow("Лейт", r.zones.late)),
       h("div", { class: "legend" }, h("span", {}, h("i", { class: "lg-zone own" }), "своя половина"), h("span", {}, h("i", { class: "lg-zone river" }), "река"),
-        h("span", {}, h("i", { class: "lg-zone enemy" }), "чужая, % справа"))),
+        h("span", {}, h("i", { class: "lg-zone enemy" }), "чужая (её доля справа)"))),
     r.deaths.length > 0 && h("h2", {}, "Перед каждой смертью"),
     r.deaths.length > 0 && h("div", { class: "card map-card" },
       minimap(deaths, { label: `Пути за 20 секунд до смертей: ${r.deaths.length}` }),
       h("p", { class: "small muted" }, `Линия — где ты шёл последние 20 секунд. Один, без своих в радиусе 1 500: ${alone} из ${r.deaths.length}.`),
       ...r.deaths.map((d) => h("div", { class: `death-row ${d.allies_near ? "" : "alone"}` },
         h("time", {}, mmss(d.t)),
-        h("span", { class: "grow" }, d.allies_near ? `рядом своих ${d.allies_near}` : `один${d.nearest_ally ? `, ближайший свой в ${num(d.nearest_ally)}` : ""}`),
+        h("span", { class: "grow" }, d.allies_near ? `рядом своих ${d.allies_near}` : `один${d.nearest_ally ? `, до ближайшего своего ${num(d.nearest_ally)}` : ""}`),
         h("b", {}, `врагов ${d.enemies_near}`)))));
 }
 
@@ -2402,7 +2464,7 @@ async function boot() {
     const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
       api("/constants/heroes"), api("/constants/items"), api("/constants/abilities", { timeout: 40000 }),
       api("/constants/item_ids"),
-      fetch("knowledge.json?v=12").then((r) => r.json()), fetch("texts.json?v=14").then((r) => r.json()),
+      fetch("knowledge.json?v=12").then((r) => r.json()), fetch("texts.json?v=15").then((r) => r.json()),
     ]);
     dictionary = createDictionary({ heroes, items, abilities });
     itemIds = ids;

@@ -166,18 +166,30 @@ button.ghost:active { transform: scale(.98); filter: none; }
 .page-head h1 { margin: 0; }
 .page-head .hero-img { width: 72px; height: 40px; border-radius: 10px; }
 .app-top { display: flex; align-items: center; gap: 14px; padding: 8px 2px 18px; }
-.app-top .sigil { width: 48px; height: 48px; margin: 0; flex: none; }
+.app-top .aegis { width: 50px; height: 56px; margin: 0; flex: none; }
 .app-top .t h1 { margin: 0; font-size: 22px; }
 .app-top .t p { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
 
-/* знак: золотой медальон с гранями */
-.sigil {
-  width: 64px; height: 64px; margin: 0 auto 12px; border-radius: 50%;
-  background:
-    radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.85), transparent 22%),
-    conic-gradient(from 200deg, #f6dda4, #b98a3e, #f3d595, #8d6428, #f6dda4);
-  box-shadow: inset 0 0 0 5px rgba(8, 9, 12, 0.55), inset 0 0 0 7px rgba(246, 221, 164, 0.6), 0 10px 30px -6px rgba(232, 194, 122, 0.5);
+/* знак: Аегис. Медленно поворачивается в 3D, под ним золотое свечение, по щиту бежит блик */
+.aegis {
+  position: relative; width: 64px; height: 72px; margin: 0 auto 12px;
+  perspective: 240px;
 }
+.aegis::after {
+  content: ""; position: absolute; inset: 62% 12% -6%; border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(232, 194, 122, .45), transparent);
+  filter: blur(6px); z-index: -1; animation: aegisGlow 6s ease-in-out infinite;
+}
+.aegis svg {
+  display: block; width: 100%; height: 100%; transform-style: preserve-3d;
+  filter: drop-shadow(0 8px 14px rgba(232, 194, 122, .35)) drop-shadow(0 2px 2px rgba(0, 0, 0, .6));
+  animation: aegisTurn 6s ease-in-out infinite;
+}
+@keyframes aegisTurn {
+  0%, 100% { transform: rotateY(-16deg) rotateX(4deg) translateY(0); }
+  50% { transform: rotateY(16deg) rotateX(-2deg) translateY(-3px); }
+}
+@keyframes aegisGlow { 0%, 100% { opacity: .6; } 50% { opacity: 1; } }
 
 .hero-img { width: 64px; height: 36px; border-radius: 8px; object-fit: cover; background: var(--slab-solid); flex: none; }
 
@@ -395,7 +407,7 @@ button.ghost:active { transform: scale(.98); filter: none; }
 .chat-msg.typing i:nth-child(2) { animation-delay: .15s; }
 .chat-msg.typing i:nth-child(3) { animation-delay: .3s; }
 @keyframes typing { 0%, 80%, 100% { opacity: .3; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-3px); } }
-.chat-chips { display: flex; gap: 8px; overflow-x: auto; margin: 0 -18px; padding: 2px 18px; scrollbar-width: none; }
+.chat-chips { display: flex; gap: 8px; overflow-x: auto; margin: 0 -18px; padding: 2px 18px; scrollbar-width: none; overscroll-behavior-x: contain; touch-action: pan-x pan-y; }
 .chat-chips::-webkit-scrollbar { display: none; }
 .chat-chip { flex: none; padding: 10px 14px; border-radius: 999px; font: 700 13px/1 var(--sans); color: var(--text); background: rgba(255, 255, 255, 0.07); box-shadow: inset 0 0 0 1px var(--line-2); }
 .chat-row { display: flex; gap: 8px; align-items: flex-end; }
@@ -614,7 +626,7 @@ details.timeline-box > summary { font-weight: 800; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .match-empty { text-align: center; padding: 56px 16px; }
-.match-empty .sigil { width: 84px; height: 84px; margin-bottom: 18px; animation: medalFloat 6s ease-in-out infinite; }
+.match-empty .aegis { width: 84px; height: 94px; margin-bottom: 18px; }
 
 /* появление экрана: из глубины */
 .fade-in { animation: rise .5s var(--ease) both; }
@@ -664,13 +676,30 @@ body { background: transparent; }
 .goals .goal-next { margin-bottom: 8px; }
 
 .ach-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-.ach { position: relative; display: flex; flex-direction: column; gap: 4px; padding: 14px; border-radius: var(--r-lg); background: var(--slab); box-shadow: var(--lift); opacity: .75; }
+.ach { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 14px; border-radius: var(--r-lg);
+  font: 500 14px/1.3 var(--sans); color: var(--text); text-align: left; background: var(--slab); box-shadow: var(--lift); opacity: .75; }
+.ach:active { transform: scale(.98); filter: none; }
+
+/* монета: две стороны в 3D, ребро из теней */
+.coin { position: relative; display: block; width: 44px; height: 44px; margin-bottom: 8px; transform-style: preserve-3d;
+  transition: transform .7s var(--spring); }
+.coin-face { position: absolute; inset: 0; display: grid; place-items: center; border-radius: 50%; backface-visibility: hidden; -webkit-backface-visibility: hidden;
+  background: radial-gradient(circle at 34% 28%, rgba(255, 255, 255, .14), transparent 45%), #1b1d24;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .1), inset 0 -3px 6px rgba(0, 0, 0, .5), 0 6px 12px -4px rgba(0, 0, 0, .7); color: var(--muted); }
+.coin-face svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.coin-back { transform: rotateY(180deg); font: 800 12px/1 var(--sans); font-variant-numeric: tabular-nums; }
+.ach.on .coin-face { color: #3a2608;
+  background: radial-gradient(circle at 34% 26%, rgba(255, 255, 255, .8), transparent 26%), conic-gradient(from 200deg, #f6dda4, #b98a3e, #f3d595, #8d6428, #f6dda4);
+  box-shadow: inset 0 0 0 3px rgba(120, 80, 20, .45), inset 0 0 0 5px rgba(246, 221, 164, .55), 0 8px 18px -6px rgba(232, 194, 122, .6); }
+.ach.on .coin { animation: coinSpin 9s var(--ease) infinite; }
+.coin-delay-1 .coin { animation-delay: 2.2s !important; }
+.coin-delay-2 .coin { animation-delay: 4.4s !important; }
+.coin-delay-3 .coin { animation-delay: 6.6s !important; }
+.ach.flip .coin { animation: none; transform: rotateY(180deg); }
+@keyframes coinSpin { 0%, 82% { transform: rotateY(0); } 100% { transform: rotateY(360deg); } }
 .ach.on { opacity: 1; background: radial-gradient(100% 80% at 0% 0%, rgba(232, 194, 122, 0.16), transparent 60%), var(--slab); }
-.ach-medal { width: 38px; height: 38px; margin-bottom: 6px; border-radius: 50%; background: rgba(255, 255, 255, 0.06); box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.08); }
-.ach.on .ach-medal { background: radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.85), transparent 24%), conic-gradient(from 200deg, #f6dda4, #b98a3e, #f3d595, #8d6428, #f6dda4);
-  box-shadow: inset 0 0 0 4px rgba(8, 9, 12, 0.5), 0 8px 18px -6px rgba(232, 194, 122, 0.6); }
 .ach b { font-size: 14px; }
-.ach span { font-size: 12px; color: var(--muted); line-height: 1.35; }
+.ach > span:not(.coin) { font-size: 12px; color: var(--muted); line-height: 1.35; }
 .ach em { margin-top: auto; padding-top: 6px; font-style: normal; font-size: 12px; font-weight: 800; color: var(--muted); }
 .ach.on em { color: var(--aegis); }
 .ach-bar { height: 4px; margin-top: 6px; border-radius: 2px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }

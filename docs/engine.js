@@ -1481,7 +1481,7 @@ class MatchAnalyzer {
         () => {
           const n = t.hardBlock + (t.hardBlock ? 0 : t.silence);
           const parts = [];
-          if (n) parts.push(`${n} ${plural(n, "контроль", "контроля", "контролей")} на тебе БКБ блокирует`);
+          if (n) parts.push(`БКБ заблокировал бы ${n} ${plural(n, "контроль", "контроля", "контролей")} на тебе`);
           if (t.magicBlock >= 0.25) parts.push(`${pct(t.magicBlock)}% урона по тебе идёт магией, которую он режет`);
           return parts.join(", плюс ") || "защита от магии и контроля";
         }],
@@ -1492,17 +1492,17 @@ class MatchAnalyzer {
       ["lotus_orb", 1, t.anyDispel * 0.6 + t.hard * 0.3,
         () => `диспел плюс отражение: ${t.anyDispel + t.hard} ${plural(t.anyDispel + t.hard, "контроль", "контроля", "контролей")} на тебе`],
       ["sphere", core ? 1 : 0, t.hardBlock * 0.7,
-        () => `${t.hardBlock} жёстких контролей по одной цели, Linken's блокирует первый из них`],
+        () => `${t.hardBlock} ${plural(t.hardBlock, "жёсткий контроль", "жёстких контроля", "жёстких контролей")} по одной цели, Linken's блокирует первый из них`],
       ["aeon_disk", core ? 1 : 0, t.magic >= 0.4 && t.total > 8000 ? t.magic * 6 : 0,
         () => `${pct(t.magic)}% урона магией и много урона разом: Aeon Disk спасает от добивания`],
       ["glimmer_cape", core ? 0 : 1, t.magic * 6,
         () => `${pct(t.magic)}% урона по тебе магией, Glimmer режет магию и прячет от таргета`],
       ["pipe", core ? 0 : 1, t.magic * 5.5,
-        () => `${pct(t.magic)}% урона магией: Pipe снимает его с всей команды`],
+        () => `${pct(t.magic)}% урона магией: Pipe срезает его всей команде`],
       ["hood_of_defiance", core ? 1 : 0.6, t.magic * 4.5,
-        () => `${pct(t.magic)}% урона магией, а такой предмет самый дешёвый способ его срезать`],
+        () => `${pct(t.magic)}% урона магией, а это самый дешёвый способ его срезать`],
       ["ghost", 1, t.phys * 3.5 + t.auto * 1.5,
-        () => `${pct(t.phys)}% урона физическим: Ghost Scepter даёт неуязвимость к нему на время драки`],
+        () => `${pct(t.phys)}% урона физического: Ghost Scepter даёт к нему неуязвимость на несколько секунд`],
       ["heavens_halberd", core ? 1 : 0.3, t.auto * 6,
         () => `${pct(t.auto)}% урона пришло автоатаками: Halberd отключает атаку и даёт уклонение`],
       ["assault", core ? (minutes >= 28 ? 1 : 0) : 0, t.auto * 5 + t.phys * 1.5,
@@ -1746,7 +1746,7 @@ class MatchAnalyzer {
     if (![1, 3].includes(this.pos) || !this.roleSure || this.dominant || this.minutes < 10) return;
     const dn10 = atMinute(this.p.dn_t, 10);
     if (dn10 == null || dn10 > 2) return;
-    const dnText = dn10 === 0 ? "ни одного деная" : `всего ${dn10} ${plural(dn10, "денай", "деная", "деная")}`;
+    const dnText = dn10 === 0 ? "ни одного деная" : `всего ${dn10} ${plural(dn10, "денай", "деная", "денаев")}`;
     this.micro(LANE, WARN, "micro_core_denies", { dn_text: dnText });
   }
 
@@ -1921,10 +1921,10 @@ class MatchAnalyzer {
     if (first.length < 3 || first.length / teamFights < 0.45) return;
     const n = first.length;
     const times = first.slice(0, 4).map(mmss).join(", ");
-    this.micro(SURVIVAL, WARN, "micro_first_death", { n, total: teamFights, times }, `micro_first_death_tip_${this.role()}`);
+    this.micro(SURVIVAL, WARN, "micro_first_death", { n, times_word: timesWord(n), total: teamFights, times }, `micro_first_death_tip_${this.role()}`);
     for (const t of first) if (!this.deathNotes.has(t)) this.deathNotes.set(t, "умер первым в драке");
     this.issue("first_death", n * 250, "Первым умираешь в драках",
-      `В ${n} из ${teamFights} драк, где твоя команда теряла героев, первым умирал ты (${times})`,
+      `В ${n} из ${teamFights} ${plural(teamFights, "драки", "драк", "драк")}, где твоя команда теряла героев, первым умирал ты (${times})`,
       this.core
         ? "Заходи в драку вторым: дождись, пока враги потратят контроль на тех, кто впереди, и только потом залетай"
         : "Стой за корами, а не перед ними: саппорт, который умер первым, не успел дать ни стана, ни сейва",
@@ -2347,7 +2347,7 @@ class MatchAnalyzer {
       if (seen) {
         facts.push(seen.allies_near
           ? `по реплею: рядом своих ${seen.allies_near}, врагов ${seen.enemies_near}`
-          : `по реплею: своих в радиусе 1 500 не было${seen.nearest_ally ? ` (ближайший в ${num(seen.nearest_ally)})` : ""}, врагов рядом ${seen.enemies_near}`);
+          : `по реплею: своих в радиусе 1 500 не было${seen.nearest_ally ? ` (до ближайшего ${num(seen.nearest_ally)})` : ""}, врагов рядом ${seen.enemies_near}`);
         facts.push(seen.enemy_half ? "на вражеской половине карты" : "на своей половине карты");
       }
       if (tf) facts.push("в командной драке");
@@ -2390,7 +2390,7 @@ class MatchAnalyzer {
       const m0 = Math.floor(tf.start / 60), m1 = Math.min(Math.ceil(tf.end / 60) + 1, lh.length - 1);
       if (lh.length && m1 > m0) {
         const got = (lh[m1] ?? 0) - (lh[m0] ?? 0);
-        facts.push(got > 0 ? `ты в это время добил ${got} крипов` : "ты в это время не фармил");
+        facts.push(got > 0 ? `ты в это время добил ${got} ${plural(got, "крип", "крипа", "крипов")}` : "ты в это время не фармил");
       }
       const ld = lead(tf.start);
       if (ld) facts.push(ld);
@@ -2652,7 +2652,7 @@ export const ACHIEVEMENTS = [
   { id: "clean_lane", title: "Чистая линия", desc: "3 катки подряд не больше одной смерти до 10:00", kind: "streak", need: 3, test: (m) => m.lane_deaths <= 1 },
   { id: "no_feed", title: "Без фида", desc: "3 катки подряд не больше 4 смертей", kind: "streak", need: 3, test: (m) => m.deaths <= 4 },
   { id: "teamplayer", title: "В каждой драке", desc: "3 катки подряд KP 60% и выше", kind: "streak", need: 3, test: (m) => m.kp != null && m.kp >= 0.6, applies: (m) => m.kp != null },
-  { id: "buttons", title: "Всё прожато", desc: "5 каток подряд без смертей с непрожатыми кнопками", kind: "streak", need: 5, test: (m) => !m.silent_deaths && !(m.unused || []).length },
+  { id: "buttons", title: "Всё прожато", desc: "5 каток подряд не умирать с непрожатыми кнопками", kind: "streak", need: 5, test: (m) => !m.silent_deaths && !(m.unused || []).length },
   { id: "farmer", title: "Фермер", desc: "3 катки на коре с 45+ крипами к 10:00", kind: "count", need: 3, test: (m) => m.lh10 >= 45, applies: (m) => m.pos <= 3 && m.lh10 != null },
   { id: "eyes", title: "Глаза команды", desc: "3 катки на саппорте с 4+ обсами за 10 минут", kind: "count", need: 3, test: (m) => m.obs10 >= 4, applies: (m) => m.pos >= 4 },
   { id: "alive", title: "Живучий", desc: "3 катки, где мёртвым был меньше 10% игры", kind: "count", need: 3, test: (m) => m.dead_share < 0.1 },

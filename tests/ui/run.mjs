@@ -115,6 +115,8 @@ const PLACEHOLDER = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAA
 
 const errors = [];
 const cardSizes = [];
+// запросы из service worker тоже идут через подмену, иначе офлайн-проверка зависит от живой OpenDota
+process.env.PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS = "1";
 const browser = await chromium.launch({ headless: !process.env.UI_HEADED });
 const context = await browser.newContext({
   viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true, locale: "ru-RU", serviceWorkers: "block",
@@ -285,9 +287,12 @@ if (!only || only.has("offline")) {
   await ctx2.addInitScript((acc) => { try { localStorage.setItem("account_id", String(acc)); } catch { /* */ } }, ACCOUNT);
   await ctx2.route("**/*", handleRoute);
   const p2 = await ctx2.newPage();
+  p2.on("pageerror", (e) => errors.push(`offline pageerror: ${e.message}`));
   await step("offline", async () => {
     await p2.goto(`${BASE}/index.html`);
-    await p2.waitForSelector(".match-item", { timeout: 15000 });
+    await p2.waitForSelector(".match-item", { timeout: 15000 }).catch(async (e) => {
+      throw new Error(`первый заход: ${e.message.split("\n")[0]} | на экране: ${(await p2.evaluate(() => document.body.innerText).catch(() => "")).replace(/\s+/g, " ").slice(0, 200)}`);
+    });
     await p2.evaluate(() => navigator.serviceWorker.ready);
     // второй заход уже под контролем service worker: он складывает ответы в кэш
     await p2.reload();
@@ -295,7 +300,9 @@ if (!only || only.has("offline")) {
     netDown = true;
     await ctx2.setOffline(true);
     await p2.reload();
-    await p2.waitForSelector(".match-item", { timeout: 15000 });
+    await p2.waitForSelector(".match-item", { timeout: 15000 }).catch(async (e) => {
+      throw new Error(`${e.message.split("\n")[0]} | на экране: ${(await p2.evaluate(() => document.body.innerText).catch(() => "")).replace(/\s+/g, " ").slice(0, 200)}`);
+    });
   });
   await ctx2.close();
 }
