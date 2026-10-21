@@ -21,6 +21,7 @@ const MAX_CHAT_BODY = 40000;   // сводка + разбор тренера + �
 const CHAT_HISTORY = 10;       // сообщений переписки, которые видит модель
 const CHAT_PER_IP_PER_HOUR = 30;
 const CHAT_PER_DAY = 2000;
+const ASK_PER_USER_DAY = 3;    // вопросов тренеру (чат и сравнение) в сутки на человека, сутки по Москве
 const CLAUDE_QUOTA = 200e6;    // токенов квоты на ключ посредника (30 дней)
 const CLAUDE_QUOTA_MULT = 3;   // один токен Opus списывает три токена квоты
 const PROMPT_VERSION = "v4";   // меняется вместе с SYSTEM: старые ответы из кэша не отдаются
@@ -93,6 +94,22 @@ function throttle(ip, now, perHour = PER_IP_PER_HOUR, bucket = "coach", perDay =
   if (hits.size > 5000) hits.clear();
   day.count += 1;
   return null;
+}
+
+// Лимит вопросов на человека живёт в KV: память воркера сбрасывается при перезапуске.
+// Место занимается до ответа (два запроса разом не проскочат), при ошибке возвращается
+const plural = (n, one, few, many) => {
+  const m10 = n % 10, m100 = n % 100;
+  return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many;
+};
+const mskDay = (now) => new Date(now + 3 * 3600_000).toISOString().slice(0, 10);
+export async function takeAsk(env, who, now = Date.now(), limit = ASK_PER_USER_DAY) {
+  const key = `ask:${who}:${mskDay(now)}`;
+  const used = Number(await env.COACH_KV.get(key)) || 0;
+  if (used >= limit) return null;
+  const put = (n) => env.COACH_KV.put(key, String(n), { expirationTtl: 2 * 86400 });
+  await put(used + 1);
+  return { left: limit - used - 1, refund: () => put(used) };
 }
 
 const duration = (d) => (Number.isFinite(Number(d)) && Number(d) > 0 ? `${Math.round(Number(d) / 60)} мин` : clip(d, 12));
@@ -792,14 +809,24 @@ async function handlePost(request, env, ctx, origin) {
     if (!ok) return reply(400, { error: "Не понял сводку." }, origin);
     const limited = throttle(ip, Date.now(), Number(env.CHAT_IP_LIMIT) || CHAT_PER_IP_PER_HOUR, "chat", CHAT_PER_DAY);
     if (limited) return reply(429, { error: limited }, origin);
+    // Человек — аккаунт Телеграма по подписанной initData, вне Телеграма — IP
+    let quota = null;
+    if (env.COACH_KV) {
+      const user = env.BOT_TOKEN ? await telegramUser(raw.initData, env.BOT_TOKEN) : null;
+      const limit = Number(env.ASK_PER_USER_DAY) || ASK_PER_USER_DAY;
+      quota = await takeAsk(env, user && user.id ? `tg${user.id}` : `ip${ip}`, Date.now(), limit);
+      if (!quota) return reply(429, { error: `Лимит: ${limit} ${plural(limit, "вопрос", "вопроса", "вопросов")} тренеру в сутки. Новые после полуночи по Москве.`, left: 0 }, origin);
+    }
+    const left = quota ? { left: quota.left } : {};
     try {
       if (mode === "compare") {
         const text = await compare(run, raw.a, raw.b);
-        return reply(200, { text }, origin, meter.by_name);
+        return reply(200, { text, ...left }, origin, meter.by_name);
       }
       const out = await chat(run, raw.summary, { question: raw.question, history: raw.history, coach: raw.coach });
-      return reply(200, out, origin, meter.by_name);
+      return reply(200, { ...out, ...left }, origin, meter.by_name);
     } catch (e) {
+      if (quota) later(quota.refund());
       if (e.status === 400) return reply(400, { error: "Пустой вопрос." }, origin);
       return reply(502, debug(e), origin);
     } finally { later(addUsage(env, meter)); }

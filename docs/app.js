@@ -1285,7 +1285,9 @@ function stat(value, label) {
 
 const COACH_URL = "https://dotacoach.2007rggg.workers.dev"; // адрес воркера с тренером
 const COACH_DAILY = 5; // разборов тренера в день на устройство
-const CHAT_DAILY = 40; // сообщений тренеру в день на устройство
+const CHAT_DAILY = 3; // вопросов тренеру (чат и сравнение) в сутки по Москве; сервер считает то же на аккаунт
+const CHAT_LIMIT_TEXT = `Лимит: ${CHAT_DAILY} ${plural(CHAT_DAILY, "вопрос", "вопроса", "вопросов")} тренеру в сутки. Новые после полуночи по Москве.`;
+const chatLeftText = (n) => n > 0 ? `${plural(n, "Остался", "Осталось", "Осталось")} ${n} ${plural(n, "вопрос", "вопроса", "вопросов")} на сегодня.` : CHAT_LIMIT_TEXT;
 const COACH_TIMEOUT = 75000;
 const MEMORY_SIZE = 10; // прошлых разборов в памяти тренера
 const COMPARE_SIZE = 8; // каток, с которыми можно сравнить
@@ -1296,12 +1298,14 @@ const safeLocal = {
 };
 const localJson = (key, fallback) => { try { return JSON.parse(safeLocal.get(key) || "null") ?? fallback; } catch { return fallback; } };
 
-// Счётчик на день: [использовано, записать+1]
+// Счётчик на сутки по Москве: [использовано, записать (по умолчанию +1)]
 function dailyCounter(name) {
-  const day = new Date().toISOString().slice(0, 10);
+  const day = new Date(Date.now() + 3 * 3600_000).toISOString().slice(0, 10);
   const used = safeLocal.get(`${name}_day`) === day ? Number(safeLocal.get(`${name}_n`) || 0) : 0;
-  return [used, () => { safeLocal.set(`${name}_day`, day); safeLocal.set(`${name}_n`, String(used + 1)); }];
+  return [used, (n = used + 1) => { safeLocal.set(`${name}_day`, day); safeLocal.set(`${name}_n`, String(n)); }];
 }
+// Сколько вопросов потрачено по словам сервера: он считает на аккаунт, а не на телефон
+const chatUsed = (data) => (Number.isInteger(data.left) ? CHAT_DAILY - data.left : undefined);
 
 // Запрос к воркеру. Ошибка с текстом воркера помечена fromCoach, остальные переводятся на русский
 async function postCoach(body) {
@@ -1500,7 +1504,7 @@ function chatBlock(a) {
     const q = String(question || "").trim().slice(0, 400);
     if (!q || busy) return;
     const [used, spend] = dailyCounter("chat");
-    if (used >= CHAT_DAILY) { note.textContent = `Сегодня уже ${CHAT_DAILY} вопросов, это лимит. Завтра снова.`; return; }
+    if (used >= CHAT_DAILY) { note.textContent = CHAT_LIMIT_TEXT; return; }
     busy = true;
     send.disabled = true;
     note.textContent = "";
@@ -1511,9 +1515,10 @@ function chatBlock(a) {
     draw(true);
     haptic("light");
     try {
-      const data = await postCoach({ mode: "chat", summary: coachPayload(a), coach: safeLocal.get(coachKey(a)) || "", history: before, question: q });
+      const data = await postCoach({ mode: "chat", summary: coachPayload(a), coach: safeLocal.get(coachKey(a)) || "", history: before, question: q, initData: (tg && tg.initData) || "" });
       if (!data.text) throw Object.assign(new Error("Тренер сейчас недоступен."), { fromCoach: true });
-      spend();
+      spend(chatUsed(data));
+      note.textContent = chatLeftText(CHAT_DAILY - dailyCounter("chat")[0]);
       history = [...history, { role: "assistant", text: data.text }].slice(-CHAT_KEEP);
       safeLocal.set(chatKey(a), JSON.stringify(history));
       haptic("medium");
@@ -1533,7 +1538,7 @@ function chatBlock(a) {
   draw();
   const box = h("section", { class: "card chat", "aria-labelledby": "chat-title" },
     h("div", { class: "coach-title", id: "chat-title" }, "Спроси тренера"),
-    h("p", { class: "small muted chat-hint" }, "Только про Доту и эту катку: моменты, сборку, линию, драки."),
+    h("p", { class: "small muted chat-hint" }, `Только про Доту и эту катку: моменты, сборку, линию, драки. ${CHAT_DAILY} ${plural(CHAT_DAILY, "вопрос", "вопроса", "вопросов")} в сутки.`),
     list, chips, h("div", { class: "chat-row" }, input, send), note);
   return {
     box,
@@ -1830,12 +1835,12 @@ function compareBlock(a) {
   const out = h("div", { class: "compare-out", role: "status" });
   const pick = async (other, btn) => {
     const [used, spend] = dailyCounter("chat");
-    if (used >= CHAT_DAILY) { out.textContent = "На сегодня вопросов тренеру хватит. Завтра снова."; return; }
+    if (used >= CHAT_DAILY) { out.textContent = CHAT_LIMIT_TEXT; return; }
     btn.disabled = true;
     out.replaceChildren(h("div", { class: "chat-msg assistant typing" }, h("i"), h("i"), h("i")));
     try {
-      const data = await postCoach({ mode: "compare", a: { ...coachPayload(a), past: [] }, b: other.payload });
-      spend();
+      const data = await postCoach({ mode: "compare", a: { ...coachPayload(a), past: [] }, b: other.payload, initData: (tg && tg.initData) || "" });
+      spend(chatUsed(data));
       out.replaceChildren(...String(data.text || "").split("\n").filter(Boolean).map((l) => h("p", {}, l)));
     } catch (e) {
       out.replaceChildren(h("p", { class: "error" }, coachError(e)));

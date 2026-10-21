@@ -194,6 +194,29 @@ test("fetch: разбор кэшируется в KV, второй раз без
   assert.equal(stats.quota_spent_30d, 450);
 });
 
+test("fetch: 3 вопроса тренеру в сутки на человека, ошибка модели лимит не тратит", async (t) => {
+  t.after(restore);
+  const kv = fakeKV();
+  const e = { ...env, COACH_KV: kv, BOT_TOKEN: "123:abc" };
+  const init = await signInit({ auth_date: String(Math.floor(Date.now() / 1000)), user: JSON.stringify({ id: 7 }) }, "123:abc");
+  const ask = (ip) => worker.fetch(req({ mode: "chat", summary: raw, question: "что делать на линии?", initData: init }, ip), e);
+  // упал Opus и все запасные: вопрос не засчитан
+  mockFetch({ claude: [new Response("x", { status: 500 })], groq: [new Response("x", { status: 500 })], gemini: [new Response("x", { status: 500 })] });
+  assert.equal((await ask("10.7.0.1")).status, 502);
+  mockFetch({ claude: [sse("Раз."), sse("Два."), sse("Три.")] });
+  // с разных IP, но один аккаунт Телеграма
+  assert.equal((await (await ask("10.7.0.2")).json()).left, 2);
+  assert.equal((await (await ask("10.7.0.3")).json()).left, 1);
+  assert.equal((await (await ask("10.7.0.4")).json()).left, 0);
+  const res = await ask("10.7.0.5");
+  assert.equal(res.status, 429);
+  assert.match((await res.json()).error, /^Лимит: 3 вопроса тренеру в сутки/);
+  // другой человек (без Телеграма, по IP) не задет
+  mockFetch({ claude: [sse("Ответ.")] });
+  const other = await worker.fetch(req({ mode: "compare", a: raw, b: { ...raw, hero: "Tusk" } }, "10.7.0.6"), e);
+  assert.equal((await other.json()).left, 2);
+});
+
 test("fetch: /stats отдаёт расход без Origin", async () => {
   const res = await worker.fetch(new Request("https://coach.example/stats"), { COACH_KV: fakeKV() });
   assert.equal(res.status, 200);
