@@ -348,6 +348,7 @@ export function createDictionary({ heroes, items, abilities }) {
     heroName: (id) => heroNames[id] ?? `герой #${id}`,
     heroKey: (id) => heroKeys[id] ?? "",
     heroImage: (id) => heroImages[id],
+    heroRoles: (id) => (heroes[id] && heroes[id].roles) || [],
     heroNameByKey(key) {
       if (key in heroesByKey) return heroesByKey[key];
       if (key.includes("tower")) return "башня";
@@ -2710,25 +2711,61 @@ export function itemTimings(items, rows, minGames = 15) {
   return out;
 }
 
-// Драфт до игры: кого из своих героев взять против этих врагов и что собирать.
-// pool — [{hero_id, games, win}] свои герои, matchups — {hero_id: [{hero_id, games_played, wins}]} по каждому из них
-export function draftAdvice({ enemies, pool, matchups, knowledge, od, role = "core", minGames = 20 }) {
-  const picks = [];
-  for (const h of pool || []) {
-    const rows = new Map((matchups[h.hero_id] || []).map((m) => [m.hero_id, m]));
-    const vs = [];
-    for (const e of enemies) {
-      const m = rows.get(e);
-      if (m && m.games_played >= minGames) vs.push({ hero_id: e, name: od.heroName(e), wr: m.wins / m.games_played, games: m.games_played });
-    }
-    if (vs.length < Math.min(2, enemies.length)) continue;
-    // Своя игра на герое: винрейт со сглаживанием к 50%, чтобы 3 игры из 3 не перевешивали всё
-    const own = ((h.win || 0) + 5) / ((h.games || 0) + 10);
-    const matchup = sum(vs.map((v) => v.wr)) / vs.length;
-    picks.push({ hero_id: h.hero_id, name: od.heroName(h.hero_id), games: h.games, own_wr: own, matchup_wr: matchup,
-      score: matchup * 0.7 + own * 0.3, vs: vs.sort((a, b) => b.wr - a.wr) });
-  }
-  picks.sort((a, b) => b.score - a.score);
+// Подходит ли герой под роль по ролям OpenDota (нет данных — подходит)
+function fitsRole(roles, role) {
+  if (!roles.length) return true;
+  return role === "support" ? roles.includes("Support") : roles.includes("Carry") || !roles.includes("Support");
+}
+
+// Драфт до игры: кого взять против этих врагов, почему и что собирать.
+// pool — [{hero_id, games, win}] свои герои за всё время, recent — {hero_id: игр в последних 20},
+// matchups — {hero_id: [{hero_id, games_played, wins}]} по своим героям (OpenDota),
+// counter — контрпики dota2.ru {t: [объяснения], h: {id врага: [[id контрпика, номер объяснения]]}}.
+// Свои герои идут первыми, если подходят: самые игранные за последние 20 матчей и за всё время
+export function draftAdvice({ enemies, pool = [], recent = {}, matchups = {}, counter = { t: [], h: {} }, knowledge, od, role = "core", minGames = 20 }) {
+  const ch = counter.h || {}, ct = counter.t || [];
+  // Чем раньше контрпик в статье, тем он сильнее: первые три весят больше
+  const reasons = (id) => enemies.flatMap((e) => {
+    const list = ch[e] || [];
+    const i = list.findIndex(([c]) => c === id);
+    return i < 0 ? [] : [{ hero_id: e, name: od.heroName(e), why: ct[list[i][1]] || "", w: i < 3 ? 1.2 : 1 }];
+  });
+  // Враги, которые сами контрят этого героя
+  const threats = (id) => enemies.filter((e) => (ch[id] || []).some(([c]) => c === e)).map((e) => ({ hero_id: e, name: od.heroName(e) }));
+  const matchupOf = (id) => {
+    const rows = new Map((matchups[id] || []).map((m) => [m.hero_id, m]));
+    const vs = enemies.map((e) => rows.get(e)).filter((m) => m && m.games_played >= minGames);
+    if (vs.length < Math.min(2, enemies.length)) return null;
+    return sum(vs.map((m) => m.wins / m.games_played)) / vs.length;
+  };
+  const judge = (id) => {
+    const why = reasons(id), against = threats(id), wr = matchupOf(id);
+    // Пользу от статьи и цифры OpenDota сводим в одно: 53% по матчапам ≈ треть одного контрпика
+    // взаимный контрпик (Luna против Axe и Axe против Luna) — ничья, а не плюс
+    const fit = sum(why.map((r) => r.w)) - against.length * 1.2 + (wr == null ? 0 : (wr - 0.5) * 10);
+    return { hero_id: id, name: od.heroName(id), why, threats: against, matchup_wr: wr, fit };
+  };
+  const roleOk = (id) => fitsRole(od.heroRoles ? od.heroRoles(id) : [], role);
+  const taken = new Set(enemies);
+
+  // Свои: только подходящие, порядок — привычность (последние 20 матчей важнее), при равенстве — польза
+  const maxGames = Math.max(1, ...pool.map((h) => h.games || 0));
+  const picks = pool.filter((h) => (h.games || 0) >= 3 && !taken.has(h.hero_id) && roleOk(h.hero_id))
+    .map((h) => ({ ...judge(h.hero_id), games: h.games, recent: recent[h.hero_id] || 0,
+      own_wr: ((h.win || 0) + 5) / ((h.games || 0) + 10) }))
+    .filter((p) => p.fit > 0)
+    .map((p) => ({ ...p, score: (p.recent / 20) * 0.6 + (p.games / maxGames) * 0.4 + p.fit * 0.05 }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
+  for (const p of picks) taken.add(p.hero_id);
+
+  // Контрпики по статьям dota2.ru для всех, даже без своего пула: кто закрывает больше врагов
+  const seen = new Set(enemies.flatMap((e) => (ch[e] || []).map(([c]) => c)));
+  const counters = [...seen].filter((id) => !taken.has(id) && roleOk(id)).map(judge)
+    .filter((p) => p.why.length && p.fit > 0)
+    .map((p) => ({ ...p, games: (pool.find((h) => h.hero_id === p.hero_id) || {}).games || 0 }))
+    .sort((a, b) => b.fit - a.fit || b.games - a.games)
+    .slice(0, 5);
   // Предметы против механик врагов: каждая механика даёт свои предметы для роли
   const votes = new Map();
   for (const e of enemies) {
@@ -2747,7 +2784,7 @@ export function draftAdvice({ enemies, pool, matchups, knowledge, od, role = "co
   }
   const items = [...votes.values()].sort((a, b) => b.n - a.n).slice(0, 5)
     .map((v) => ({ key: v.key, item: v.item, why: [...v.why].join(", "), from: [...v.from].join(", ") }));
-  return { picks: picks.slice(0, 3), items };
+  return { picks, counters, items };
 }
 
 export function analyze(match, player, od, knowledge, texts, proItems, heroBench, norms, matchups, replay = null) {

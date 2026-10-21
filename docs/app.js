@@ -2,7 +2,7 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric,
   CATEGORIES, BAD, WARN, GOOD,
-} from "./engine.js?v=20";
+} from "./engine.js?v=21";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -826,7 +826,7 @@ async function draftScreen() {
       onclick: () => { enemies.splice(enemies.indexOf(id), 1); hapticTick(); drawChosen(); drawGrid(); } },
     heroImg(id), h("span", {}, dictionary.heroName(id)))),
     ...Array.from({ length: 5 - enemies.length }, () => h("div", { class: "draft-pick empty" })));
-    goBtn.disabled = enemies.length < 2;
+    goBtn.disabled = !enemies.length;
   };
   const drawGrid = () => {
     const q = search.value.trim().toLowerCase();
@@ -837,30 +837,34 @@ async function draftScreen() {
   };
   search.addEventListener("input", drawGrid);
   goBtn.onclick = async () => {
-    if (!account) { result.replaceChildren(h("p", { class: "muted" }, "Привяжи аккаунт на «Главной»: подсказываю из твоих героев.")); return; }
     goBtn.disabled = true;
     haptic("medium");
-    result.replaceChildren(h("div", { class: "center" }, h("div", { class: "spinner" }), h("div", { class: "muted small" }, "Смотрю твоих героев против этих врагов...")));
+    result.replaceChildren(h("div", { class: "center" }, h("div", { class: "spinner" }),
+      h("div", { class: "muted small" }, account ? "Смотрю твоих героев против этих врагов..." : "Ищу контрпики...")));
     try {
-      const heroes = ((await api(`/players/${account}/heroes`)) || []).filter((x) => x.games >= 3)
-        .sort((a, b) => b.games - a.games).slice(0, DRAFT_POOL);
+      const [counter, all, last] = await Promise.all([counterpicks(),
+        account ? api(`/players/${account}/heroes`) : [], account ? api(`/players/${account}/recentMatches`) : []]);
+      const recent = {};
+      for (const m of (last || []).slice(0, 20)) recent[m.hero_id] = (recent[m.hero_id] || 0) + 1;
+      const pool = (all || []).filter((x) => x.games >= 3);
+      // цифры матчапов OpenDota только по самым игранным: запросы идут по одному
+      const top = pool.slice().sort((a, b) => (recent[b.hero_id] || 0) - (recent[a.hero_id] || 0) || b.games - a.games).slice(0, DRAFT_POOL);
       const matchups = {};
-      // по очереди: OpenDota режет частые запросы
-      for (const x of heroes) matchups[x.hero_id] = await heroMatchups(x.hero_id);
+      for (const x of top) matchups[x.hero_id] = await heroMatchups(x.hero_id);
       if (stale(seq)) return;
-      const advice = draftAdvice({ enemies: [...enemies], pool: heroes, matchups, knowledge, od: dictionary, role });
-      result.replaceChildren(draftResult(advice));
+      const advice = draftAdvice({ enemies: [...enemies], pool, recent, matchups, counter, knowledge, od: dictionary, role });
+      result.replaceChildren(draftResult(advice, Boolean(account)));
     } catch {
-      result.replaceChildren(h("p", { class: "error" }, "OpenDota не отвечает. Попробуй ещё раз."));
+      result.replaceChildren(h("p", { class: "error" }, "Не загрузилось. Проверь интернет и попробуй ещё раз."));
     } finally {
-      goBtn.disabled = enemies.length < 2;
+      goBtn.disabled = !enemies.length;
     }
   };
   drawChosen();
   drawGrid();
   render(
     h("div", { class: "page-head" }, h("h1", {}, "Драфт перед игрой")),
-    h("p", { class: "muted" }, "Выбери врагов, которых видишь на пике. Подскажу, кого из твоих героев взять и что собирать."),
+    h("p", { class: "muted" }, "Выбери врагов, которых видишь на пике, хватит и одного. Подскажу, кого взять и почему, а потом что собирать."),
     h("div", { class: "card" },
       h("div", { class: "seg-row" }, roleBtn("core", "Я кор"), roleBtn("support", "Я саппорт")),
       chosen, goBtn),
@@ -870,19 +874,43 @@ async function draftScreen() {
   );
 }
 
-function draftResult(advice) {
+// Контрпики dota2.ru: грузим один раз и только для драфта
+let counterCache = null;
+function counterpicks() {
+  if (!counterCache) counterCache = fetch("counterpick.json?v=1").then((r) => r.json()).catch((e) => { counterCache = null; throw e; });
+  return counterCache;
+}
+
+// Один пик: почему он (по статьям dota2.ru), кто его контрит и цифры
+function draftPick(p, i, mine) {
   const pct = (x) => `${Math.round(x * 100)}%`;
+  const stats = [
+    mine && `${games(p.games)} на нём`,
+    mine && p.recent > 0 && `${p.recent} из последних 20`,
+    !mine && p.games > 0 && `ты играл: ${games(p.games)}`,
+    p.matchup_wr != null && `против этих врагов ${pct(p.matchup_wr)} побед`,
+  ].filter(Boolean);
+  return h("div", { class: "draft-row" },
+    h("div", { class: "plan-num" }, String(i + 1)), heroImg(p.hero_id),
+    h("div", { class: "grow" },
+      h("div", { class: "hn" }, p.name),
+      ...p.why.slice(0, 2).map((r) => h("p", { class: "draft-why small" }, h("b", {}, `Против ${r.name}: `), r.why)),
+      !p.why.length && h("p", { class: "draft-why small" }, "По статистике OpenDota выигрывает у этих врагов чаще, чем проигрывает."),
+      p.threats.length > 0 && h("p", { class: "draft-why small loss-text" },
+        `Осторожно: ${p.threats.map((t) => t.name).join(", ")} ${p.threats.length > 1 ? "контрят" : "контрит"} его.`),
+      stats.length > 0 && h("div", { class: "small muted" }, stats.join(", "))));
+}
+
+function draftResult(advice, linked) {
   return h("div", {},
-    h("h2", {}, "Кого пикнуть из твоих"),
-    advice.picks.length ? h("div", { class: "card" }, ...advice.picks.map((p, i) => h("div", { class: "draft-row" },
-      h("div", { class: "plan-num" }, String(i + 1)), heroImg(p.hero_id),
-      h("div", { class: "grow" },
-        h("div", { class: "hn" }, p.name),
-        h("div", { class: "small muted" }, p.vs.map((v) => `${v.name} ${pct(v.wr)}`).join(" · ")),
-        h("div", { class: "small muted" }, `твоих игр: ${p.games}`)),
-      h("b", { class: p.matchup_wr >= 0.5 ? "win-text" : "loss-text" }, pct(p.matchup_wr)))),
-    h("p", { class: "small muted" }, "Процент — как герой выигрывает против этих врагов по всем играм OpenDota."))
-      : h("p", { class: "muted" }, "Мало данных по твоим героям против этих врагов. Сыграй больше на 3–4 героях."),
+    linked && h("h2", {}, "Из твоих героев"),
+    linked && (advice.picks.length
+      ? h("div", { class: "card" }, ...advice.picks.map((p, i) => draftPick(p, i, true)))
+      : h("p", { class: "muted" }, "Из твоих частых героев никто не подходит против этих врагов. Глянь контрпики ниже.")),
+    !linked && h("p", { class: "muted" }, "Привяжи аккаунт на «Главной», и я сначала предложу героев, на которых ты играешь."),
+    advice.counters.length > 0 && h("h2", {}, "Контрпики"),
+    advice.counters.length > 0 && h("div", { class: "card" }, ...advice.counters.map((p, i) => draftPick(p, i, false)),
+      h("p", { class: "small muted" }, "Почему именно они — по статьям о контрпиках с dota2.ru.")),
     advice.items.length > 0 && h("h2", {}, "Что собирать"),
     advice.items.length > 0 && h("div", { class: "card" }, ...advice.items.map((it) => h("div", { class: "why-row" },
       itemChip(it.key, "chip need"), h("div", { class: "small muted" }, `против: ${it.why} (${it.from})`)))));

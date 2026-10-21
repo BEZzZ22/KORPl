@@ -127,11 +127,32 @@ test("драфт: лучший свой герой против врагов и 
     21: [{ hero_id: 6, games_played: 5, wins: 5 }],
   };
   const kb = { heroes: { [od.heroKey(56)]: ["invis"] }, mechanics: { invis: { name: "невидимость", core: ["dust"], support: ["dust", "ward_sentry"], roles: ["core", "support"] } } };
-  const out = draftAdvice({ enemies: [...enemies, 56], pool, matchups, knowledge: kb, od, role: "support" });
-  assert.deepEqual(out.picks.map((p) => p.hero_id), [100, 74]); // у 21 мало игр в матчапах
-  assert.equal(out.picks[0].vs[0].hero_id, 6);
+  const out = draftAdvice({ enemies: [...enemies, 56], pool, matchups, knowledge: kb, od: { ...od, heroRoles: () => [] }, role: "support" });
+  assert.deepEqual(out.picks.map((p) => p.hero_id), [100]); // 74 проигрывает этим врагам, у 21 мало игр
+  assert.ok(out.picks[0].matchup_wr > 0.5);
   assert.deepEqual(out.items.map((i) => i.key), ["dust", "ward_sentry"]);
   assert.equal(out.items[0].why, "невидимость");
+});
+
+test("драфт: свои подходящие герои первыми по последним 20 играм, объяснения из контрпиков", () => {
+  const enemies = [2]; // Axe
+  const counter = {
+    t: ["Атакует с расстояния.", "Бьёт магией.", "Axe его ловит."],
+    h: { 2: [[48, 0], [72, 0], [31, 1]], 48: [[2, 2]] }, // Luna, Gyrocopter, Lich против Axe; Axe контрит Luna
+  };
+  const pool = [{ hero_id: 72, games: 50, win: 25 }, { hero_id: 31, games: 10, win: 5 }, { hero_id: 8, games: 90, win: 50 }, { hero_id: 48, games: 30, win: 15 }];
+  const recent = { 31: 6, 72: 1 };
+  const out = draftAdvice({ enemies, pool, recent, counter, knowledge: { heroes: {}, mechanics: {} }, od: { ...od, heroRoles: () => [] } });
+  // Juggernaut (8) играл больше всех, но против Axe не подходит; Luna — её контрит сам Axe
+  assert.deepEqual(out.picks.map((p) => p.hero_id), [72, 31]);
+  assert.equal(out.picks[1].why[0].why, "Бьёт магией.");
+  assert.equal(out.picks[1].recent, 6);
+  assert.equal(out.picks[0].why[0].name, od.heroName(2));
+  assert.equal(out.picks[0].why[0].why, "Атакует с расстояния.");
+  assert.deepEqual(out.counters.map((p) => p.hero_id), []); // Luna: контрпик, но Axe сам её контрит — счёт 0
+  // без аккаунта — только контрпики
+  const anon = draftAdvice({ enemies, counter, knowledge: { heroes: {}, mechanics: {} }, od: { ...od, heroRoles: () => [] } });
+  assert.deepEqual(anon.counters.map((p) => p.hero_id), [72, 31]);
 });
 
 test("словарь: список героев по алфавиту", () => {
