@@ -588,10 +588,20 @@ details.timeline-box > summary { font-weight: 800; }
 .draft-pick .hero-img { width: 100%; height: auto; aspect-ratio: 16 / 9; border-radius: 9px; box-shadow: 0 0 0 2px rgba(242, 85, 90, 0.6); }
 .draft-pick.empty { aspect-ratio: 16 / 9; border-radius: 9px; background: rgba(8, 9, 12, 0.4); box-shadow: inset 0 0 0 1px var(--line-2); }
 .draft-go { width: 100%; }
-.draft-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
-.draft-hero { display: flex; flex-direction: column; gap: 6px; padding: 6px; border-radius: var(--r-sm); text-align: left; color: var(--text);
-  font: 700 12px/1.2 var(--sans); background: var(--slab); box-shadow: inset 0 0 0 1px var(--line); }
-.draft-hero .hero-img { width: 100%; height: auto; aspect-ratio: 16 / 9; border-radius: 8px; }
+.draft-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 12px; }
+.draft-attr { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; margin: 14px 0 2px; font: 700 15px/1.2 var(--sans); }
+.draft-attr:first-child { margin-top: 0; }
+.draft-attr::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--attr); box-shadow: 0 0 8px var(--attr); }
+.draft-attr.str { --attr: #e0503c; }
+.draft-attr.agi { --attr: #4cc764; }
+.draft-attr.int { --attr: #3fa6ea; }
+.draft-attr.all { --attr: #c07ff0; }
+p.draft-attr::before { content: none; }
+.draft-hero { display: flex; flex-direction: column; gap: 4px; padding: 4px; border-radius: var(--r-sm); text-align: left; color: var(--text); min-width: 0;
+  font: 700 10.5px/1.15 var(--sans); background: var(--slab); box-shadow: inset 0 0 0 1px var(--line); }
+.draft-hero span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.draft-hero .hero-img { width: 100%; height: auto; aspect-ratio: 16 / 9; border-radius: 6px; }
+.img-missing { opacity: 0; }
 .draft-hero:disabled { opacity: .35; }
 .draft-row { display: flex; align-items: flex-start; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .draft-row .plan-num, .draft-row .hero-img { flex: none; margin-top: 2px; }

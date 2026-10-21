@@ -2,7 +2,7 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric,
   CATEGORIES, BAD, WARN, GOOD,
-} from "./engine.js?v=21";
+} from "./engine.js?v=22";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -18,6 +18,7 @@ const NAV_ICONS = {
 
 const API = "https://api.opendota.com/api";
 const STEAM_CDN = "https://cdn.cloudflare.steamstatic.com";
+const STEAM_MIRROR = "https://cdn.akamai.steamstatic.com";
 const STEAM64_OFFSET = 76561197960265728n;
 const PARSE_POLL_MS = 15000;
 const PARSE_POLL_MAX = 20;
@@ -80,7 +81,14 @@ function render(...nodes) {
 
 function img(path, cls, alt = "") {
   if (!path) return null;
-  return h("img", { src: STEAM_CDN + path, class: cls, alt, loading: "lazy" });
+  return h("img", { src: STEAM_CDN + path, class: cls, alt, loading: "lazy", onerror: imgFallback });
+}
+// Картинка не пришла с одного CDN Steam (бывает у отдельных файлов и провайдеров) — берём с зеркала,
+// не пришла и оттуда — пустая плашка вместо значка битой картинки
+function imgFallback(e) {
+  const el = e.currentTarget;
+  if (el.src.startsWith(STEAM_CDN)) el.src = STEAM_MIRROR + el.src.slice(STEAM_CDN.length);
+  else el.classList.add("img-missing");
 }
 
 function heroImg(heroId, cls = "hero-img") {
@@ -803,6 +811,7 @@ async function heroStatsScreen(heroId) {
 // ---------- драфт до игры ----------
 
 const DRAFT_POOL = 12; // своих героев проверяем против врагов
+const HERO_ATTRS = [["str", "Сила"], ["agi", "Ловкость"], ["int", "Интеллект"], ["all", "Универсальные"]];
 
 async function draftScreen() {
   section = "home";
@@ -828,12 +837,18 @@ async function draftScreen() {
     ...Array.from({ length: 5 - enemies.length }, () => h("div", { class: "draft-pick empty" })));
     goBtn.disabled = !enemies.length;
   };
+  // Как в Доте: по главному атрибуту, внутри по алфавиту
   const drawGrid = () => {
     const q = search.value.trim().toLowerCase();
-    const list = all.filter((x) => !enemies.includes(x.id) && (!q || x.name.toLowerCase().includes(q))).slice(0, q ? 40 : 60);
-    grid.replaceChildren(...list.map((x) => h("button", { type: "button", class: "draft-hero", "aria-label": x.name, disabled: enemies.length >= 5,
+    const list = all.filter((x) => !enemies.includes(x.id) && (!q || x.name.toLowerCase().includes(q)));
+    const tile = (x) => h("button", { type: "button", class: "draft-hero", "aria-label": x.name, disabled: enemies.length >= 5,
       onclick: () => { if (enemies.length < 5) { enemies.push(x.id); hapticTick(); search.value = ""; drawChosen(); drawGrid(); } } },
-    img(x.img, "hero-img"), h("span", {}, x.name))));
+    img(x.img, "hero-img"), h("span", {}, x.name));
+    const groups = HERO_ATTRS.map(([attr, label]) => [label, attr, list.filter((x) => x.attr === attr)])
+      .concat([["Другие", "", list.filter((x) => !HERO_ATTRS.some(([a]) => a === x.attr))]]);
+    grid.replaceChildren(...groups.filter(([, , xs]) => xs.length).flatMap(([label, attr, xs]) =>
+      [h("div", { class: `draft-attr ${attr}` }, label), ...xs.map(tile)]));
+    if (!list.length) grid.append(h("p", { class: "muted small draft-attr" }, "Нет такого героя. Имя пиши по-английски, как в игре."));
   };
   search.addEventListener("input", drawGrid);
   goBtn.onclick = async () => {
