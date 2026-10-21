@@ -225,6 +225,24 @@ await step("chip", async () => {
   await page.locator(".chat-chip").first().click();
   await page.waitForFunction((n) => document.querySelectorAll(".chat-msg.assistant:not(.typing)").length > n, before, { timeout: 10000 });
 });
+// Свайп по ряду чипсов листает чипсы, а не вкладки разбора; свайп по обычному тексту листает вкладки
+await step("swipe", async () => {
+  const activeTab = () => page.evaluate(() => [...document.querySelectorAll(".tab")].findIndex((t) => t.classList.contains("active")));
+  const swipe = (selector) => page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    const r = el.getBoundingClientRect();
+    const y = r.top + r.height / 2;
+    const touch = (x) => new Touch({ identifier: 1, target: el, clientX: x, clientY: y });
+    el.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, touches: [touch(r.right - 20)], changedTouches: [touch(r.right - 20)] }));
+    el.dispatchEvent(new TouchEvent("touchend", { bubbles: true, touches: [], changedTouches: [touch(r.right - 160)] }));
+  }, selector);
+  const start = await activeTab();
+  await swipe(".chat-chips");
+  if ((await activeTab()) !== start) throw new Error("свайп по чипсам переключил вкладку");
+  await swipe(".coach-title");
+  if ((await activeTab()) !== start + 1) throw new Error("свайп по тексту не переключил вкладку");
+  await page.evaluate(() => document.querySelector(".tab").click());
+});
 await step("compare", async () => {
   await page.locator(".compare summary").click();
   await page.locator(".compare-item").first().click();
