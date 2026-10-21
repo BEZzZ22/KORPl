@@ -3,7 +3,7 @@ import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric,
   CATEGORIES, BAD, WARN, GOOD,
 } from "./engine.js?v=23";
-import { mountAegis } from "./aegis3d.js?v=1";
+import { aegisBadge, openShowcase } from "./aegis.js?v=1";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -151,51 +151,18 @@ function medal(score) {
   return el;
 }
 
-// Знак приложения: Аегис чемпионов с официальных фото dota2.com (вырезаны tools/cut_aegis.py).
-// Объём настоящий: лицо и оборот — две стороны, между ними ребро из слоёв силуэта (CSS 3D).
-// Щит покачивается и раз в цикл делает полный оборот, по металлу переливается блик; пальцем можно крутить
-const AEGIS_EDGE = 10; // слоёв ребра
+// Знак приложения: Аегис чемпионов с 3D-модели (docs/aegis.js). Тап — витрина с живой моделью
 function aegis() {
-  const edge = Array.from({ length: AEGIS_EDGE }, (_, i) => {
-    const el = h("i", { class: "aegis-edge", "aria-hidden": "true" });
-    el.style.setProperty("--i", String(i + 1));
-    return el;
-  });
-  const spin = h("div", { class: "aegis-spin" },
-    h("img", { class: "aegis-back", src: "img/aegis_back.webp", alt: "", draggable: "false" }),
-    ...edge.reverse(),
-    h("div", { class: "aegis-front" },
-      h("img", { src: "img/aegis_front.webp", alt: "", draggable: "false" }),
-      h("i", { class: "aegis-shine", "aria-hidden": "true" }),
-      h("i", { class: "aegis-iris", "aria-hidden": "true" })));
-  const tilt = h("div", { class: "aegis-tilt" }, spin);
-  const box = h("div", { class: "aegis", role: "img", "aria-label": "Аегис чемпионов" }, tilt);
-  // Пальцем: влево-вправо крутит щит целиком, вверх-вниз наклоняет; отпустил — пружинит обратно
-  let from = null;
-  box.addEventListener("pointerdown", (e) => {
-    from = { x: e.clientX, y: e.clientY };
-    box.classList.add("held");
-    box.setPointerCapture(e.pointerId);
-    hapticTick();
-  });
-  box.addEventListener("pointermove", (e) => {
-    if (!from) return;
-    tilt.style.setProperty("--ry", `${(e.clientX - from.x) * 1.4}deg`);
-    tilt.style.setProperty("--rx", `${Math.max(-35, Math.min(35, (from.y - e.clientY) * 0.6))}deg`);
-  });
-  const release = () => {
-    from = null;
-    box.classList.remove("held");
-    tilt.style.setProperty("--rx", "0deg");
-    tilt.style.setProperty("--ry", "0deg");
-  };
-  box.addEventListener("pointerup", release);
-  box.addEventListener("pointercancel", release);
-  // Где есть WebGL — настоящий объём (docs/aegis3d.js); пока он грузится и где его нет, остаётся этот
-  mountAegis(box, { front: "img/aegis_front.webp", back: "img/aegis_back.webp", reduced: reducedMotion() });
-  return box;
+  return aegisBadge({ reduced: reducedMotion(), haptic: aegisHaptic, tick: hapticTick, onOpen: () => openShowcase({ haptic: aegisHaptic, openLink }) });
 }
-
+const aegisHaptic = (type) => {
+  try {
+    if (!tg || !tg.isVersionAtLeast("6.1")) return;
+    if (type === "success") tg.HapticFeedback.notificationOccurred("success");
+    else tg.HapticFeedback.impactOccurred(type);
+  } catch { /* старый клиент */ }
+};
+const openLink = (url) => (tg && tg.openLink ? tg.openLink(url) : window.open(url, "_blank"));
 // Ачивка: монета в 3D. Аверс со знаком, реверс со счётом; открытая золотая и иногда сама крутится
 const ACH_ICONS = {
   clean_lane: ["M5 21 10 3", "M19 21 14 3", "M12 6v2", "M12 11v2", "M12 16v3"],

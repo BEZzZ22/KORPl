@@ -184,12 +184,12 @@ await step("home", async () => {
   await shot("home");
   // UI_AEGIS=1 — кадры 3D-Аегиса в разных фазах вращения (посмотреть объём и оборот)
   if (process.env.UI_AEGIS) {
-    // WebGL-щит застывает в позе (поворот, наклон); снимаем холст целиком
-    await page.waitForSelector(".app-top .aegis.gl", { timeout: 10000 });
-    for (const [yaw, pitch] of [[0, 0], [-25, -12], [35, 15], [75, 0], [110, -10], [180, 0], [0, 50]]) {
-      await page.evaluate(([y, p]) => document.querySelector(".app-top .aegis").aegisPose(y, p), [yaw, pitch]);
+    // щит застывает на угле; снимаем, в том числе между кадрами раскадровки (плавный переход)
+    await page.waitForSelector(".app-top .aegis.ready", { timeout: 10000 });
+    for (const angle of [0, 3.75, 40, 90, 180, 300]) {
+      await page.evaluate((a) => document.querySelector(".app-top .aegis").aegisPose(a), angle);
       await page.waitForTimeout(120);
-      await page.locator(".app-top .aegis-gl").screenshot({ path: join(OUT, `aegis-${yaw}_${pitch}.png`) });
+      await page.locator(".app-top .aegis").screenshot({ path: join(OUT, `aegis-${angle}.png`) });
     }
     await page.evaluate(() => document.querySelector(".app-top .aegis").aegisPose(null));
   }
@@ -200,6 +200,15 @@ if (errors.some((e) => e.startsWith("pageerror")) && !(await page.$(".app-top"))
   await browser.close();
   process.exit(1);
 }
+await step("showcase", async () => {
+  // тап по Аегису — витрина; Sketchfab в тесте недоступен, поэтому должна быть понятная ошибка, а не вечная загрузка
+  await page.locator(".app-top .aegis").click();
+  await page.waitForSelector(".showcase", { timeout: 3000 });
+  await page.waitForFunction(() => /не загрузилась/.test(document.querySelector(".sc-wait").textContent), null, { timeout: 5000 });
+  await shot("showcase");
+  await page.locator(".showcase .sc-head button").click();
+  await page.waitForSelector(".showcase", { state: "detached", timeout: 3000 });
+});
 await step("overview", async () => {
   // свежая катка открывается из большого блока сверху
   await page.locator(".fresh-match").click();

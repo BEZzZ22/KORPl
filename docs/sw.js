@@ -55,6 +55,8 @@ self.addEventListener("fetch", (e) => {
   const req = e.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
+  // картинки с версией в адресе не меняются: из кэша сразу, обновление в фоне (раскадровка Аегиса ~0,7 МБ)
+  if (url.origin === self.location.origin && url.pathname.includes("/img/") && url.search) { e.respondWith(staleWhileRevalidate(req, APP)); return; }
   if (url.origin === self.location.origin) { e.respondWith(networkFirst(req, APP)); return; }
   if (url.hostname !== "api.opendota.com") return;
   if (/^\/api\/matches\/\d+$/.test(url.pathname)) e.respondWith(parsedMatch(req));
