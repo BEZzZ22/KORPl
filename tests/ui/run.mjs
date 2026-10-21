@@ -172,7 +172,7 @@ async function shot(name, { full = true } = {}) {
 }
 // После каждого шага: на экране не должно быть служебного мусора вроде «undefined» или «NaN»
 const step = async (name, fn) => {
-  try { await fn(); } catch (e) { errors.push(`${name}: ${e.message.split("\n")[0]}`); }
+  try { await fn(); } catch (e) { errors.push(`${name}: ${e.message.split("\n").slice(0, process.env.UI_DEBUG ? 12 : 1).join("\n")}`); }
   const text = await page.evaluate(() => document.body.innerText).catch(() => "");
   const junk = /(^|[^a-zа-яё])(undefined|NaN|null|false|true|\[object Object\])([^a-zа-яё]|$)/i.exec(text);
   if (junk) errors.push(`${name}: на экране «${junk[2]}»: …${text.slice(Math.max(0, junk.index - 60), junk.index + 40).replace(/\s+/g, " ")}…`);
@@ -184,12 +184,14 @@ await step("home", async () => {
   await shot("home");
   // UI_AEGIS=1 — кадры 3D-Аегиса в разных фазах вращения (посмотреть объём и оборот)
   if (process.env.UI_AEGIS) {
-    for (const t of [0, 2.9, 11.5, 12.6, 13.6]) {
-      await page.evaluate((ms) => document.querySelectorAll(".aegis-spin").forEach((el) =>
-        el.getAnimations().forEach((a) => { a.pause(); a.currentTime = ms; })), t * 1000);
-      await page.waitForTimeout(150);
-      await page.locator(".app-top .aegis").screenshot({ path: join(OUT, `aegis-${t}.png`) });
+    // WebGL-щит застывает в позе (поворот, наклон); снимаем холст целиком
+    await page.waitForSelector(".app-top .aegis.gl", { timeout: 10000 });
+    for (const [yaw, pitch] of [[0, 0], [-25, -12], [35, 15], [75, 0], [110, -10], [180, 0], [0, 50]]) {
+      await page.evaluate(([y, p]) => document.querySelector(".app-top .aegis").aegisPose(y, p), [yaw, pitch]);
+      await page.waitForTimeout(120);
+      await page.locator(".app-top .aegis-gl").screenshot({ path: join(OUT, `aegis-${yaw}_${pitch}.png`) });
     }
+    await page.evaluate(() => document.querySelector(".app-top .aegis").aegisPose(null));
   }
 });
 // Приложение не запустилось (синтаксис, импорт): дальше каждый шаг ждал бы таймаут, падаем сразу

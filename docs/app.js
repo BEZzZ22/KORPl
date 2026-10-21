@@ -3,6 +3,7 @@ import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric,
   CATEGORIES, BAD, WARN, GOOD,
 } from "./engine.js?v=23";
+import { mountAegis } from "./aegis3d.js?v=1";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -190,6 +191,8 @@ function aegis() {
   };
   box.addEventListener("pointerup", release);
   box.addEventListener("pointercancel", release);
+  // Где есть WebGL — настоящий объём (docs/aegis3d.js); пока он грузится и где его нет, остаётся этот
+  mountAegis(box, { front: "img/aegis_front.webp", back: "img/aegis_back.webp", reduced: reducedMotion() });
   return box;
 }
 

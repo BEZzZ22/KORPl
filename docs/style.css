@@ -208,8 +208,13 @@ button.ghost:active { transform: scale(.98); filter: none; }
 .aegis-iris { mix-blend-mode: color-dodge; opacity: .35; background-size: 300% 300%;
   background-image: linear-gradient(125deg, transparent 38%, #ffcf7a 44%, #ff8fa3 48%, #8fd6ff 52%, #b4ffcf 56%, transparent 62%);
   animation: aegisShine 7.1s ease-in-out infinite reverse; }
-.app-top .aegis { --size: 132px; }
-.match-empty .aegis { --size: 108px; }
+.app-top .aegis { --size: 156px; }
+.match-empty .aegis { --size: 120px; }
+/* WebGL-щит (docs/aegis3d.js): холст больше знака, чтобы при повороте и наклоне ничего не обрезалось.
+   Крутится пальцем во все стороны, поэтому жесты на нём не листают страницу */
+.aegis-gl { position: absolute; left: -30%; top: -30%; width: 160%; height: 160%; pointer-events: none; }
+.aegis.gl { touch-action: none; }
+.aegis.gl .aegis-tilt { visibility: hidden; }
 /* покачивание, потом полный оборот с показом оборота щита */
 @keyframes aegisTurn {
   0% { transform: rotateY(-20deg) rotateX(5deg) translateY(0); }
