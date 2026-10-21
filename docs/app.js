@@ -2,7 +2,7 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
-} from "./engine.js?v=24";
+} from "./engine.js?v=25";
 import { aegisBadge, openShowcase } from "./aegis.js?v=1";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
@@ -2361,16 +2361,26 @@ function buildTab(a) {
 
 function chartsTab(a) {
   const t = a.timeline;
-  const series = [{ values: t.player, color: "#e8c27a", label: t.hero, glow: true }];
-  if (t.opponent) series.push({ values: t.opponent, color: "#9d8cff", label: t.opponent_name });
+  // Ряды OpenDota идут по целым минутам; конец матча (45:18) добавляем последней точкой со значением из итогов
+  const end = t.end ? t.end / 60 : null;
+  const withEnd = (values, last) => {
+    const v = values || [];
+    const ts = v.map((_, i) => i);
+    if (end != null && last != null && v.length && end > ts[ts.length - 1] + 0.05) return { values: [...v, last], ts: [...ts, end] };
+    return { values: v, ts };
+  };
+  const me = withEnd(t.player, t.final && t.final.player);
+  const series = [{ ...me, color: "#e8c27a", label: t.hero, glow: true }];
+  if (t.opponent) series.push({ ...withEnd(t.opponent, t.final && t.final.opponent), color: "#9d8cff", label: t.opponent_name });
+  const lh = withEnd(t.last_hits, t.final && t.final.last_hits);
   return h("div", {},
     h("p", { class: "small muted" }, "Веди пальцем по графику, чтобы увидеть значения на каждой минуте."),
     h("h2", {}, "Нетворс против оппонента"),
-    h("div", { class: "card" }, lineChart(series, { markers: t.deaths, unit: "k" }), legend(series, t.deaths.length > 0)),
+    h("div", { class: "card" }, lineChart(series, { markers: t.deaths, unit: "k", end: t.end }), legend(series, t.deaths.length > 0)),
     t.team_gold_adv.length > 0 && h("h2", {}, "Преимущество команды"),
     t.team_gold_adv.length > 0 && h("div", { class: "card" }, areaChart(t.team_gold_adv)),
     h("h2", {}, "Добито крипов"),
-    h("div", { class: "card" }, lineChart([{ values: t.last_hits, color: "#e8c27a" }], {})),
+    h("div", { class: "card" }, lineChart([{ ...lh, color: "#e8c27a", label: "крипов" }], { end: t.end })),
   );
 }
 
@@ -2381,29 +2391,57 @@ function legend(series, deaths) {
   );
 }
 
-function chartFrame(values, len, { zero = false, unit = "" } = {}) {
+// Круглый шаг шкалы: 1, 2, 2.5, 5 × 10^n — чтобы подписи были 0, 100, 200, а не 89, 179, 268
+function niceStep(range, ticks = 4, steps = [1, 2, 2.5, 5, 10]) {
+  const raw = range / ticks || 1;
+  const p = 10 ** Math.floor(Math.log10(raw));
+  return steps.map((k) => k * p).find((k) => k >= raw);
+}
+
+// tmax — длина оси времени в минутах (последняя точка может стоять на дробной минуте, конец матча)
+function chartFrame(values, tmax, { zero = false, unit = "" } = {}) {
   const W = 340, H = 170, L = 34, R = 8, T = 10, B = 20;
   let min = Math.min(...values), max = Math.max(...values);
   if (zero) { const m = Math.max(Math.abs(min), Math.abs(max)) || 1; min = -m; max = m; } else { min = Math.min(0, min); }
   if (max === min) max = min + 1;
-  const n = Math.max(len - 1, 1);
-  const x = (i) => L + (i / n) * (W - L - R);
+  // у симметричной шкалы по три деления на сторону, иначе −21k растягивается до −40k
+  const step = zero ? niceStep(max, 3, [1, 1.5, 2, 2.5, 3, 4, 5, 7.5, 10]) : niceStep(max - min, 4);
+  min = Math.floor(min / step) * step;
+  max = Math.ceil(max / step) * step;
+  const n = Math.max(tmax, 1);
+  const x = (tm) => L + (tm / n) * (W - L - R);
   const y = (v) => T + (1 - (v - min) / (max - min)) * (H - T - B);
-  const fmt = (v) => (unit === "k" ? `${Math.round(v / 1000)}k` : String(Math.round(v)));
+  const fmt = (v) => {
+    if (Math.abs(v) < 1e-9) return "0";
+    const sign = v < 0 ? "−" : "";
+    if (unit !== "k") return sign + Math.round(Math.abs(v));
+    const k = Math.abs(v) / 1000;
+    return `${sign}${Number.isInteger(k) ? k : k.toFixed(1)}k`;
+  };
   const chart = svg("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img" });
-  chart.dataset.len = String(len);
-  for (let i = 0; i <= 4; i++) {
-    const v = min + ((max - min) * i) / 4;
+  chart.dataset.len = String(n);
+  for (let v = min; v <= max + step / 2; v += step) {
     chart.append(svg("line", { class: "grid", x1: L, x2: W - R, y1: y(v), y2: y(v) }), svg("text", { x: 2, y: y(v) + 3 }, fmt(v)));
   }
   for (let m = 0; m <= n; m += 10) chart.append(svg("text", { x: x(m) - 4, y: H - 4 }, m));
   return { chart, x, y, W, H, L, R, T, B };
 }
 
+// Значение ряда в момент tm (минуты): между точками по прямой
+function valueAt(s, tm) {
+  const { values, ts } = s;
+  if (tm <= ts[0]) return values[0];
+  for (let i = 1; i < ts.length; i++) {
+    if (tm <= ts[i]) return values[i - 1] + ((values[i] - values[i - 1]) * (tm - ts[i - 1])) / (ts[i] - ts[i - 1] || 1);
+  }
+  return values[values.length - 1];
+}
+
 // Палец или мышь над графиком: вертикальная линия, точки и подсказка со значениями этой минуты
-function makeInteractive(frame, series, { deaths = [], valueFmt = (v) => num(v) } = {}) {
+function makeInteractive(frame, series, { deaths = [], valueFmt = (v) => num(v), end = null } = {}) {
   const { chart, x, y, W, H, L, R, T, B } = frame;
-  const len = Math.max(...series.map((s) => s.values.length));
+  // все моменты, где есть точка хотя бы у одного ряда: целые минуты и конец матча
+  const stops = [...new Set(series.flatMap((s) => s.ts))].sort((a, b) => a - b);
   const guide = svg("line", { y1: T, y2: H - B, stroke: "#e8c27a", "stroke-width": 1, "stroke-dasharray": "3 3", opacity: 0 });
   const dots = series.map((s) => svg("circle", { r: 4, fill: s.color, stroke: "#08090c", "stroke-width": 2, opacity: 0 }));
   const box = svg("rect", { rx: 8, fill: "rgba(13,15,20,0.94)", stroke: "rgba(232,194,122,0.4)", opacity: 0 });
@@ -2414,17 +2452,20 @@ function makeInteractive(frame, series, { deaths = [], valueFmt = (v) => num(v) 
   const show = (evt) => {
     const rect = chart.getBoundingClientRect();
     const px = ((evt.clientX - rect.left) / rect.width) * W;
-    const i = Math.max(0, Math.min(len - 1, Math.round(((px - L) / (W - L - R)) * (len - 1))));
-    const cx = x(i);
+    const want = ((px - L) / (W - L - R)) * Number(chart.dataset.len);
+    const tm = stops.reduce((best, s) => (Math.abs(s - want) < Math.abs(best - want) ? s : best), stops[0]);
+    const cx = x(tm);
     guide.setAttribute("x1", cx); guide.setAttribute("x2", cx); guide.setAttribute("opacity", 1);
     series.forEach((s, k) => {
-      const v = s.values[Math.min(i, s.values.length - 1)];
+      const v = valueAt(s, tm);
       dots[k].setAttribute("cx", cx); dots[k].setAttribute("cy", y(v)); dots[k].setAttribute("opacity", 1);
-      lines[k + 1].textContent = `${s.label ? s.label + ": " : ""}${valueFmt(v)}`;
+      lines[k + 1].textContent = `${s.label ? s.label + ": " : ""}${valueFmt(Math.round(v))}`;
       lines[k + 1].setAttribute("fill", s.color);
     });
-    lines[0].textContent = `${i} мин`;
-    const died = deaths.filter((t) => Math.floor(t / 60) === i);
+    const isEnd = end != null && !Number.isInteger(tm);
+    lines[0].textContent = isEnd ? `конец, ${mmss(end)}` : `${tm} мин`;
+    // смерти этой минуты (с tm:00 до tm:59), у конца — после последней целой минуты
+    const died = deaths.filter((t) => (isEnd ? t >= Math.floor(tm) * 60 : Math.floor(t / 60) === tm));
     lines[lines.length - 1].textContent = died.length ? `смерть ${died.map((t) => mmss(t)).join(", ")}` : "";
     const rows = lines.filter((l) => l.textContent).length;
     const boxW = 128, boxH = 8 + rows * 13;
@@ -2459,43 +2500,46 @@ function makeInteractive(frame, series, { deaths = [], valueFmt = (v) => num(v) 
   return chart;
 }
 
-const pathOf = (values, x, y) => values.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
+const pathOf = (s, x, y) => s.values.map((v, i) => `${i ? "L" : "M"}${x(s.ts[i]).toFixed(1)},${y(v).toFixed(1)}`).join("");
+const byMinute = (values) => ({ values, ts: values.map((_, i) => i) });
 
-// Линейный график на SVG без библиотек
-function lineChart(series, { markers = [], unit = "" } = {}) {
+// Линейный график на SVG без библиотек. Ряд: { values, ts } — значения и их время в минутах
+function lineChart(series, { markers = [], unit = "", end = null } = {}) {
+  series = series.map((s) => (s.ts ? s : { ...s, ...byMinute(s.values) }));
   const all = series.flatMap((s) => s.values);
-  const len = Math.max(...series.map((s) => s.values.length));
-  const frame = chartFrame(all.length ? all : [0], len, { unit });
+  const tmax = Math.max(...series.map((s) => s.ts[s.ts.length - 1] ?? 0));
+  const frame = chartFrame(all.length ? all : [0], tmax, { unit });
   const { chart, x, y } = frame;
   for (const s of series) {
-    const d = pathOf(s.values, x, y);
+    const d = pathOf(s, x, y);
     if (s.glow) chart.append(svg("path", { d, fill: "none", stroke: s.color, "stroke-width": 7, "stroke-opacity": 0.18, "stroke-linejoin": "round" }));
     chart.append(svg("path", { d, fill: "none", stroke: s.color, "stroke-width": 2.2, "stroke-linejoin": "round" }));
   }
-  const base = series[0].values;
+  // крестик смерти стоит на линии игрока в её секунду, а не на начале минуты
   for (const t of markers) {
-    const i = Math.min(Math.floor(t / 60), base.length - 1);
-    const cx = x(Math.min(t / 60, base.length - 1)), cy = y(base[i]);
+    const tm = Math.min(t / 60, tmax);
+    const cx = x(tm), cy = y(valueAt(series[0], tm));
     chart.append(
       svg("line", { x1: cx - 3.5, y1: cy - 3.5, x2: cx + 3.5, y2: cy + 3.5, stroke: "#f2555a", "stroke-width": 2 }),
       svg("line", { x1: cx - 3.5, y1: cy + 3.5, x2: cx + 3.5, y2: cy - 3.5, stroke: "#f2555a", "stroke-width": 2 }),
     );
   }
-  return makeInteractive(frame, series, { deaths: markers });
+  return makeInteractive(frame, series, { deaths: markers, end });
 }
 
-// Преимущество команды: плюс — огнём, минус — кровью
+// Преимущество команды: плюс — зелёным, минус — красным
 function areaChart(values) {
-  const frame = chartFrame(values, values.length, { zero: true, unit: "k" });
-  const { chart, x, y } = frame;
+  const s = byMinute(values);
   const last = values.length - 1;
-  const area = (clamped) => `${pathOf(clamped, x, y)} L${x(last).toFixed(1)},${y(0).toFixed(1)} L${x(0).toFixed(1)},${y(0).toFixed(1)} Z`;
+  const frame = chartFrame(values, last, { zero: true, unit: "k" });
+  const { chart, x, y } = frame;
+  const area = (clamped) => `${pathOf({ values: clamped, ts: s.ts }, x, y)} L${x(last).toFixed(1)},${y(0).toFixed(1)} L${x(0).toFixed(1)},${y(0).toFixed(1)} Z`;
   chart.append(
     svg("path", { d: area(values.map((v) => Math.max(v, 0))), fill: "#4fd1a5", "fill-opacity": 0.45 }),
     svg("path", { d: area(values.map((v) => Math.min(v, 0))), fill: "#f2555a", "fill-opacity": 0.55 }),
     svg("line", { x1: x(0), x2: x(last), y1: y(0), y2: y(0), stroke: "#5d6270", "stroke-width": 1 }),
   );
-  return makeInteractive(frame, [{ values, color: "#e8c27a", label: "команда" }], { valueFmt: (v) => (v > 0 ? "+" : "") + num(v) });
+  return makeInteractive(frame, [{ ...s, color: "#e8c27a", label: "команда" }], { valueFmt: (v) => (v > 0 ? "+" : v < 0 ? "−" : "") + num(Math.abs(v)) });
 }
 
 // Ширины полосок и цвета легенды выставляем из JS: CSP запрещает inline-стили в разметке

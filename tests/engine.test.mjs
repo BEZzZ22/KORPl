@@ -320,3 +320,16 @@ test("реплей: фарм по зонам, время с командой, д
   for (const e of a.episodes) if (e.facts.some((f) => /навстречу/.test(f))) assert.ok(e.facts.some((f) => /радиусе 1 500 не было/.test(f)));
   assert.deepEqual(replayNotes(null), []);
 });
+
+import { assignRoles } from "../docs/engine.js";
+
+test("роли: саппорт с кучей вардов не кор, мидер с вардами остаётся мидером", () => {
+  const pl = (hero_id, lane_role, lh10, nw10, last_hits, net_worth, wards) => ({ hero_id, lane_role, lane: lane_role, lh_t: Array(11).fill(lh10), networth_t: Array(11).fill(nw10), last_hits, net_worth, obs_placed: wards, sen_placed: 0 });
+  // матч 9054284490: Undying 21 вард, Techies 4 при почти равном фарме — четвёрка Undying
+  const team = [pl(106, 2, 56, 4716, 311, 23129, 2), pl(71, 1, 2, 2359, 27, 10648, 4), pl(105, 1, 19, 2792, 108, 15966, 4), pl(78, 3, 21, 2414, 270, 24988, 0), pl(85, 3, 8, 2217, 204, 15618, 21)];
+  const r = assignRoles(team).roles;
+  assert.deepEqual(team.map((p) => r.get(p)), [2, 5, 1, 3, 4]);
+  // мидер (Ancient Apparition) с 19 вардами — всё равно мидер
+  const mid = [pl(68, 2, 20, 3000, 73, 42601, 19), pl(21, 1, 30, 3500, 88, 35709, 0), pl(71, 1, 25, 3300, 80, 35643, 4), pl(35, 3, 40, 4200, 201, 45617, 0), pl(100, 3, 10, 2500, 86, 30384, 12)];
+  assert.equal(assignRoles(mid).roles.get(mid[0]), 2);
+});

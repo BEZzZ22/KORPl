@@ -7,3 +7,4 @@ __pycache__/
 .wrangler/
 node_modules/
 tests/ui/out/
+tests/ui/live/

@@ -255,9 +255,12 @@ export function assignRoles(team) {
   const ranked = [...team].sort((a, b) => farmScore(b) - farmScore(a));
   let cores = ranked.slice(0, 3);
   let supports = ranked.slice(3);
-  // Кор, который поставил кучу вардов, а саппорт без вардов — меняем местами
-  const wardy = cores.filter((p) => wardsPlaced(p) >= 8).sort((a, b) => farmScore(a) - farmScore(b))[0];
-  const greedy = supports.filter((p) => wardsPlaced(p) <= 2).sort((a, b) => farmScore(b) - farmScore(a))[0];
+  // Кор, который поставил кучу вардов, а саппорт почти без них и с похожим фармом — меняем местами
+  // (Undying с 21 вардом и Techies с 4 при почти равном фарме: четвёрка — Undying)
+  // мидер, стоявший на центре, остаётся кором, сколько бы вардов ни поставил
+  const wardy = cores.filter((p) => wardsPlaced(p) >= 8 && p.lane_role !== 2).sort((a, b) => farmScore(a) - farmScore(b))[0];
+  const greedy = wardy && supports.filter((p) => wardsPlaced(p) <= 2 || (wardsPlaced(wardy) > wardsPlaced(p) * 3 && farmScore(p) >= farmScore(wardy) * 0.75))
+    .sort((a, b) => farmScore(b) - farmScore(a))[0];
   if (wardy && greedy && wardsPlaced(wardy) > wardsPlaced(greedy) + 5) {
     cores = cores.map((p) => (p === wardy ? greedy : p));
     supports = supports.map((p) => (p === greedy ? wardy : p));
@@ -2548,6 +2551,9 @@ class MatchAnalyzer {
       deaths: (this.p.deaths_log || []).map((d) => d.time),
       last_hits: this.p.lh_t,
       team_gold_adv: this.teamAdv,
+      // ряды по минутам кончаются на последней целой минуте: итог матча — отдельной точкой в конце
+      end: this.match.duration || null,
+      final: { player: this.p.net_worth ?? null, opponent: this.opponent ? this.opponent.net_worth ?? null : null, last_hits: this.p.last_hits ?? null },
     };
   }
 }
