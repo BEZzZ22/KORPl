@@ -100,6 +100,16 @@ for (const t of TABS) {
       console.log(`график ${k + 1}: 10 мин → ${await at(L + (10 / len) * (1 - L - R))}; конец → ${await at(0.995)}`);
     }
   }
+  if (t === "charts" && await page.locator(".seg button").count()) {
+    // переключатель «Опыт» на преимуществе команды
+    await page.locator(".seg button", { hasText: "Опыт" }).click();
+    const c = page.locator("svg.chart").first();
+    const box = await c.boundingBox();
+    const len = Number(await c.getAttribute("data-len"));
+    await page.mouse.move(box.x + box.width * (34 / 340 + (10 / len) * (1 - 42 / 340)), box.y + box.height / 2);
+    console.log(`опыт: 10 мин → ${(await c.locator("text.tt").allTextContents()).filter(Boolean).join(" | ")}`);
+    await page.locator(".seg button", { hasText: "Золото" }).click();
+  }
   const file = join(OUT, String(MATCH), `${t}.png`);
   await page.screenshot({ path: file, fullPage: true });
   console.log("screenshot", file);

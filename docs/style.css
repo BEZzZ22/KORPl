@@ -599,6 +599,23 @@ details.timeline-box > summary { font-weight: 800; }
 .chart .tt-death { fill: var(--dire); }
 .chart text { fill: var(--muted); font-size: 10px; }
 .chart .grid { stroke: rgba(255, 255, 255, 0.05); stroke-width: 1; }
+.chart .tt-note { fill: var(--muted); font-weight: 600; }
+.chart .band { fill: rgba(255, 255, 255, 0.05); }
+.chart .band.fight-win { fill: rgba(79, 209, 165, 0.09); }
+.chart .band.fight-loss { fill: rgba(242, 85, 90, 0.09); }
+.chart .band.idle { fill: rgba(242, 85, 90, 0.16); }
+.chart .ev.mine { fill: var(--radiant); }
+.chart .ev.theirs { fill: var(--dire); }
+.chart .ev.roshan { stroke: var(--aegis); stroke-width: 1; }
+.chart .item-dot { fill: #08090c; stroke: var(--aegis); stroke-width: 1.8; }
+.lg-band { width: 12px !important; height: 10px !important; border-radius: 2px !important; background: rgba(255, 255, 255, 0.16); display: inline-block; }
+.lg-band.idle { background: rgba(242, 85, 90, 0.35); }
+.lg-ring { width: 8px !important; height: 8px !important; border-radius: 50%; border: 1.8px solid var(--aegis); background: transparent; display: inline-block; }
+.lg-dash { width: 14px !important; height: 0 !important; border-top: 2px dashed #cfd3dc; background: transparent !important; display: inline-block; border-radius: 0 !important; }
+.lg-mark { font-size: 10px; margin-right: 4px; }
+.seg { display: flex; gap: 4px; padding: 3px; margin-bottom: 8px; border-radius: 10px; background: rgba(255, 255, 255, 0.05); width: max-content; }
+.card .seg button { border: 0; background: transparent; box-shadow: none; color: var(--muted); font-size: 13px; font-weight: 600; line-height: 1; padding: 7px 12px; border-radius: 8px; min-height: 0; width: auto; }
+.card .seg button.on { background: rgba(232, 194, 122, 0.18); color: var(--text); }
 
 /* ---------- сравнение каток ---------- */
 

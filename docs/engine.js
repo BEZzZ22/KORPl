@@ -2553,8 +2553,82 @@ class MatchAnalyzer {
       team_gold_adv: this.teamAdv,
       // ряды по минутам кончаются на последней целой минуте: итог матча — отдельной точкой в конце
       end: this.match.duration || null,
-      final: { player: this.p.net_worth ?? null, opponent: this.opponent ? this.opponent.net_worth ?? null : null, last_hits: this.p.last_hits ?? null },
+      final: { player: this.p.net_worth ?? null, opponent: this.opponent ? this.opponent.net_worth ?? null : null, last_hits: this.p.last_hits ?? null, denies: this.p.denies ?? null },
+      denies: this.p.dn_t || [],
+      team_xp_adv: (this.match.radiant_xp_adv || []).map((a) => a * (this.p.isRadiant ? 1 : -1)),
+      items: this.finishedItems(),
+      events: this.timelineEvents(),
+      fights: this.timelineFights(),
+      idle: this.idleWindows(),
+      lane_empty: this.laneEmptyMinutes(),
+      lh_norm: this.lhNorm(),
     };
+  }
+
+  // Готовые предметы для графика нетворса: компонент, который потом ушёл в сборку (Crystalys в Daedalus), не показываем
+  finishedItems() {
+    const log = this.coreItems();
+    return log.filter((x, i) => !log.slice(i + 1).some((y) => ((this.od.items[y.key] || {}).components || []).includes(x.key)))
+      .map(({ key, item, time }) => ({ key, item, time }));
+  }
+
+  // Вышки, бараки и Рошан для графика преимущества: mine — в пользу команды игрока
+  timelineEvents() {
+    const own = this.p.isRadiant ? "goodguys" : "badguys";
+    const myTeam = this.p.isRadiant ? 2 : 3;
+    const out = [];
+    for (const o of this.match.objectives || []) {
+      if (o.type === "building_kill" && typeof o.key === "string" && /tower|rax|fort/.test(o.key)) {
+        const lost = o.key.includes(own);
+        out.push({ t: o.time, kind: /rax/.test(o.key) ? "rax" : /fort/.test(o.key) ? "fort" : "tower", mine: !lost, text: `${lost ? "потеряли" : "сломали"} ${buildingName(o.key)}` });
+      } else if (o.type === "CHAT_MESSAGE_ROSHAN_KILL") {
+        const mine = o.team === myTeam;
+        out.push({ t: o.time, kind: "roshan", mine, text: mine ? "Рошан ваш" : "Рошан у врагов" });
+      }
+    }
+    // два барака одной линии падают разом: в подсказке одной строкой
+    const merged = [];
+    for (const e of out.sort((a, b) => a.t - b.t)) {
+      const prev = merged[merged.length - 1];
+      if (prev && prev.kind === "rax" && e.kind === "rax" && prev.text.replace("бараки", "барак") === e.text && e.t - prev.t <= 60) {
+        prev.text = prev.text.replace("барак", "бараки");
+        continue;
+      }
+      merged.push(e);
+    }
+    return merged;
+  }
+
+  // Драки OpenDota: когда и чем кончились для команды игрока (разница золота сторон за драку)
+  timelineFights() {
+    const mine = new Set(this.match.players.map((x, i) => (x.isRadiant === this.p.isRadiant ? i : -1)).filter((i) => i >= 0));
+    return (this.match.teamfights || []).map((tf) => {
+      const ps = tf.players || [];
+      let our = 0, their = 0, ourDead = 0, theirDead = 0;
+      ps.forEach((x, i) => {
+        if (mine.has(i)) { our += x.gold_delta || 0; ourDead += x.deaths || 0; } else { their += x.gold_delta || 0; theirDead += x.deaths || 0; }
+      });
+      return { start: tf.start, end: tf.end, delta: our - their, our_dead: ourDead, their_dead: theirDead };
+    });
+  }
+
+  // Минуты лайна без единого добитого крипа, когда игрок был жив и не дрался (только коры)
+  laneEmptyMinutes() {
+    const lh = this.p.lh_t || [];
+    if (!this.core || lh.length < 11) return [];
+    const dead = this.deadMinuteSet(), busy = this.fightMinutes();
+    const out = [];
+    for (let m = 2; m <= 10; m++) if (lh[m] - lh[m - 1] === 0 && !dead.has(m - 1) && !dead.has(m) && !busy.has(m - 1)) out.push(m);
+    return out;
+  }
+
+  // Ориентир на графике крипов: медиана игроков той же позиции и ранга к 10:00 и 20:00 (rank_norms.json)
+  lhNorm() {
+    // только коры: у саппорта крипы не цель, сравнение с нормой его собьёт
+    if (!this.core || this.match.game_mode === TURBO_MODE || !this.bracket || !this.roleSure) return null;
+    const a = this.normFor("lh10"), b = this.normFor("lh20");
+    if (!a || !b) return null;
+    return { points: [[0, 0], [10, Math.round(a[2])], [20, Math.round(b[2])]], label: `обычно у ${ROLE_GEN_PLURAL[this.pos]} на ранге ${RANKS[this.bracket][0]}` };
   }
 }
 

@@ -2,7 +2,7 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
-} from "./engine.js?v=25";
+} from "./engine.js?v=26";
 import { aegisBadge, openShowcase } from "./aegis.js?v=1";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
@@ -2359,6 +2359,9 @@ function buildTab(a) {
   return h("div", {}, planBlock, itemTimingBlock(a), pro, yours);
 }
 
+const HINT_KEY = "charts_hint_seen";
+const C = { me: "#e8c27a", opp: "#9d8cff", win: "#4fd1a5", loss: "#f2555a", muted: "#8a8f9c", norm: "#cfd3dc" };
+
 function chartsTab(a) {
   const t = a.timeline;
   // Ряды OpenDota идут по целым минутам; конец матча (45:18) добавляем последней точкой со значением из итогов
@@ -2369,26 +2372,78 @@ function chartsTab(a) {
     if (end != null && last != null && v.length && end > ts[ts.length - 1] + 0.05) return { values: [...v, last], ts: [...ts, end] };
     return { values: v, ts };
   };
-  const me = withEnd(t.player, t.final && t.final.player);
-  const series = [{ ...me, color: "#e8c27a", label: t.hero, glow: true }];
-  if (t.opponent) series.push({ ...withEnd(t.opponent, t.final && t.final.opponent), color: "#9d8cff", label: t.opponent_name });
-  const lh = withEnd(t.last_hits, t.final && t.final.last_hits);
-  return h("div", {},
-    h("p", { class: "small muted" }, "Веди пальцем по графику, чтобы увидеть значения на каждой минуте."),
-    h("h2", {}, "Нетворс против оппонента"),
-    h("div", { class: "card" }, lineChart(series, { markers: t.deaths, unit: "k", end: t.end }), legend(series, t.deaths.length > 0)),
-    t.team_gold_adv.length > 0 && h("h2", {}, "Преимущество команды"),
-    t.team_gold_adv.length > 0 && h("div", { class: "card" }, areaChart(t.team_gold_adv)),
-    h("h2", {}, "Добито крипов"),
-    h("div", { class: "card" }, lineChart([{ ...lh, color: "#e8c27a", label: "крипов" }], { end: t.end })),
-  );
-}
+  const minuteOf = (sec) => Math.floor(sec / 60);
+  const deaths = t.deaths || [];
 
-function legend(series, deaths) {
-  return h("div", { class: "legend" },
-    ...series.map((s) => h("span", {}, h("i", { "data-color": s.color }), s.label)),
-    deaths && h("span", {}, h("i", { "data-color": "#f2555a" }), "твои смерти"),
+  // ---- преимущество команды: золото или опыт, драки полосами, вышки и Рошан метками ----
+  const fights = (t.fights || []).map((f) => ({ from: f.start / 60, to: Math.max(f.end, f.start + 20) / 60, good: f.delta > 0,
+    text: `драка: погибло ваших ${f.our_dead}, врагов ${f.their_dead}` }));
+  const events = t.events || [];
+  const teamNotes = (tm, isEnd) => [
+    ...fights.filter((f) => Math.floor(f.from) === tm).map((f) => f.text),
+    ...events.filter((e) => (isEnd ? e.t >= Math.floor(tm) * 60 : minuteOf(e.t) === tm)).map((e) => e.text),
+  ];
+  let mode = "gold";
+  const teamBox = h("div", { class: "card" });
+  const drawTeam = () => {
+    const values = mode === "gold" ? t.team_gold_adv : t.team_xp_adv;
+    teamBox.replaceChildren(
+      t.team_xp_adv && t.team_xp_adv.length > 0 && h("div", { class: "seg", role: "tablist" },
+        ...[["gold", "Золото"], ["xp", "Опыт"]].map(([k, label]) => {
+          const b = h("button", { type: "button", class: k === mode ? "on" : "", "aria-pressed": String(k === mode) }, label);
+          b.onclick = () => { if (mode !== k) { mode = k; haptic("light"); drawTeam(); } };
+          return b;
+        })),
+      areaChart(values, { fights, events, deaths, notes: teamNotes, label: mode === "gold" ? "золото" : "опыт" }),
+      h("div", { class: "legend" },
+        h("span", {}, h("i", { "data-color": C.win }), "вы впереди"), h("span", {}, h("i", { "data-color": C.loss }), "позади"),
+        events.length > 0 && h("span", {}, h("b", { class: "lg-mark win-text" }, "▲"), "ваше: вышка, барак, Рошан"),
+        events.length > 0 && h("span", {}, h("b", { class: "lg-mark loss-text" }, "▼"), "врагов"),
+        fights.length > 0 && h("span", {}, h("i", { class: "lg-band" }), "драка"),
+        deaths.length > 0 && h("span", {}, h("i", { "data-color": C.loss }), "твои смерти")));
+  };
+  if (t.team_gold_adv.length) drawTeam();
+
+  // ---- нетворс: ты против оппонента, готовые предметы точками ----
+  const me = withEnd(t.player, t.final && t.final.player);
+  const items = (t.items || []).filter((it) => it.time > 0);
+  const series = [{ ...me, color: C.me, label: t.hero, glow: true }];
+  if (t.opponent) series.push({ ...withEnd(t.opponent, t.final && t.final.opponent), color: C.opp, label: t.opponent_name });
+  const nwNotes = (tm, isEnd) => items.filter((it) => (isEnd ? it.time >= Math.floor(tm) * 60 : minuteOf(it.time) === tm)).map((it) => `купил ${it.item}`);
+
+  // ---- крипы: денаи, ориентир по рангу, простои ----
+  const lh = withEnd(t.last_hits, t.final && t.final.last_hits);
+  const lhSeries = [{ ...lh, color: C.me, label: "крипов", glow: true }];
+  if ((t.denies || []).some((v) => v > 0)) lhSeries.push({ ...withEnd(t.denies, t.final && t.final.denies), color: C.opp, label: "денаев" });
+  const norm = t.lh_norm;
+  if (norm) lhSeries.push({ values: norm.points.map((q) => q[1]), ts: norm.points.map((q) => q[0]), color: C.norm, label: "обычно", dash: true });
+  const idle = [
+    ...(t.lane_empty || []).map((m) => ({ from: m - 1, to: m, text: `минута без крипов на линии` })),
+    ...(t.idle || []).map(([s0, e0]) => ({ from: s0, to: e0, text: `простой ${s0}–${e0} мин: ни крипов, ни драк` })),
+  ];
+  const lhNotes = (tm) => idle.filter((b) => tm > b.from && tm <= b.to).map((b) => b.text);
+
+  let hint = null;
+  try { if (!localStorage.getItem(HINT_KEY)) hint = h("p", { class: "small muted" }, "Веди пальцем по графику: на каждой минуте видно значения и что случилось."); } catch { /* приватный режим */ }
+  const seen = () => { if (!hint) return; try { localStorage.setItem(HINT_KEY, "1"); } catch { /* */ } };
+  const root = h("div", {},
+    hint,
+    t.team_gold_adv.length > 0 && h("h2", {}, "Преимущество команды"),
+    t.team_gold_adv.length > 0 && teamBox,
+    h("h2", {}, "Нетворс против оппонента"),
+    h("div", { class: "card" }, lineChart(series, { markers: deaths, unit: "k", end: t.end, dots: items.map((it) => it.time), notes: nwNotes }),
+      h("div", { class: "legend" },
+        ...series.map((x) => h("span", {}, h("i", { "data-color": x.color }), x.label)),
+        items.length > 0 && h("span", {}, h("i", { class: "lg-ring" }), "готовый предмет"),
+        deaths.length > 0 && h("span", {}, h("i", { "data-color": C.loss }), "твои смерти"))),
+    h("h2", {}, "Добито крипов"),
+    h("div", { class: "card" }, lineChart(lhSeries, { end: t.end, bands: idle.map((b) => ({ ...b, cls: "idle" })), notes: lhNotes }),
+      h("div", { class: "legend" },
+        ...lhSeries.map((x) => h("span", {}, h("i", { class: x.dash ? "lg-dash" : "", "data-color": x.dash ? null : x.color }), x.dash ? norm.label : x.label)),
+        idle.length > 0 && h("span", {}, h("i", { class: "lg-band idle" }), "жив, но не фармил и не дрался"))),
   );
+  root.addEventListener("pointerdown", seen, { once: true });
+  return root;
 }
 
 // Круглый шаг шкалы: 1, 2, 2.5, 5 × 10^n — чтобы подписи были 0, 100, 200, а не 89, 179, 268
@@ -2427,9 +2482,10 @@ function chartFrame(values, tmax, { zero = false, unit = "" } = {}) {
   return { chart, x, y, W, H, L, R, T, B };
 }
 
-// Значение ряда в момент tm (минуты): между точками по прямой
+// Значение ряда в момент tm (минуты): между точками по прямой; за концом ряда — null
 function valueAt(s, tm) {
   const { values, ts } = s;
+  if (!values.length || tm > ts[ts.length - 1] + 1e-9) return null;
   if (tm <= ts[0]) return values[0];
   for (let i = 1; i < ts.length; i++) {
     if (tm <= ts[i]) return values[i - 1] + ((values[i] - values[i - 1]) * (tm - ts[i - 1])) / (ts[i] - ts[i - 1] || 1);
@@ -2437,15 +2493,27 @@ function valueAt(s, tm) {
   return values[values.length - 1];
 }
 
-// Палец или мышь над графиком: вертикальная линия, точки и подсказка со значениями этой минуты
-function makeInteractive(frame, series, { deaths = [], valueFmt = (v) => num(v), end = null } = {}) {
+// Полосы на графике: драки, простои — прямоугольники по времени во всю высоту
+function drawBands(frame, bands) {
+  const { chart, x, T, H, B } = frame;
+  for (const b of bands) {
+    chart.append(svg("rect", { class: `band ${b.cls || ""}`, x: x(b.from).toFixed(1), y: T, width: Math.max(1.5, x(b.to) - x(b.from)).toFixed(1), height: H - T - B }));
+  }
+}
+
+// Палец или мышь над графиком: вертикальная линия, точки и подсказка со значениями этой минуты.
+// notes(tm, isEnd) — строки о том, что случилось в эту минуту (покупки, вышки, драки)
+function makeInteractive(frame, series, { deaths = [], valueFmt = (v) => num(v), end = null, notes = () => [] } = {}) {
   const { chart, x, y, W, H, L, R, T, B } = frame;
   // все моменты, где есть точка хотя бы у одного ряда: целые минуты и конец матча
   const stops = [...new Set(series.flatMap((s) => s.ts))].sort((a, b) => a - b);
-  const guide = svg("line", { y1: T, y2: H - B, stroke: "#e8c27a", "stroke-width": 1, "stroke-dasharray": "3 3", opacity: 0 });
+  const MAX_NOTES = 4;
+  const guide = svg("line", { y1: T, y2: H - B, stroke: C.me, "stroke-width": 1, "stroke-dasharray": "3 3", opacity: 0 });
   const dots = series.map((s) => svg("circle", { r: 4, fill: s.color, stroke: "#08090c", "stroke-width": 2, opacity: 0 }));
   const box = svg("rect", { rx: 8, fill: "rgba(13,15,20,0.94)", stroke: "rgba(232,194,122,0.4)", opacity: 0 });
-  const lines = [svg("text", { class: "tt tt-title" })].concat(series.map(() => svg("text", { class: "tt" })), [svg("text", { class: "tt tt-death" })]);
+  const lines = [svg("text", { class: "tt tt-title" })]
+    .concat(series.map(() => svg("text", { class: "tt" })), [svg("text", { class: "tt tt-death" })],
+      Array.from({ length: MAX_NOTES }, () => svg("text", { class: "tt tt-note" })));
   const tip = svg("g", { "pointer-events": "none" }, guide, ...dots, box, ...lines);
   chart.append(tip);
 
@@ -2458,6 +2526,7 @@ function makeInteractive(frame, series, { deaths = [], valueFmt = (v) => num(v),
     guide.setAttribute("x1", cx); guide.setAttribute("x2", cx); guide.setAttribute("opacity", 1);
     series.forEach((s, k) => {
       const v = valueAt(s, tm);
+      if (v == null) { dots[k].setAttribute("opacity", 0); lines[k + 1].textContent = ""; return; }
       dots[k].setAttribute("cx", cx); dots[k].setAttribute("cy", y(v)); dots[k].setAttribute("opacity", 1);
       lines[k + 1].textContent = `${s.label ? s.label + ": " : ""}${valueFmt(Math.round(v))}`;
       lines[k + 1].setAttribute("fill", s.color);
@@ -2466,10 +2535,17 @@ function makeInteractive(frame, series, { deaths = [], valueFmt = (v) => num(v),
     lines[0].textContent = isEnd ? `конец, ${mmss(end)}` : `${tm} мин`;
     // смерти этой минуты (с tm:00 до tm:59), у конца — после последней целой минуты
     const died = deaths.filter((t) => (isEnd ? t >= Math.floor(tm) * 60 : Math.floor(t / 60) === tm));
-    lines[lines.length - 1].textContent = died.length ? `смерть ${died.map((t) => mmss(t)).join(", ")}` : "";
-    const rows = lines.filter((l) => l.textContent).length;
-    const boxW = 128, boxH = 8 + rows * 13;
-    const bx = cx + 10 + boxW > W - R ? cx - 10 - boxW : cx + 10;
+    lines[series.length + 1].textContent = died.length ? `смерть ${died.map((t) => mmss(t)).join(", ")}` : "";
+    // одинаковые строки одной минуты (две T4 подряд) — одной строкой с числом
+    const counts = new Map();
+    for (const n of notes(tm, isEnd)) counts.set(n, (counts.get(n) || 0) + 1);
+    const extra = [...counts].map(([n, k]) => (k > 1 ? `${n} ×${k}` : n));
+    const shown = extra.length > MAX_NOTES ? [...extra.slice(0, MAX_NOTES - 1), `и ещё ${extra.length - MAX_NOTES + 1}`] : extra;
+    lines.slice(series.length + 2).forEach((l, k) => { l.textContent = shown[k] || ""; });
+    const used = lines.filter((l) => l.textContent);
+    const longest = Math.max(...used.map((l) => l.textContent.length));
+    const boxW = Math.min(W - L - R, Math.max(118, longest * 5.9 + 16)), boxH = 8 + used.length * 13;
+    const bx = cx + 10 + boxW > W - R ? Math.max(L, cx - 10 - boxW) : cx + 10;
     box.setAttribute("x", bx); box.setAttribute("y", T); box.setAttribute("width", boxW); box.setAttribute("height", boxH);
     box.setAttribute("opacity", 1);
     let row = 0;
@@ -2502,44 +2578,61 @@ function makeInteractive(frame, series, { deaths = [], valueFmt = (v) => num(v),
 
 const pathOf = (s, x, y) => s.values.map((v, i) => `${i ? "L" : "M"}${x(s.ts[i]).toFixed(1)},${y(v).toFixed(1)}`).join("");
 const byMinute = (values) => ({ values, ts: values.map((_, i) => i) });
+const cross = (cx, cy, color = C.loss, r = 3.5) => [
+  svg("line", { x1: cx - r, y1: cy - r, x2: cx + r, y2: cy + r, stroke: color, "stroke-width": r > 3 ? 2 : 1.6 }),
+  svg("line", { x1: cx - r, y1: cy + r, x2: cx + r, y2: cy - r, stroke: color, "stroke-width": r > 3 ? 2 : 1.6 }),
+];
 
-// Линейный график на SVG без библиотек. Ряд: { values, ts } — значения и их время в минутах
-function lineChart(series, { markers = [], unit = "", end = null } = {}) {
+// Линейный график на SVG без библиотек. Ряд: { values, ts } — значения и их время в минутах.
+// markers — смерти крестиками на первом ряду, dots — секунды покупок кольцами на первом ряду, bands — полосы
+function lineChart(series, { markers = [], unit = "", end = null, dots = [], bands = [], notes } = {}) {
   series = series.map((s) => (s.ts ? s : { ...s, ...byMinute(s.values) }));
   const all = series.flatMap((s) => s.values);
   const tmax = Math.max(...series.map((s) => s.ts[s.ts.length - 1] ?? 0));
   const frame = chartFrame(all.length ? all : [0], tmax, { unit });
   const { chart, x, y } = frame;
+  drawBands(frame, bands);
   for (const s of series) {
     const d = pathOf(s, x, y);
     if (s.glow) chart.append(svg("path", { d, fill: "none", stroke: s.color, "stroke-width": 7, "stroke-opacity": 0.18, "stroke-linejoin": "round" }));
-    chart.append(svg("path", { d, fill: "none", stroke: s.color, "stroke-width": 2.2, "stroke-linejoin": "round" }));
+    chart.append(svg("path", { d, fill: "none", stroke: s.color, "stroke-width": s.dash ? 1.6 : 2.2, "stroke-linejoin": "round", ...(s.dash ? { "stroke-dasharray": "4 4", "stroke-opacity": 0.7 } : {}) }));
+  }
+  const base = series[0];
+  for (const t of dots) {
+    const v = valueAt(base, Math.min(t / 60, tmax));
+    if (v != null) chart.append(svg("circle", { class: "item-dot", cx: x(Math.min(t / 60, tmax)).toFixed(1), cy: y(v).toFixed(1), r: 3.6 }));
   }
   // крестик смерти стоит на линии игрока в её секунду, а не на начале минуты
   for (const t of markers) {
-    const tm = Math.min(t / 60, tmax);
-    const cx = x(tm), cy = y(valueAt(series[0], tm));
-    chart.append(
-      svg("line", { x1: cx - 3.5, y1: cy - 3.5, x2: cx + 3.5, y2: cy + 3.5, stroke: "#f2555a", "stroke-width": 2 }),
-      svg("line", { x1: cx - 3.5, y1: cy + 3.5, x2: cx + 3.5, y2: cy - 3.5, stroke: "#f2555a", "stroke-width": 2 }),
-    );
+    const tm = Math.min(t / 60, tmax), v = valueAt(base, tm);
+    if (v != null) chart.append(...cross(x(tm), y(v)));
   }
-  return makeInteractive(frame, series, { deaths: markers, end });
+  return makeInteractive(frame, series, { deaths: markers, end, notes });
 }
 
-// Преимущество команды: плюс — зелёным, минус — красным
-function areaChart(values) {
+// Преимущество команды: плюс — зелёным, минус — красным. Драки полосами, вышки и Рошан — метками сверху и снизу
+function areaChart(values, { fights = [], events = [], deaths = [], notes, label = "команда" } = {}) {
   const s = byMinute(values);
   const last = values.length - 1;
   const frame = chartFrame(values, last, { zero: true, unit: "k" });
-  const { chart, x, y } = frame;
+  const { chart, x, y, T, H, B } = frame;
+  drawBands(frame, fights.map((f) => ({ ...f, to: Math.min(f.to, last), cls: f.good ? "fight-win" : "fight-loss" })));
   const area = (clamped) => `${pathOf({ values: clamped, ts: s.ts }, x, y)} L${x(last).toFixed(1)},${y(0).toFixed(1)} L${x(0).toFixed(1)},${y(0).toFixed(1)} Z`;
   chart.append(
-    svg("path", { d: area(values.map((v) => Math.max(v, 0))), fill: "#4fd1a5", "fill-opacity": 0.45 }),
-    svg("path", { d: area(values.map((v) => Math.min(v, 0))), fill: "#f2555a", "fill-opacity": 0.55 }),
+    svg("path", { d: area(values.map((v) => Math.max(v, 0))), fill: C.win, "fill-opacity": 0.45 }),
+    svg("path", { d: area(values.map((v) => Math.min(v, 0))), fill: C.loss, "fill-opacity": 0.55 }),
     svg("line", { x1: x(0), x2: x(last), y1: y(0), y2: y(0), stroke: "#5d6270", "stroke-width": 1 }),
   );
-  return makeInteractive(frame, [{ ...s, color: "#e8c27a", label: "команда" }], { valueFmt: (v) => (v > 0 ? "+" : v < 0 ? "−" : "") + num(Math.abs(v)) });
+  // свои успехи треугольником вверх по верхнему краю, успехи врагов вниз по нижнему; Рошан крупнее
+  for (const e of events) {
+    const cx = x(Math.min(e.t / 60, last)), size = e.kind === "tower" ? 3 : 4.5; // бараки, трон и Рошан крупнее
+    const cy = e.mine ? T + 4 : H - B - 4;
+    const d = e.mine ? `M${cx - size},${cy + size} L${cx + size},${cy + size} L${cx},${cy - size} Z` : `M${cx - size},${cy - size} L${cx + size},${cy - size} L${cx},${cy + size} Z`;
+    chart.append(svg("path", { d, class: `ev ${e.mine ? "mine" : "theirs"} ${e.kind}` }, svg("title", {}, `${mmss(e.t)} ${e.text}`)));
+  }
+  // смерти мелкими крестиками на нулевой линии: видно, после каких из них график пошёл вниз
+  for (const t of deaths) if (t / 60 <= last) chart.append(...cross(x(t / 60), y(0), C.loss, 2.4));
+  return makeInteractive(frame, [{ ...s, color: C.me, label }], { valueFmt: (v) => (v > 0 ? "+" : v < 0 ? "−" : "") + num(Math.abs(v)), deaths, notes });
 }
 
 // Ширины полосок и цвета легенды выставляем из JS: CSP запрещает inline-стили в разметке

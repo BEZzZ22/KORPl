@@ -333,3 +333,39 @@ test("роли: саппорт с кучей вардов не кор, миде�
   const mid = [pl(68, 2, 20, 3000, 73, 42601, 19), pl(21, 1, 30, 3500, 88, 35709, 0), pl(71, 1, 25, 3300, 80, 35643, 4), pl(35, 3, 40, 4200, 201, 45617, 0), pl(100, 3, 10, 2500, 86, 30384, 12)];
   assert.equal(assignRoles(mid).roles.get(mid[0]), 2);
 });
+
+test("графики: вышки и Рошан со стороной, драки, готовые предметы, опыт и денаи", () => {
+  const a = run(copy(), "Tusk");
+  const t = a.timeline;
+  const own = a.facts.is_radiant ?? base.players[0].isRadiant ? "goodguys" : "badguys";
+  const towers = (base.objectives || []).filter((o) => o.type === "building_kill" && /tower/.test(o.key));
+  assert.equal(t.events.filter((e) => e.kind === "tower").length, towers.length);
+  for (const e of t.events.filter((x) => x.kind === "tower")) assert.match(e.text, e.mine ? /^сломали T/ : /^потеряли T/);
+  assert.equal(towers.filter((o) => o.key.includes(own)).length, t.events.filter((e) => e.kind === "tower" && !e.mine).length);
+  assert.equal(t.fights.length, (base.teamfights || []).length);
+  assert.ok(t.fights.every((f) => f.end >= f.start && Number.isInteger(f.our_dead) && Number.isInteger(f.their_dead)));
+  // компонент, ушедший в сборку, не показывается
+  const keys = t.items.map((i) => i.key);
+  for (const it of t.items) for (const later of t.items.filter((x) => x.time > it.time)) assert.ok(!(od.items[later.key].components || []).includes(it.key), `${it.key} в ${later.key}`);
+  assert.equal(new Set(keys).size <= keys.length, true);
+  assert.equal(t.team_xp_adv.length, base.radiant_xp_adv.length);
+  assert.equal(Math.sign(t.team_xp_adv.at(-1)), Math.sign(base.radiant_xp_adv.at(-1)) * (base.players[0].isRadiant ? 1 : -1));
+  assert.deepEqual(t.denies, base.players[0].dn_t);
+  assert.equal(t.final.last_hits, base.players[0].last_hits);
+});
+
+test("графики: ориентир по крипам только с нормами, рангом и уверенной ролью, без турбо", () => {
+  const norms = docs("rank_norms.json");
+  const m = copy();
+  for (const p of m.players) p.rank_tier = 22;
+  const p = m.players.find((x) => od.heroName(x.hero_id) === "Invoker");
+  const a = analyze(m, p, od, kb, tx, pro, bench, norms, []);
+  assert.deepEqual(a.timeline.lh_norm.points.map((q) => q[0]), [0, 10, 20]);
+  assert.equal(a.timeline.lh_norm.points[1][1], Math.round(norms.guardian.pos2.lh10.q[2]));
+  assert.match(a.timeline.lh_norm.label, /мидеров на ранге Страж/);
+  assert.equal(analyze(m, p, od, kb, tx, pro, bench, {}, []).timeline.lh_norm, null);
+  const tusk = m.players.find((x) => od.heroName(x.hero_id) === "Tusk"); // хард-саппорт
+  assert.equal(analyze(m, tusk, od, kb, tx, pro, bench, norms, []).timeline.lh_norm, null);
+  m.game_mode = 23;
+  assert.equal(analyze(m, p, od, kb, tx, pro, bench, norms, []).timeline.lh_norm, null);
+});
