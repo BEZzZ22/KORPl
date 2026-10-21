@@ -174,7 +174,8 @@ async function shot(name, { full = true } = {}) {
 const step = async (name, fn) => {
   try { await fn(); } catch (e) { errors.push(`${name}: ${e.message.split("\n").slice(0, process.env.UI_DEBUG ? 12 : 1).join("\n")}`); }
   const text = await page.evaluate(() => document.body.innerText).catch(() => "");
-  const junk = /(^|[^a-zа-яё])(undefined|NaN|null|false|true|\[object Object\])([^a-zа-яё]|$)/i.exec(text);
+  // регистр важен: утёкшие значения JS пишутся строчными, а «Gem of True Sight» — название предмета
+  const junk = /(^|[^a-zA-Zа-яё])(undefined|NaN|null|false|true|\[object Object\])([^a-zA-Zа-яё]|$)/.exec(text);
   if (junk) errors.push(`${name}: на экране «${junk[2]}»: …${text.slice(Math.max(0, junk.index - 60), junk.index + 40).replace(/\s+/g, " ")}…`);
 };
 

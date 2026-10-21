@@ -1,8 +1,8 @@
 // Telegram Mini App: разбор матча Dota 2 внутри Телеграма.
 import {
-  analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric,
+  analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
-} from "./engine.js?v=26";
+} from "./engine.js?v=28";
 import { aegisBadge, openShowcase } from "./aegis.js?v=1";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
@@ -30,7 +30,7 @@ const TURBO_MODE = 23;
 
 const tg = window.Telegram && window.Telegram.WebApp;
 const app = document.getElementById("app");
-let dictionary = null, knowledge = null, texts = null, itemIds = null, norms = {};
+let dictionary = null, knowledge = null, texts = null, itemIds = null, norms = {}, guides = null, builds = null;
 let pollTimer = null;
 let section = "home", lastAnalysis = null, tabbar = null;
 // Растёт при каждом переходе: экран, догрузившийся после ухода с него, не перерисовывает чужой
@@ -864,7 +864,7 @@ async function draftScreen() {
       }
       if (stale(seq)) return;
       const advice = draftAdvice({ enemies: [...enemies], pool, recent, matchups, counter, knowledge, od: dictionary, role });
-      result.replaceChildren(draftResult(advice, Boolean(account)));
+      result.replaceChildren(draftResult(advice, Boolean(account), { enemies: [...enemies], role }));
     } catch {
       result.replaceChildren(h("p", { class: "error" }, "Не загрузилось. Проверь интернет и попробуй ещё раз."));
     } finally {
@@ -908,8 +908,66 @@ function shortWhy(text) {
   return out.length > WHY_MAX + 20 ?`${out.slice(0, WHY_MAX).replace(/[\s,;:—-]+\S*$/, "")}…` : out;
 }
 
+// Позиция по умолчанию для героя в драфте: самая частая у про в выбранной группе (кор или саппорт)
+function draftPos(heroId, role) {
+  const byPos = (builds && builds.heroes && builds.heroes[heroId]) || {};
+  const range = role === "support" ? [4, 5] : [1, 2, 3];
+  return range.filter((p) => byPos[p]).sort((a, b) => byPos[b].g - byPos[a].g)[0] || range[0];
+}
+
+// Сборка героя под выбранных врагов с переключателем позиции
+function draftPlanPanel(heroId, enemies, role) {
+  let pos = draftPos(heroId, role);
+  const byPos = (builds && builds.heroes && builds.heroes[heroId]) || {};
+  const box = h("div", { class: "draft-plan" });
+  const draw = () => {
+    const plan = itemPlan({ builds, guides, od: dictionary, knowledge, heroId, pos, enemies });
+    box.replaceChildren(
+      h("div", { class: "pos-row", role: "tablist", "aria-label": "Позиция" }, ...[1, 2, 3, 4, 5].map((p) => h("button", {
+        type: "button", class: `pos-chip ${byPos[p] ? "" : "rare"}`, "aria-pressed": String(p === pos),
+        onclick: () => { if (p !== pos) { pos = p; hapticTick(); draw(); } },
+      }, `поз. ${p}`))),
+      plan ? itemPlanCard(plan) : h("p", { class: "muted small" }, "По этому герою пока нет сборок."));
+  };
+  draw();
+  return box;
+}
+
+// Кнопка под героем: раскрывает его сборку под этот пик
+function planToggle(heroId, ctx) {
+  const slot = h("div", { class: "draft-slot" });
+  const btn = h("button", { type: "button", class: "ghost draft-build-btn", "aria-expanded": "false" }, "Сборка под этот пик");
+  btn.onclick = () => {
+    const open = btn.getAttribute("aria-expanded") !== "true";
+    btn.setAttribute("aria-expanded", String(open));
+    btn.textContent = open ? "Скрыть сборку" : "Сборка под этот пик";
+    slot.replaceChildren(open ? draftPlanPanel(heroId, ctx.enemies, ctx.role) : "");
+    haptic("light");
+  };
+  return [btn, slot];
+}
+
+// Свой герой: поиск по имени и сборка под этих врагов
+function ownHeroPlan(ctx) {
+  const out = h("div", {});
+  const list = h("div", { class: "own-heroes" });
+  const input = h("input", { type: "search", placeholder: "Свой герой: имя, как в игре", "aria-label": "Свой герой" });
+  const taken = new Set(ctx.enemies);
+  input.addEventListener("input", () => {
+    const q = input.value.trim().toLowerCase();
+    const found = q ? dictionary.heroList().filter((x) => !taken.has(x.id) && x.name.toLowerCase().includes(q)).slice(0, 6) : [];
+    list.replaceChildren(...found.map((x) => h("button", { type: "button", class: "draft-pick", onclick: () => {
+      hapticTick();
+      input.value = x.name;
+      list.replaceChildren();
+      out.replaceChildren(h("h3", { class: "own-hero-name" }, x.name), draftPlanPanel(x.id, ctx.enemies, ctx.role));
+    } }, heroImg(x.id), h("span", {}, x.name))));
+  });
+  return h("div", { class: "card" }, input, list, out);
+}
+
 // Один пик: почему он (по статьям dota2.ru), кто его контрит и цифры
-function draftPick(p, i, mine) {
+function draftPick(p, i, mine, ctx = null) {
   const pct = (x) => `${Math.round(x * 100)}%`;
   const stats = [
     mine && `${games(p.games)} на нём`,
@@ -925,21 +983,25 @@ function draftPick(p, i, mine) {
       !p.why.length && h("p", { class: "draft-why small" }, "По статистике OpenDota выигрывает у этих врагов чаще, чем проигрывает."),
       p.threats.length > 0 && h("p", { class: "draft-why small loss-text" },
         `Осторожно: ${p.threats.map((t) => t.name).join(", ")} ${p.threats.length > 1 ? "контрят" : "контрит"} его.`),
-      stats.length > 0 && h("div", { class: "small muted" }, stats.join(", "))));
+      stats.length > 0 && h("div", { class: "small muted" }, stats.join(", ")),
+      ...(ctx && builds ? planToggle(p.hero_id, ctx) : [])));
 }
 
-function draftResult(advice, linked) {
+function draftResult(advice, linked, ctx = null) {
   return h("div", {},
     linked && h("h2", {}, "Из твоих героев"),
     linked && (advice.picks.length
-      ? h("div", { class: "card" }, ...advice.picks.map((p, i) => draftPick(p, i, true)))
+      ? h("div", { class: "card" }, ...advice.picks.map((p, i) => draftPick(p, i, true, ctx)))
       : h("p", { class: "muted" }, "Из твоих частых героев никто не подходит против этих врагов. Глянь контрпики ниже.")),
     !linked && h("p", { class: "muted" }, "Привяжи аккаунт на «Главной», и я сначала предложу героев, на которых ты играешь."),
     advice.counters.length > 0 && h("h2", {}, "Контрпики"),
-    advice.counters.length > 0 && h("div", { class: "card" }, ...advice.counters.map((p, i) => draftPick(p, i, false)),
+    advice.counters.length > 0 && h("div", { class: "card" }, ...advice.counters.map((p, i) => draftPick(p, i, false, ctx)),
       h("p", { class: "small muted" }, "Почему именно они — по статьям о контрпиках с dota2.ru.")),
-    advice.items.length > 0 && h("h2", {}, "Что собирать"),
-    advice.items.length > 0 && h("div", { class: "card" }, ...advice.items.map((it) => h("div", { class: "why-row" },
+    // сборки под позицию и пик по про-матчам; без них — общие предметы против механик врагов
+    ctx && builds && h("h2", {}, "Сборка на своего героя"),
+    ctx && builds && ownHeroPlan(ctx),
+    !(ctx && builds) && advice.items.length > 0 && h("h2", {}, "Что собирать"),
+    !(ctx && builds) && advice.items.length > 0 && h("div", { class: "card" }, ...advice.items.map((it) => h("div", { class: "why-row" },
       itemChip(it.key, "chip need"), h("div", { class: "small muted" }, `против: ${it.why} (${it.from})`)))));
 }
 
@@ -1040,7 +1102,7 @@ async function matchScreen(matchId, slot, accountId, attempt = 0) {
   if (stale(seq)) return;
   let a;
   try {
-    a = analyze(match, player, dictionary, knowledge, texts, pro, bench, norms, matchups, replay);
+    a = analyze(match, player, dictionary, knowledge, texts, pro, bench, norms, matchups, replay, { guides, builds });
   } catch (e) {
     // иначе на необычном матче вечно крутится «Призываю матч...»
     console.error(e);
@@ -2319,44 +2381,81 @@ function itemChip(key, cls = "chip") {
   return h("span", { class: cls }, img(dictionary.itemImage(key), null, ""), dictionary.itemName(key));
 }
 
-function buildPlanBlock(a) {
-  const plan = a.build_plan;
-  if (!plan) return null;
-  return h("div", {},
-    h("h2", {}, "Сборка под эту катку"),
-    h("div", { class: "card plan" },
-      ...plan.facts.map((t) => h("div", { class: "plan-fact" }, t)),
-      plan.missing.length === 0 && h("div", { class: "strength" }, "Ничего особенного против тебя не играло: сборка по про-матчам подходит."),
-      ...plan.missing.map((it, i) => h("div", { class: "plan-item" },
-        h("div", { class: "plan-num" }, String(i + 1)),
-        img(dictionary.itemImage(it.key), null, ""),
-        h("div", { class: "grow" },
-          h("div", { class: "plan-name" }, it.item, it.popular && h("span", { class: "tag" }, "берут про")),
-          h("div", { class: "small muted" }, it.why)))),
-      plan.have.length > 0 && h("div", { class: "small muted" }, "Уже было: " + plan.have.map((it) => it.item).join(", "))));
+const POS_SHORT = { 1: "керри", 2: "мидер", 3: "офлейнер", 4: "саппорт-четвёрка", 5: "хард-саппорт" };
+const POS_GEN = { 1: "керри", 2: "мидера", 3: "офлейнера", 4: "четвёрки", 5: "пятёрки" };
+
+// Откуда сборка: про-матчи патча, ближайшая позиция героя или гайд
+function planSource(p) {
+  if (p.source === "none") return "Обычной сборки по этому герою нет: ниже только то, что нужно против этого пика.";
+  if (p.source === "guide") return `по гайду ueyo в Steam, патч ${p.patch}: про на этой позиции его почти не играют`;
+  const base = `по ${num(p.games)} ${plural(p.games, "игре", "играм", "играм")} про на патче ${p.patch}`;
+  if (p.source === "pro") return `${POS_SHORT[p.pos]}, ${base}`;
+  return `${base}. На позиции ${p.want} его почти не играют, это сборка ${POS_GEN[p.pos]}`;
+}
+
+// Статус предмета после игры: когда купил, поздно или не было
+function planStatus(r) {
+  if (r.owned == null) return null;
+  if (!r.owned) return h("span", { class: "ip-st miss" }, "не было");
+  return h("span", { class: `ip-st ${r.late ? "late" : "have"}` }, r.time != null && r.time > 0 ? mmss(r.time) : "было", r.late && h("small", {}, "поздно"));
+}
+
+function planRow(r) {
+  const meta = [r.share != null && `берут ${r.share}%`, r.med != null && r.med > 0 && `обычно к ${mmss(r.med)}`].filter(Boolean).join(" · ");
+  return h("div", { class: `ip-row ${r.owned === false ? "miss" : ""}` },
+    img(dictionary.itemImage(r.key), null, ""),
+    h("div", { class: "grow" },
+      h("div", { class: "ip-name" }, r.item),
+      meta && h("div", { class: "small muted" }, meta),
+      r.important && h("div", { class: "small ip-why" }, `в этой катке важнее обычного: ${r.important}`)),
+    planStatus(r));
+}
+
+function planChips(list, named = false) {
+  return h("div", { class: `ip-chips ${named ? "named" : ""}` }, ...list.map((r) => h("span", { class: `ip-chip ${r.owned ? "have" : ""}`, title: r.item },
+    img(dictionary.itemImage(r.key), null, r.item), named && h("span", {}, r.item))));
+}
+
+// Сборка под пик: обычная сборка героя на позиции и что докупить против этих врагов.
+// after — разбор сыгранной катки: рядом с каждым предметом, купил ли и когда
+function itemPlanCard(p, { after = false, facts = [] } = {}) {
+  if (!p) return null;
+  const counters = p.counters.map((c, i) => h("div", { class: "plan-item" },
+    h("div", { class: "plan-num" }, String(i + 1)),
+    img(dictionary.itemImage(c.key), null, ""),
+    h("div", { class: "grow" },
+      h("div", { class: "plan-name" }, c.item, c.popular && h("span", { class: "tag" }, "берут про")),
+      ...c.whys.map((w) => h("div", { class: "small muted" }, w)),
+      c.next && h("div", { class: "small plan-extra" }, `потом собирается в ${c.next}`),
+      after && h("div", { class: "ip-st-line" }, planStatus(c)))));
+  return h("div", { class: "card item-plan" },
+    h("div", { class: "small muted" }, planSource(p)),
+    ...facts.map((t) => h("div", { class: "plan-fact" }, t)),
+    after && p.core_total > 0 && h("div", { class: "ip-score" }, h("b", {}, `${p.core_have} из ${p.core_total}`), " основных предметов собрал"),
+    p.start.length > 0 && h("div", { class: "ip-label" }, "Старт"),
+    p.start.length > 0 && planChips(p.start),
+    p.early.length > 0 && h("div", { class: "ip-label" }, "Ранняя игра"),
+    ...p.early.map(planRow),
+    p.core.length > 0 && h("div", { class: "ip-label" }, "Основа"),
+    ...p.core.map(planRow),
+    ...p.notes.map((t) => h("p", { class: "small plan-extra" }, t)),
+    h("div", { class: "ip-label" }, "Против этого пика"),
+    counters.length ? h("div", {}, ...counters)
+      : h("p", { class: "small muted" }, "Ничего особенного против тебя не играло: обычной сборки хватит."),
+    p.sit.length > 0 && h("div", { class: "ip-label" }, "Ещё берут по ситуации"),
+    p.sit.length > 0 && planChips(p.sit, true),
+    after && p.turbo && h("p", { class: "small muted" }, "Это турбо: время покупки с обычными играми про не сравниваю."));
 }
 
 function buildTab(a) {
-  const planBlock = buildPlanBlock(a);
-  const pro = a.pro_build.length > 0 && h("div", {},
-    h("h2", {}, `Про-сборка ${a.facts.hero}`),
-    h("div", { class: "card" },
-      ...a.pro_build.map((b) => h("div", { class: `build-row ${b.owned ? "" : "missing"}` },
-        img(dictionary.itemImage(b.key), null, ""),
-        h("div", {}, h("div", {}, b.item), h("div", { class: "bar" }, h("i", { "data-pct": b.share }))),
-        h("div", { class: `build-status ${b.owned ? "have" : "miss"}` },
-          b.owned ? (b.time != null ? mmss(b.time) : "было") : "не было"),
-      )),
-      h("div", { class: "small muted" }, "Полоска — как часто предмет берут на этом герое в про-матчах"),
-    ),
-  );
+  const plan = a.item_plan && h("div", {}, h("h2", {}, "Сборка под этот пик"), itemPlanCard(a.item_plan, { after: true, facts: a.item_plan.facts || [] }));
   const yours = a.items.length > 0 && h("div", {},
     h("h2", {}, "Твои предметы"),
     h("div", { class: "card" }, ...a.items.map((it) =>
       h("div", { class: "item-row" }, img(dictionary.itemImage(it.key), null, ""), h("span", {}, it.item), h("time", {}, mmss(it.time))))),
   );
-  if (!pro && !yours && !planBlock) return h("p", { class: "muted" }, "Крупных предметов не было.");
-  return h("div", {}, planBlock, itemTimingBlock(a), pro, yours);
+  if (!plan && !yours) return h("p", { class: "muted" }, "Крупных предметов не было.");
+  return h("div", {}, plan, itemTimingBlock(a), yours);
 }
 
 const HINT_KEY = "charts_hint_seen";
@@ -2388,7 +2487,7 @@ function chartsTab(a) {
   const drawTeam = () => {
     const values = mode === "gold" ? t.team_gold_adv : t.team_xp_adv;
     teamBox.replaceChildren(
-      t.team_xp_adv && t.team_xp_adv.length > 0 && h("div", { class: "seg", role: "tablist" },
+      t.team_xp_adv && t.team_xp_adv.length > 0 && h("div", { class: "chart-seg", role: "tablist" },
         ...[["gold", "Золото"], ["xp", "Опыт"]].map(([k, label]) => {
           const b = h("button", { type: "button", class: k === mode ? "on" : "", "aria-pressed": String(k === mode) }, label);
           b.onclick = () => { if (mode !== k) { mode = k; haptic("light"); drawTeam(); } };
@@ -2703,6 +2802,10 @@ async function boot() {
     texts = tx;
     // Нормы по рангам необязательны: без них разбор работает по общим порогам
     norms = await fetch("rank_norms.json?v=4").then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
+    [guides, builds] = await Promise.all([
+      fetch("khan_builds.json?v=1").then((r) => (r.ok ? r.json() : null)).catch(() => null),
+      fetch("builds.json?v=1").then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    ]);
   } catch {
     errorScreen("Не удалось загрузить данные OpenDota.", boot);
     return;

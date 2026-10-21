@@ -75,6 +75,35 @@ page.setDefaultTimeout(60000);
 page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
 page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(`console: ${m.text()}`); });
 
+// DRAFT=PA,Viper,... — вместо матча прогнать «Драфт перед игрой» с этими врагами и сборкой (OWN=свой герой)
+if (process.env.DRAFT) {
+  await page.goto(`${BASE}/`);
+  await page.locator(".draft-entry").click();
+  for (const name of process.env.DRAFT.split(",")) {
+    await page.locator('input[type="search"]').first().fill(name);
+    await page.locator(".draft-hero").first().click();
+  }
+  if (process.env.ROLE === "support") await page.locator(".seg", { hasText: "Я саппорт" }).click();
+  await page.locator(".draft-go").click();
+  await page.waitForSelector(".draft-result h2", { timeout: 90000 });
+  const btns = page.locator(".draft-build-btn");
+  if (await btns.count()) await btns.first().click();
+  if (process.env.OWN) {
+    await page.locator('input[aria-label="Свой герой"]').fill(process.env.OWN);
+    await page.locator(".own-heroes .draft-pick").first().click();
+  }
+  await page.waitForTimeout(500);
+  const file = join(OUT, String(MATCH), "draft.png");
+  await page.screenshot({ path: file, fullPage: true });
+  console.log("screenshot", file);
+  const text = await page.locator("#app").innerText();
+  for (const bad of ["undefined", "NaN", "null", "[object"]) if (text.includes(bad)) errors.push(`на экране «${bad}»`);
+  await browser.close();
+  server.close();
+  if (errors.length) { console.log(errors.join("\n")); process.exit(1); }
+  console.log("ok");
+  process.exit(0);
+}
 await page.goto(`${BASE}/?match=${MATCH}`);
 await page.waitForSelector(".hero-head", { timeout: 90000 });
 const names = await page.locator(".tabs .tab").allInnerTexts();
@@ -100,15 +129,15 @@ for (const t of TABS) {
       console.log(`график ${k + 1}: 10 мин → ${await at(L + (10 / len) * (1 - L - R))}; конец → ${await at(0.995)}`);
     }
   }
-  if (t === "charts" && await page.locator(".seg button").count()) {
+  if (t === "charts" && await page.locator(".chart-seg button").count()) {
     // переключатель «Опыт» на преимуществе команды
-    await page.locator(".seg button", { hasText: "Опыт" }).click();
+    await page.locator(".chart-seg button", { hasText: "Опыт" }).click();
     const c = page.locator("svg.chart").first();
     const box = await c.boundingBox();
     const len = Number(await c.getAttribute("data-len"));
     await page.mouse.move(box.x + box.width * (34 / 340 + (10 / len) * (1 - 42 / 340)), box.y + box.height / 2);
     console.log(`опыт: 10 мин → ${(await c.locator("text.tt").allTextContents()).filter(Boolean).join(" | ")}`);
-    await page.locator(".seg button", { hasText: "Золото" }).click();
+    await page.locator(".chart-seg button", { hasText: "Золото" }).click();
   }
   const file = join(OUT, String(MATCH), `${t}.png`);
   await page.screenshot({ path: file, fullPage: true });

@@ -369,3 +369,81 @@ test("графики: ориентир по крипам только с нор�
   m.game_mode = 23;
   assert.equal(analyze(m, p, od, kb, tx, pro, bench, norms, []).timeline.lh_norm, null);
 });
+
+import { heroBuild, itemPlan } from "../docs/engine.js";
+
+// Справочник сборок в формате docs/builds.json: ряд предмета [ключ, % игр, медиана с, винрейт %]
+const BUILDS = {
+  patch: "7.41",
+  heroes: {
+    44: { 1: { g: 300, wr: 50, start: ["tango"], early: [["power_treads", 90, 400, 50]], core: [["bfury", 80, 900, 52], ["desolator", 60, 1200, 51], ["black_king_bar", 50, 1700, 53]], sit: [["monkey_king_bar", 8, 2200, 55], ["nullifier", 5, 2400, 50], ["satanic", 10, 2000, 50]] } },
+    85: { 3: { g: 160, wr: 44, start: [], early: [], core: [["blink", 60, 900, 50]], sit: [] } },
+  },
+  vs: { core: { 109: [["monkey_king_bar", 2.8, 12], ["dust", 2, 30]], 32: [["dust", 2.9, 33]] }, support: {} },
+};
+const GUIDES = { heroes: { npc_dota_hero_undying: [{ id: "1", title: "(Ueio) undying supp", role: "support", patch: "7.41e", updated: 2, start: ["tango"], early: ["arcane_boots"], core: ["glimmer_cape", "aghanims_shard"], luxury: ["force_staff"] }] } };
+
+test("сборка героя: про на позиции, иначе гайд под ту же группу ролей, иначе ближайшая позиция героя", () => {
+  assert.equal(heroBuild(BUILDS, GUIDES, 44, "npc_dota_hero_phantom_assassin", 1).source, "pro");
+  const sup = heroBuild(BUILDS, GUIDES, 85, "npc_dota_hero_undying", 5);
+  assert.equal(sup.source, "guide"); // у про Undying только оффлейн, а гайд — саппортский
+  assert.deepEqual(sup.core.map((r) => r[0]), ["glimmer_cape", "aghanims_shard"]);
+  const near = heroBuild(BUILDS, null, 44, "npc_dota_hero_phantom_assassin", 2);
+  assert.equal(near.source, "pro_near");
+  assert.equal(near.pos, 1);
+  const other = heroBuild(BUILDS, null, 85, "npc_dota_hero_undying", 5);
+  assert.equal(other.source, "pro_other"); // другой сборки нет: показываем оффлейн и честно говорим об этом
+  assert.equal(heroBuild(BUILDS, null, 1, "npc_dota_hero_antimage", 1), null);
+  // без сборки план всё равно есть: только предметы против пика
+  const bare = itemPlan({ builds: null, od, knowledge: kb, heroId: 1, pos: 1, enemies: [], threat: [{ key: "black_king_bar", score: 9, why: "много контроля" }] });
+  assert.equal(bare.source, "none");
+  assert.deepEqual(bare.counters.map((c) => c.key), ["black_king_bar"]);
+});
+
+test("сборка под пик: что про берут против врага, детект только против невидимых, предмет должен подходить герою", () => {
+  const ids = { 109: "terrorblade", 32: "riki" };
+  const odx = { ...od, heroKey: (id) => (ids[id] ? `npc_dota_hero_${ids[id]}` : od.heroKey(id)), heroName: (id) => (ids[id] ? ids[id] : od.heroName(id)) };
+  const k = { heroes: { npc_dota_hero_riki: ["invis"] }, mechanics: kb.mechanics };
+  const plan = itemPlan({ builds: BUILDS, guides: null, od: odx, knowledge: k, heroId: 44, pos: 1, enemies: [109, 32] });
+  const keys = plan.counters.map((c) => c.key);
+  assert.ok(keys.includes("monkey_king_bar"), keys.join(","));
+  assert.match(plan.counters.find((c) => c.key === "monkey_king_bar").why, /против terrorblade про берут его в 2,8 раза чаще/);
+  // Dust против Terrorblade (нет невидимости) не считается, против Riki — да
+  const dust = plan.counters.find((c) => c.key === "dust");
+  assert.ok(dust && !dust.whys.some((w) => /terrorblade/.test(w)), JSON.stringify(dust));
+  // Nullifier есть в сборке героя, но против этих врагов причин нет — не советуем
+  assert.ok(!keys.includes("nullifier"));
+  // предмет не из сборки героя и не универсальный — нет, даже с причиной (Crimson Guard у PA)
+  const plan2 = itemPlan({ builds: { ...BUILDS, vs: { core: { 109: [["crimson_guard", 3, 10]] }, support: {} } }, od: odx, knowledge: k, heroId: 44, pos: 1, enemies: [109] });
+  assert.ok(!plan2.counters.some((c) => c.key === "crimson_guard"));
+});
+
+test("сборка под пик после игры: купленное отмечено, поздно — от медианы про, турбо без «поздно»", () => {
+  const owned = new Set(["power_treads", "bfury", "black_king_bar"]);
+  const bought = new Map([["power_treads", 380], ["bfury", 1500], ["black_king_bar", 1650]]);
+  const plan = itemPlan({ builds: BUILDS, od, knowledge: kb, heroId: 44, pos: 1, enemies: [], owned, bought });
+  const bf = plan.core.find((r) => r.key === "bfury");
+  assert.equal(bf.owned, true);
+  assert.equal(bf.late, true); // 25:00 против обычных 15:00
+  assert.equal(plan.core.find((r) => r.key === "desolator").owned, false);
+  assert.equal(plan.core_have, 2);
+  assert.equal(plan.core_total, 3);
+  const turbo = itemPlan({ builds: BUILDS, od, knowledge: kb, heroId: 44, pos: 1, enemies: [], owned, bought, turbo: true });
+  assert.equal(turbo.core.find((r) => r.key === "bfury").late, false);
+});
+
+test("сборка под пик на настоящем docs/builds.json: у каждого игрока матча есть план без пустых названий", () => {
+  const builds = docs("builds.json"), guides = docs("khan_builds.json");
+  assert.ok(builds.matches > 1000 && Object.keys(builds.heroes).length > 100);
+  for (const [i, p] of base.players.entries()) {
+    const m = copy();
+    const a = analyze(m, m.players[i], od, kb, tx, pro, bench, {}, [], null, { guides, builds });
+    const plan = a.item_plan;
+    assert.ok(plan, od.heroName(p.hero_id));
+    for (const r of [...plan.early, ...plan.core, ...plan.counters]) assert.ok(r.item && r.item !== r.key || /^[a-z_]+$/.test(r.key), r.key);
+    assert.ok(plan.counters.length <= 4);
+    // в «Против этого пика» нет того, что уже в основе
+    const core = new Set([...plan.early, ...plan.core].map((r) => r.key));
+    assert.ok(plan.counters.every((c) => !core.has(c.key)));
+  }
+});

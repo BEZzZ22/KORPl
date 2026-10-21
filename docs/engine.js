@@ -68,6 +68,26 @@ const ITEM_CONTROL = {
   rod_of_atos: ["root", false], gleipnir: ["root", false], heavens_halberd: ["disarm", false],
 };
 const BUILD_MIN_SCORE = 2;
+// Сейвы, которые снимает Nullifier
+const NULLIFIABLE = new Set(["ghost", "glimmer_cape", "cyclone", "wind_waker", "aeon_disk", "ethereal_blade"]);
+// Защита, которая годится почти любому кору или саппорту, даже если её нет в обычной сборке героя
+const UNIVERSAL_COUNTERS = {
+  core: new Set(["black_king_bar", "sphere", "dust", "ward_sentry"]),
+  support: new Set(["glimmer_cape", "force_staff", "ghost", "cyclone", "lotus_orb", "pipe", "gem", "spirit_vessel", "solar_crest", "dust", "ward_sentry"]),
+};
+// Предметы одной задачи: из группы советуем один, и ни одного, если игрок уже купил что-то из неё
+// БКБ закрывает и контроль, и магию, поэтому стоит в двух группах
+const COUNTER_GROUPS = [
+  ["black_king_bar", "sphere", "lotus_orb", "manta", "cyclone"],
+  ["black_king_bar", "hood_of_defiance", "eternal_shroud", "pipe", "glimmer_cape", "mage_slayer"],
+  ["ghost", "heavens_halberd", "assault", "shivas_guard", "solar_crest", "butterfly", "blade_mail", "crimson_guard"],
+  ["monkey_king_bar", "bloodthorn"],
+  ["spirit_vessel", "skadi"],
+];
+export function counterGroups(key) {
+  const out = COUNTER_GROUPS.map((g, i) => (g.includes(key) ? `g${i}` : null)).filter(Boolean);
+  return out.length ? out : [key];
+}
 const BUILD_MAX_ITEMS = 4;
 
 const DETECTION_ITEMS = new Set(["dust", "ward_sentry", "gem"]);
@@ -382,8 +402,12 @@ export function isParsed(match) {
 }
 
 class MatchAnalyzer {
-  constructor(match, player, od, knowledge, texts, proItems, heroBench, norms, matchups, replay = null) {
+  constructor(match, player, od, knowledge, texts, proItems, heroBench, norms, matchups, replay = null, guides = null) {
     this.match = match;
+    // справочники сборок: { guides: гайды Хана, builds: сборки про по позициям }; старый вызов передавал сразу гайды
+    const refs = guides || {};
+    this.guides = refs.guides || (refs.heroes && refs.author ? refs : null);
+    this.builds = refs.builds || (refs.heroes && refs.vs ? refs : null);
     this.matchups = Array.isArray(matchups) ? matchups : [];
     this.norms = norms || {};
     this.issues = [];
@@ -611,6 +635,7 @@ class MatchAnalyzer {
       items: this.coreItems(),
       draft: this.draftReview(),
       build_plan: this.buildPlan(),
+      item_plan: this.itemPlan(),
     };
   }
 
@@ -1343,7 +1368,7 @@ class MatchAnalyzer {
       const share = mainType && total ? pyRound((byType.get(mainType) / total) * 100) : 0;
       const mechanics = this.relevantMechanics(this.k.heroes[key] || [], mainType, enemy, key);
       const threat = this.threatProfile([enemy]);
-      const ranked = this.rankCounters(threat).slice(0, 5);
+      const ranked = this.rankCounters(threat, this.minutes, [enemy]).slice(0, 5);
       let missing = ranked.filter((r) => !owned.has(r.key)).map((r) => r.key).slice(0, MAX_COUNTER_ITEMS);
       let had = ranked.filter((r) => owned.has(r.key)).map((r) => r.key);
       if (!ranked.length) [missing, had] = this.pickCounters(mechanics, mainType, owned);
@@ -1478,9 +1503,16 @@ class MatchAnalyzer {
   }
 
   // Предметы под обстановку: у каждого свой счёт по тому, от чего тебя реально били
-  rankCounters(t, minutes = this.minutes) {
+  rankCounters(t, minutes = this.minutes, enemies = this.enemies) {
     const core = this.core;
     const pct = (x) => Math.round(x * 100);
+    // механики врагов, подтверждённые в этой катке (невидимость, уклонение, лечение, иллюзии...)
+    const tags = this.enemyMechanics(enemies);
+    const n = (tag) => (tags[tag] || []).length;
+    const who = (tag) => (tags[tag] || []).join(", ");
+    // сейвы врагов, которые снимает Nullifier
+    const saves = enemies.map((e) => ({ name: this.od.heroName(e.hero_id), items: [...new Set((e.purchase_log || []).map((x) => x.key))].filter((k) => NULLIFIABLE.has(k)) }))
+      .filter((x) => x.items.length);
     const rows = [
       ["black_king_bar", core ? 1 : 0.5, t.hardBlock * 0.9 + t.silence * 0.4 * (t.hardBlock ? 0 : 1) + t.magicBlock * 6,
         () => {
@@ -1512,38 +1544,144 @@ class MatchAnalyzer {
         () => `${pct(t.auto)}% урона пришло автоатаками: Halberd отключает атаку и даёт уклонение`],
       ["assault", core ? (minutes >= 28 ? 1 : 0) : 0, t.auto * 5 + t.phys * 1.5,
         () => `${pct(t.auto)}% урона автоатаками: Assault Cuirass даёт броню, а она в лейте решает`],
-      ["shivas_guard", 1, t.phys * 3 + t.magic * 1.2,
+      ["shivas_guard", core ? 1 : 0.4, t.phys * 3 + t.magic * 1.2,
         () => `броня и замедление против физики (${pct(t.phys)}% урона по тебе), плюс режет лечение врагов`],
       ["solar_crest", core ? 0 : 1, t.auto * 4,
         () => `${pct(t.auto)}% урона автоатаками: Solar Crest снимает броню врагу и прибавляет её союзнику`],
       ["butterfly", core ? (minutes >= 30 ? 1 : 0) : 0, t.auto * 3.5,
         () => `${pct(t.auto)}% урона автоатаками, а уклонение режет часть из них`],
+      ["eternal_shroud", core ? 1 : 0, t.magic * 4.2,
+        () => `${pct(t.magic)}% урона магией: Eternal Shroud режет её и возвращает ману`],
+      ["mage_slayer", core ? 1 : 0, n("burst_magic") ? t.magic * 3.2 : 0,
+        () => `${who("burst_magic")} давят магией: Mage Slayer режет урон их заклинаний`],
+      ["blade_mail", core ? 1 : 0, n("burst_physical") ? t.phys * 3 : 0,
+        () => `${who("burst_physical")} бьют физикой: Blade Mail возвращает урон им же`],
+      ["crimson_guard", this.pos === 3 ? 1 : 0, t.auto * 4.5,
+        () => `${pct(t.auto)}% урона автоатаками: Crimson Guard блокирует их всей команде`],
+      ["force_staff", core ? 0.4 : 1, n("blink_init") * 1.2 + n("hook") * 1.5 + t.auto * 2,
+        () => n("hook") ? `${who("hook")} притягивает: Force Staff выталкивает тебя или союзника` : n("blink_init") ? `${who("blink_init")} прыгает в драку: Force Staff выводит из-под инициации` : "выводит тебя или союзника из-под удара"],
+      ["monkey_king_bar", core ? 1 : 0, n("evasion") * 3.2,
+        () => `${who("evasion")} уклоняется: MKB даёт точность и бьёт сквозь уклонение`],
+      ["bloodthorn", core ? 0.8 : 0, n("evasion") * 2.6,
+        () => `${who("evasion")} уклоняется: Bloodthorn даёт точность на цель и сайленс`],
+      ["spirit_vessel", this.pos >= 3 ? 1 : 0.3, n("heal") * 1.8,
+        () => `${who("heal")} лечится: Spirit Vessel режет лечение и регенерацию`],
+      ["skadi", core ? 1 : 0, n("heal") * 1.3,
+        () => `${who("heal")} лечится: Skadi режет лечение и замедляет`],
+      ["mjollnir", core ? 1 : 0, n("illusions") * 2.4,
+        () => `${who("illusions")} с иллюзиями: Mjollnir чистит их молниями`],
+      ["nullifier", core && minutes >= 25 ? 1 : 0, saves.length * 1.4,
+        () => `${saves.map((x) => `${x.name}: ${x.items.map((k) => this.od.itemName(k)).join(", ")}`).join("; ")} — Nullifier снимает эти сейвы`],
+      ["gem", core ? 0 : 1, n("invis") * 1.4,
+        () => `${who("invis")} в невидимости: Gem показывает их весь бой`],
     ];
     const popular = new Set(this.proFilter(rows.map((r) => r[0])) || []);
     const items = this.od.items || {};
+    // Подходит ли предмет герою: есть в сборке Хана или его берут про на этом герое.
+    // Универсальная защита (БКБ, Glimmer, Force...) годится почти всем, остальное без этого почти не советуем
+    const pool = this.heroPool();
+    const guide = this.khanGuide();
+    const universal = UNIVERSAL_COUNTERS[this.role()];
+    const fit = (key) => (!pool.size ? 1 : pool.has(key) ? 1.15 : universal.has(key) ? 0.75 : 0.3);
     return rows
       .filter(([key, w]) => w > 0 && (!Object.keys(items).length || key in items))
-      .map(([key, w, base, why]) => ({ key, score: base * w + (popular.has(key) ? 0.6 : 0), why: why(), popular: popular.has(key) }))
+      .map(([key, w, base, why]) => ({
+        key, score: base * w * fit(key) + (popular.has(key) ? 0.6 : 0), why: why(), popular: popular.has(key),
+        khan: !!(guide && [...guide.core, ...guide.luxury, ...guide.early].includes(key)),
+        next: this.upgradeOf(key, pool), vs: this.vsFor(key, enemies),
+      }))
       .filter((r) => r.score >= BUILD_MIN_SCORE)
       .sort((a, b) => b.score - a.score);
   }
 
-  buildPlan() {
-    if (this.minutes < 15) return null;
+  // Механики врагов, подтверждённые в этой катке: {invis: ["Riki"], heal: [...]}
+  enemyMechanics(enemies = this.enemies) {
+    const tags = {};
+    for (const e of enemies) {
+      const key = this.od.heroKey(e.hero_id);
+      for (const tag of (this.k.heroes || {})[key] || []) {
+        if (!this.mechanicConfirmed(tag, e, key)) continue;
+        (tags[tag] = tags[tag] || []).push(this.od.heroName(e.hero_id));
+      }
+    }
+    return tags;
+  }
+
+  // Что обычно собирают на герое: сборка про на этой позиции, сборка Хана целиком и популярное у про
+  heroPool() {
+    if (this._pool) return this._pool;
+    const pool = new Set();
+    const b = heroBuild(this.builds, this.guides, this.p.hero_id, this.od.heroKey(this.p.hero_id), this.pos);
+    if (b) for (const r of [...b.early, ...b.core, ...b.sit]) pool.add(r[0]);
+    const g = this.khanGuide();
+    if (g) for (const k of [...g.early, ...g.core, ...g.luxury]) pool.add(k);
+    for (const [k, c] of Object.entries(this.pro)) if (c >= PRO_MIN_COUNT) pool.add(k);
+    this._pool = pool;
+    return pool;
+  }
+
+  // Во что предмет потом собирается из того, что носят на этом герое (Hood → Pipe), иначе null
+  upgradeOf(key, pool = this.heroPool()) {
+    const items = this.od.items || {};
+    for (const k of pool) if (k !== key && ((items[k] || {}).components || []).includes(key)) return this.od.itemName(k);
+    return null;
+  }
+
+  // Против кого из врагов предмет: у кого больше всего того, что он режет (контроль, магия, физика, автоатаки)
+  vsFor(key, enemies = this.enemies) {
+    const metric = {
+      black_king_bar: (t) => t.hardBlock + t.silence + t.magicBlock * 4, sphere: (t) => t.hardBlock,
+      lotus_orb: (t) => t.anyDispel + t.hard, cyclone: (t) => t.anyDispel + t.hard * 0.3, manta: (t) => t.softDispel,
+      hood_of_defiance: (t) => t.byType.Magical || 0, eternal_shroud: (t) => t.byType.Magical || 0, pipe: (t) => t.byType.Magical || 0,
+      glimmer_cape: (t) => t.byType.Magical || 0, mage_slayer: (t) => t.byType.Magical || 0, aeon_disk: (t) => t.total,
+      ghost: (t) => t.byType.Physical || 0, shivas_guard: (t) => t.byType.Physical || 0, blade_mail: (t) => t.byType.Physical || 0,
+      heavens_halberd: (t) => t.auto * t.total, solar_crest: (t) => t.auto * t.total, assault: (t) => t.auto * t.total,
+      butterfly: (t) => t.auto * t.total, crimson_guard: (t) => t.auto * t.total,
+    }[key];
+    if (!metric) return null;
+    const rows = enemies.map((e) => ({ name: this.od.heroName(e.hero_id), v: metric(this.threatProfile([e])) })).filter((r) => r.v > 0);
+    const total = sum(rows.map((r) => r.v));
+    const top = rows.sort((x, y) => y.v - x.v).filter((r) => r.v >= total * 0.3).slice(0, 2);
+    return top.length ? top.map((r) => r.name).join(", ") : null;
+  }
+
+
+  // Гайд Хана под героя и роль: точная роль, потом та же группа (кор или саппорт); свежий первым
+  khanGuide() {
+    if (this._guide !== undefined) return this._guide;
+    const list = (this.guides && this.guides.heroes[this.od.heroKey(this.p.hero_id)]) || [];
+    const want = { 1: "carry", 2: "mid", 3: "offlane", 4: "support", 5: "support" }[this.pos];
+    const score = (g) => (g.role === want ? 3 : g.role === "core" && this.pos <= 2 ? 2.5 : (g.role === "support") === (this.pos >= 4) ? 1 : 0);
+    // гайд для кора саппорту не подходит и наоборот: лучше без него
+    const best = [...list].filter((g) => score(g) >= 1).sort((a, b) => score(b) - score(a) || b.updated - a.updated)[0] || null;
+    this._guide = best;
+    return this._guide;
+  }
+
+
+
+  // Сборка под этот пик: обычная сборка героя на позиции плюс предметы против этих врагов
+  // (что про берут против них, их механики и то, чем тебя реально били в этой катке)
+  itemPlan() {
+    if (this._plan !== undefined) return this._plan;
     const t = this.threatProfile(this.enemies);
-    if (t.total < 3000) return null;
     const owned = this.ownedItems();
-    const bought = new Map((this.p.purchase_log || []).map((x) => [x.key, x.time]));
-    const ranked = this.rankCounters(t);
-    const items = ranked.slice(0, BUILD_MAX_ITEMS + 2).map((r) => ({
-      key: r.key, item: this.od.itemName(r.key), why: r.why, popular: r.popular,
-      owned: owned.has(r.key), time: bought.has(r.key) ? bought.get(r.key) : null,
-    }));
-    const missing = items.filter((i) => !i.owned).slice(0, BUILD_MAX_ITEMS);
-    const have = items.filter((i) => i.owned);
+    const bought = new Map();
+    for (const x of this.p.purchase_log || []) if (!bought.has(x.key)) bought.set(x.key, x.time);
+    const threat = this.minutes >= 15 && t.total >= 3000 ? this.rankCounters(t) : [];
+    this._plan = itemPlan({
+      builds: this.builds, guides: this.guides, od: this.od, knowledge: this.k, heroId: this.p.hero_id, pos: this.pos,
+      enemies: this.enemies.map((e) => e.hero_id), tags: this.enemyMechanics(), threat, owned, bought, minutes: this.minutes,
+      upgrade: (k) => this.upgradeOf(k), turbo: this.match.game_mode === TURBO_MODE,
+    });
+    if (this._plan) this._plan.facts = this.threatFacts(t);
+    return this._plan;
+  }
+
+  threatFacts(t) {
     const facts = [];
     const pct = (x) => Math.round(x * 100);
-    if (t.total) {
+    if (t.total >= 3000) {
       const main = Object.entries(t.byType).sort((a, b) => b[1] - a[1])[0];
       if (main) facts.push(`Основной урон по тебе: ${this.damageTypeNames[main[0]]} (${pct(main[1] / t.total)}%)${t.auto >= 0.4 ? `, автоатаки ${pct(t.auto)}%` : ""}`);
     }
@@ -1551,7 +1689,16 @@ class MatchAnalyzer {
       const top = t.controls.slice(0, 3).map((c) => `${c.name} ×${c.count} (${c.label})`).join(", ");
       facts.push(`Контроль на тебе: ${top}`);
     }
-    return { facts, missing, have };
+    return facts;
+  }
+
+  // Для тренера и старых экранов: предметы против этого пика, которых не было, и те, что были
+  buildPlan() {
+    if (this.minutes < 15) return null;
+    const plan = this.itemPlan();
+    if (!plan) return null;
+    const row = (c) => ({ key: c.key, item: c.item, why: c.why, popular: c.popular, khan: false, next: c.next, vs: c.vs, owned: c.owned, time: c.time });
+    return { facts: plan.facts, missing: plan.counters.filter((c) => !c.owned).slice(0, BUILD_MAX_ITEMS).map(row), have: plan.counters.filter((c) => c.owned).map(row) };
   }
 
   checkDispel() {
@@ -2924,6 +3071,144 @@ function fitsRole(roles, role) {
 // matchups — {hero_id: [{hero_id, games_played, wins}]} по своим героям (OpenDota),
 // counter — контрпики dota2.ru {t: [объяснения], h: {id врага: [[id контрпика, номер объяснения]]}}.
 // Свои герои идут первыми, если подходят: самые игранные за последние 20 матчей и за всё время
+// ---------- сборка под героя, позицию и пик ----------
+
+const POS_GROUP = (pos) => (pos <= 3 ? "core" : "support");
+const GUIDE_ROLE = { 1: "carry", 2: "mid", 3: "offlane", 4: "support", 5: "support" };
+// Причина по механике врага: «Riki, Clinkz: невидимость»
+const MECH_WEIGHT = 0.9;
+const PLAN_MIN_SCORE = 1.2;
+const PLAN_IMPORTANT = 2.6;
+// Детект против невидимости советуем, только если у врага она правда есть
+const DETECTION = new Set(["dust", "gem", "ward_sentry", "ward_dispenser"]);
+const PLAN_MAX_COUNTERS = 4;
+const fmtLift = (x) => (Math.round(x * 10) / 10).toString().replace(".", ",");
+
+// Обычная сборка героя на позиции: про-матчи патча; если там мало игр — гайд Хана под ту же группу ролей,
+// иначе ближайшая позиция того же героя в той же группе (кор или саппорт). Ряд предмета: [ключ, % игр, медиана с, винрейт %]
+export function heroBuild(builds, guides, heroId, heroKey, pos) {
+  const byPos = (builds && builds.heroes && builds.heroes[heroId]) || {};
+  if (byPos[pos]) return { ...byPos[pos], pos, source: "pro", patch: builds.patch };
+  const want = GUIDE_ROLE[pos];
+  const fits = (g) => (g.role === want ? 3 : g.role === "core" && pos <= 2 ? 2.5 : (g.role === "support") === (pos >= 4) ? 1 : 0);
+  const list = (guides && guides.heroes && guides.heroes[heroKey]) || [];
+  const guide = [...list].filter((g) => fits(g) >= 1).sort((a, b) => fits(b) - fits(a) || b.updated - a.updated)[0];
+  if (guide) {
+    const row = (k) => [k, null, null, null];
+    return { pos, source: "guide", patch: guide.patch, guide: { id: guide.id, title: guide.title },
+      start: guide.start, early: guide.early.map(row), core: guide.core.map(row), sit: guide.luxury.map(row) };
+  }
+  // сначала та же группа ролей, потом любая позиция героя (Underlord-четвёрка у про почти не бывает)
+  const near = Object.entries(byPos).map(([p, b]) => ({ p: Number(p), b }))
+    .sort((x, y) => (POS_GROUP(y.p) === POS_GROUP(pos)) - (POS_GROUP(x.p) === POS_GROUP(pos)) || y.b.g - x.b.g)[0];
+  if (!near) return null;
+  return { ...near.b, pos: near.p, source: POS_GROUP(near.p) === POS_GROUP(pos) ? "pro_near" : "pro_other", patch: builds.patch };
+}
+
+// Механики врагов по справочнику (до игры не проверить, что Mirana уходила в невидимость, поэтому берём как есть)
+export function enemyTags(knowledge, od, enemies) {
+  const tags = {};
+  for (const e of enemies) for (const tag of (knowledge.heroes || {})[od.heroKey(e)] || []) (tags[tag] = tags[tag] || []).push(od.heroName(e));
+  return tags;
+}
+
+// Сборка под пик. enemies — id вражеских героев; tags — механики врагов {invis: [имена]};
+// threat — предметы против того, чем реально били (после игры, из rankCounters); owned/bought — что купил игрок
+export function itemPlan({ builds, guides, od, knowledge, heroId, pos, enemies = [], tags = null, threat = [], owned = null, bought = null, minutes = null, upgrade = null, turbo = false }) {
+  // без сборки героя (нет справочника или героя в нём) остаются только предметы против этого пика
+  const base = heroBuild(builds, guides, heroId, od.heroKey(heroId), pos)
+    || { source: "none", pos, start: [], early: [], core: [], sit: [] };
+  const grp = POS_GROUP(pos);
+  const items = od.items || {};
+  const known = (k) => !Object.keys(items).length || k in items;
+  const pool = new Set([...base.early, ...base.core, ...base.sit].map((r) => r[0]));
+  const proShare = new Map([...base.early, ...base.core, ...base.sit].map((r) => [r[0], r]));
+  const universal = UNIVERSAL_COUNTERS[grp];
+  // Предмет годится, если его носят на этом герое и позиции, либо это защита, которая подходит всем
+  const fits = (k) => !pool.size || pool.has(k) || universal.has(k);
+  const cand = new Map();
+  const add = (key, score, why, vs) => {
+    if (!known(key) || !fits(key)) return;
+    const c = cand.get(key) || { key, score: 0, whys: [], vs: new Set() };
+    c.score += score;
+    if (why && !c.whys.includes(why)) c.whys.push(why);
+    for (const v of [].concat(vs || [])) c.vs.add(v);
+    cand.set(key, c);
+  };
+  // 1. Что про берут против этих героев чаще обычного (с поправкой на своего героя)
+  const vsTable = (builds && builds.vs && builds.vs[grp]) || {};
+  for (const e of enemies) {
+    const invis = ((knowledge.heroes || {})[od.heroKey(e)] || []).includes("invis");
+    for (const [item, lift] of vsTable[e] || []) {
+      if (DETECTION.has(item) && !invis) continue;
+      add(item, (lift - 1) * 2.5, `против ${od.heroName(e)} про берут его в ${fmtLift(lift)} раза чаще`, od.heroName(e));
+    }
+  }
+  // 2. Механики врагов: невидимость, уклонение, лечение, иллюзии, контроль
+  const mech = tags || enemyTags(knowledge, od, enemies);
+  for (const [tag, names] of Object.entries(mech)) {
+    const m = (knowledge.mechanics || {})[tag];
+    if (!m || !m.roles.includes(grp)) continue;
+    // «лечение» в справочнике стоит у многих: одно это ещё не повод для Vessel
+    const w = tag === "heal" ? MECH_WEIGHT * 0.6 : MECH_WEIGHT;
+    for (const item of m[grp] || []) add(item, w * Math.min(names.length, 2), `${names.join(", ")}: ${m.name}`, names);
+  }
+  // 3. После игры: чем тебя реально били (урон по типам, контроль)
+  for (const r of threat || []) add(r.key, r.score / 3, r.why, r.vs ? r.vs.split(", ") : []);
+
+  const inCore = new Set([...base.early, ...base.core].map((r) => r[0]));
+  const status = (key) => ({
+    owned: owned ? owned.has(key) : null,
+    time: bought && bought.has(key) ? bought.get(key) : null,
+  });
+  const row = (r) => {
+    const [key, share, med, wr] = r;
+    const st = status(key);
+    // поздно: на 5+ минут позже, чем обычно у про
+    const late = !turbo && st.time != null && med != null && med > 0 && st.time > med + 300;
+    return { key, item: od.itemName(key), share, med, wr, ...st, late };
+  };
+  const ranked = [...cand.values()].filter((c) => c.score >= PLAN_MIN_SCORE).sort((a, b) => b.score - a.score);
+  // Предметы из основы, которые против этого пика ещё важнее: отмечаем в основе, а не дублируем
+  const boost = new Map(ranked.filter((c) => inCore.has(c.key) && c.score >= PLAN_IMPORTANT).map((c) => [c.key, c]));
+  // Одна задача — один предмет: против магии хватит одного, купленный БКБ закрывает и контроль, и магию
+  const covered = new Set();
+  if (owned) for (const k of owned) if (!inCore.has(k)) counterGroups(k).forEach((g) => covered.add(g));
+  for (const k of boost.keys()) counterGroups(k).forEach((g) => covered.add(g));
+  const counters = [];
+  for (const c of ranked) {
+    if (inCore.has(c.key) || counterGroups(c.key).some((g) => covered.has(g))) continue;
+    counterGroups(c.key).forEach((g) => covered.add(g));
+    const r = proShare.get(c.key);
+    counters.push({
+      key: c.key, item: od.itemName(c.key), score: Math.round(c.score * 10) / 10, why: c.whys[0], whys: c.whys.slice(0, 2),
+      vs: [...c.vs].slice(0, 2).join(", ") || null, popular: !!r && r[1] != null && r[1] >= 8, share: r ? r[1] : null, med: r ? r[2] : null,
+      next: upgrade ? upgrade(c.key) : null, ...status(c.key),
+    });
+    if (counters.length >= PLAN_MAX_COUNTERS) break;
+  }
+  const mark = (r) => {
+    const out = row(r);
+    const b = boost.get(r[0]);
+    if (b) { out.important = b.whys[0]; out.vs = [...b.vs].slice(0, 2).join(", ") || null; }
+    return out;
+  };
+  const core = base.core.map(mark);
+  // БКБ в основе, а врагов с контролем двое и больше — собирать раньше обычного
+  const notes = [];
+  const ctrl = [...new Set([...(mech.silence || []), ...(mech.hex || []), ...(mech.hook || []), ...(mech.blink_init || [])])];
+  const bkb = core.find((r) => r.key === "black_king_bar");
+  if (bkb && ctrl.length >= 2 && bkb.med && bkb.med > 1200) notes.push(`Black King Bar раньше обычного: у ${ctrl.slice(0, 3).join(", ")} контроль, без него в драки не зайти`);
+  const coreKeys = core.filter((r) => r.key !== "aghanims_shard");
+  return {
+    hero: od.heroName(heroId), hero_id: heroId, pos: base.pos, want: pos, source: base.source, games: base.g || null, wr: base.wr ?? null, patch: base.patch || null, guide: base.guide || null,
+    start: (base.start || []).map((k) => ({ key: k, item: od.itemName(k), ...status(k) })),
+    early: base.early.map(mark), core, counters, notes,
+    sit: base.sit.filter((r) => !counters.some((c) => c.key === r[0])).slice(0, 8).map(row),
+    core_have: owned ? coreKeys.filter((r) => r.owned).length : null, core_total: coreKeys.length, turbo,
+  };
+}
+
 export function draftAdvice({ enemies, pool = [], recent = {}, matchups = {}, counter = { t: [], h: {} }, knowledge, od, role = "core", minGames = 20 }) {
   const ch = counter.h || {}, ct = counter.t || [];
   // Чем раньше контрпик в статье, тем он сильнее: первые три весят больше
@@ -2989,6 +3274,6 @@ export function draftAdvice({ enemies, pool = [], recent = {}, matchups = {}, co
   return { picks, counters, items };
 }
 
-export function analyze(match, player, od, knowledge, texts, proItems, heroBench, norms, matchups, replay = null) {
-  return new MatchAnalyzer(match, player, od, knowledge, texts, proItems, heroBench, norms, matchups, replay).run();
+export function analyze(match, player, od, knowledge, texts, proItems, heroBench, norms, matchups, replay = null, guides = null) {
+  return new MatchAnalyzer(match, player, od, knowledge, texts, proItems, heroBench, norms, matchups, replay, guides).run();
 }
