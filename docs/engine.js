@@ -892,6 +892,16 @@ class MatchAnalyzer {
   }
 
   proBuild() {
+    // сборка про на этой позиции (основа по доле игр) точнее общей популярности предметов на герое
+    const b = heroBuild(this.builds, null, this.p.hero_id, this.od.heroKey(this.p.hero_id), this.pos);
+    if (b && b.core.length >= 3) {
+      const purchases = {};
+      for (const x of this.p.purchase_log || []) if (!(x.key in purchases)) purchases[x.key] = x.time;
+      const owned = this.ownedItems();
+      return [...b.core].filter((r) => r[0] !== "aghanims_shard").sort((x, y) => y[1] - x[1]).slice(0, PRO_BUILD_SIZE).map(([k, share]) => ({
+        key: k, item: this.od.itemName(k), share, owned: owned.has(k), time: k in purchases ? purchases[k] : null,
+      }));
+    }
     const finals = Object.entries(this.pro)
       .filter(([k, c]) => this.isFinalItem(k) && c >= PRO_MIN_COUNT &&
         (this.od.itemCost(k) >= PRO_BUILD_MIN_COST || UPGRADED_BOOTS.has(k)))
