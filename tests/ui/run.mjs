@@ -180,6 +180,15 @@ await step("home", async () => {
   await page.goto(`${BASE}/index.html`);
   await page.waitForSelector(".match-item", { timeout: 15000 });
   await shot("home");
+  // UI_AEGIS=1 — кадры 3D-Аегиса в разных фазах вращения (посмотреть объём и оборот)
+  if (process.env.UI_AEGIS) {
+    for (const t of [0, 2.9, 11.5, 12.6, 13.6]) {
+      await page.evaluate((ms) => document.querySelectorAll(".aegis-spin").forEach((el) =>
+        el.getAnimations().forEach((a) => { a.pause(); a.currentTime = ms; })), t * 1000);
+      await page.waitForTimeout(150);
+      await page.locator(".app-top .aegis").screenshot({ path: join(OUT, `aegis-${t}.png`) });
+    }
+  }
 });
 await step("overview", async () => {
   // свежая катка открывается из большого блока сверху
