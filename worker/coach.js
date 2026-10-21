@@ -44,7 +44,7 @@ const SYSTEM = `Ты тренер по Dota 2 и разбираешь катку
 В сводке есть «Ключевые моменты»: время и проверенные факты (кто тебя убил, драка, линия или один, был ли размен, на чьей половине, сколько обсов стояло, нажаты ли кнопки, какой был перевес, что команда потеряла следом). Ещё есть проблемы с «Действием», мелочи с «Советом» и сборка.
 Пиши по-русски, на «ты», коротко, прямо и дружески, без смайликов и без многоточий.
 Формат строго такой:
-Главное: одно предложение: что сильнее всего стоило тебе этой игры, без новых цифр.
+Главное: одно предложение: что сильнее всего мешало тебе в этой игре, без новых цифр. Если в «Итоге» победа, не пиши, что игра проиграна или чего-то тебе стоила.
 Моменты:
 — 23:40 Ошибка: одна фраза. Надо было: одна фраза.
 План на следующую игру:
@@ -58,6 +58,7 @@ const SYSTEM = `Ты тренер по Dota 2 и разбираешь катку
 - «Без обсов» или «без видимости» пиши, только если в фактах «ни одного обса». «Один» или «без союзников», только если в фактах «один, рядом своих не было».
 - «Надо было» — конкретное действие: что нажать, где встать, когда отойти, куда пойти. Общие слова («аккуратнее», «осторожнее», «внимательнее», «играй лучше», «избегай драк») запрещены.
 - План на следующую игру вытекает из моментов, проблем и «Советов»: первый пункт — привычка против самой дорогой ошибки из моментов, про покупку максимум один пункт. Предметы советуй только из блока «Сборка под эту катку» с той же причиной, время покупки не называй.
+- Если в сводке есть «По реплею», используй его в «Главном» и плане: где фармил (линия, свой лес, лес врага), как часто был рядом с командой после 10-й минуты, сколько стоял на базе. Саппорт, который мало бывает рядом со своими, или кор, который в мидгейме фармит лес врага без команды, — это прямой диагноз. Числа только оттуда.
 - Если в сводке есть «Прошлые разборы» и та же ошибка была там, скажи в «Главном», что это повторяется (без дат и чисел оттуда).
 - Любое число и время в ответе должно быть в сводке. Цифры не складывай и не округляй.
 - Пиши про игрока на «ты». Героя по имени не склоняй и не ставь рядом с глаголом прошедшего времени. Названия героев и предметов как в сводке. Слова целиком.
@@ -136,9 +137,11 @@ export function buildPrompt(raw) {
   list("Драфт", raw.draft, 2, (t) => clip(t, 200));
   list("Ключевые моменты (время: факты)", raw.episodes, 4, (e) => {
     const time = /^\d{1,2}:\d{2}$/.test(String(e?.clock || "")) ? e.clock : "";
-    const facts = (Array.isArray(e?.facts) ? e.facts : []).slice(0, 10).map((f) => clip(f, 140)).filter(Boolean);
+    const facts = (Array.isArray(e?.facts) ? e.facts : []).slice(0, 13).map((f) => clip(f, 140)).filter(Boolean);
     return time && facts.length ? `${time} ${e.kind === "missed_fight" ? "пропущенная драка" : "смерть"}: ${facts.join("; ")}` : "";
   });
+  // По реплею с позициями: где добивал крипов по фазам, сколько был рядом с командой, сколько стоял на базе
+  list("По реплею (где был всю игру)", raw.map, 5, (t) => clip(t, 200));
   // Память тренера: главные выводы прошлых разборов этого игрока (их хранит приложение)
   list("Прошлые разборы (от свежих к старым)", raw.past, 5, (p) =>
     p?.main ? `${clip(p.hero, 30)}, ${p.won ? "победа" : "поражение"}: ${clip(p.main, 220)}` : "");
@@ -331,6 +334,8 @@ export function problemsOf(text, prompt) {
   const moments = (s.moments || []).map((b) => `— ${b}`);
   const joined = [...moments, ...bullets].join(" ");
   if (bullets.length !== 3) bad.push("нужно ровно три пункта плана, каждый с «— »");
+  if (/^Итог: победа/m.test(prompt) && /(стоил\S* (тебе )?(этой )?(игр|катк))|((игр|катк)\S* (тебе )?стоил)|проиграл|проигрыш|слил\S* (игр|катк)/i.test(main))
+    bad.push("в «Главном» игра названа проигранной, а в «Итоге» победа");
   const episodes = (prompt.match(/Ключевые моменты[^\n]*:\n((?:- [^\n]*\n?)+)/) || [])[1];
   if (episodes) {
     const times = new Set(episodes.match(/^- (\d{1,2}:\d{2})/gm).map((x) => x.slice(2)));
@@ -689,6 +694,25 @@ async function replayQueue(env, now = Date.now()) {
   return list.filter((x) => now - x.t < REPLAY_TTL);
 }
 
+// Крон GitHub для */10 срабатывает раз в несколько часов, поэтому при заявке запускаем workflow сами.
+// Нужен секрет GH_TOKEN (fine-grained, репо KORPl, Actions: read and write). Без него ждём крон GitHub
+const REPLAY_WORKFLOW = "https://api.github.com/repos/BEZzZ22/KORPl/actions/workflows/replays.yml/dispatches";
+const REPLAY_REF = "claude/opus-55-capabilities-limits-ekkxhj";
+
+export async function kickReplays(env, now = Date.now(), gap = 2 * 60 * 1000) {
+  if (!env.GH_TOKEN || !env.COACH_KV) return false;
+  const last = Number(await env.COACH_KV.get("replay_kick")) || 0;
+  if (now - last < gap) return false;
+  await env.COACH_KV.put("replay_kick", String(now), { expirationTtl: 86400 });
+  const res = await fetch(REPLAY_WORKFLOW, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${env.GH_TOKEN}`, Accept: "application/vnd.github+json", "User-Agent": "dotacoach", "X-GitHub-Api-Version": "2022-11-28" },
+    body: JSON.stringify({ ref: env.GH_REF || REPLAY_REF }),
+    signal: AbortSignal.timeout(10000),
+  }).catch(() => null);
+  return !!(res && res.ok);
+}
+
 export async function queueReplay(env, match, user = null, now = Date.now()) {
   const status = await env.COACH_KV.get(`replay:${match}`);
   // готовый разбор отдаём сразу; после ошибки повторная заявка снова ставит матч в очередь
@@ -698,6 +722,7 @@ export async function queueReplay(env, match, user = null, now = Date.now()) {
   if (!list.some((x) => x.match === match && x.user === user)) {
     list.push({ match, user, t: now });
     await env.COACH_KV.put(REPLAY_QUEUE, JSON.stringify(list.slice(-100)));
+    await kickReplays(env, now);
   }
   return "queued";
 }
@@ -728,6 +753,8 @@ export async function checkReplays(env, now = Date.now()) {
     }
   }
   if (changed || keep.length !== list.length) await env.COACH_KV.put(REPLAY_QUEUE, JSON.stringify(keep));
+  // запуск мог потеряться или упасть: пока очередь не пуста, повторяем раз в 15 минут
+  if (keep.length) await kickReplays(env, now, 15 * 60 * 1000);
   return sent;
 }
 

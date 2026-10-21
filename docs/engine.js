@@ -598,6 +598,7 @@ class MatchAnalyzer {
       episodes: this.episodes(),
       map: this.mapData(),
       replay: this.replay,
+      replay_notes: replayNotes(this.replay),
       progress: this.progressMetrics(),
       next_rank: this.nextRank(),
       lane: this.laneDuel(),
@@ -1405,7 +1406,7 @@ class MatchAnalyzer {
     }
     this.addRaw(SURVIVAL, n >= 4 ? BAD : WARN, text, tipParts.join(". "), "killer", roast);
     if (n >= 3) {
-      const how = k.sources.slice(0, 2).map((s) => s.name).join(" и ");
+      const how = k.sources.slice(0, 2).map((s) => (s.name === "Автоатаки" ? "автоатаки" : s.name)).join(" и ");
       const action = [k.tips[0], k.counters.length ? `Купи ${k.counters.slice(0, 2).join(" или ")}` : ""]
         .filter(Boolean).join(". ");
       this.issue(`killer_${k.key}`, n * 380, `Частые смерти от ${k.hero}`,
@@ -2347,11 +2348,16 @@ class MatchAnalyzer {
       const alone = seen ? seen.allies_near === 0 && !laning && d.time >= RUNE_FIGHT_END : !tf && !laning && this.isSoloDeath(d.time);
       if (seen) {
         facts.push(seen.allies_near
-          ? `по реплею: рядом своих ${seen.allies_near}, врагов ${seen.enemies_near}`
+          ? `по реплею: вас ${seen.allies_near + 1} (ты и своих ${seen.allies_near}) против ${seen.enemies_near} ${plural(seen.enemies_near, "врага", "врагов", "врагов")} рядом`
           : `по реплею: своих в радиусе 1 500 не было${seen.nearest_ally ? ` (до ближайшего ${num(seen.nearest_ally)})` : ""}, врагов рядом ${seen.enemies_near}`);
         facts.push(seen.enemy_half ? "на вражеской половине карты" : "на своей половине карты");
+        facts.push(`место: ${ZONE_NAMES[seen.zone]}`);
+        // в общей драке идти на врагов нормально: «навстречу» — факт только для смерти без своих рядом
+        const how = { toward: seen.allies_near ? "" : "последние 10 с шёл навстречу убийцам один", away: "последние 10 с отходил от врагов, но догнали", still: "последние 10 с стоял на месте" }[seen.approach];
+        if (how) facts.push(how);
       }
-      if (tf) facts.push("в командной драке");
+      // по реплею игрок лежал далеко от своих: драка шла, но его поймали отдельно
+      if (tf) facts.push(seen && !seen.allies_near ? "шла командная драка, но тебя поймали отдельно от своих" : "в командной драке");
       else if (d.time < RUNE_FIGHT_END) facts.push("драка за руну на старте, до выхода на линии");
       else if (laning) facts.push(myLane ? `стадия линий, твоя линия: ${{ bot: "низ", mid: "мид", top: "верх" }[myLane]}` : "стадия линий");
       else facts.push(alone ? "один, рядом своих не было" : "в мелкой стычке");
@@ -2387,6 +2393,8 @@ class MatchAnalyzer {
       const ps = tf.players || [];
       const theirs = sum(enemyIdx.filter((i) => i < ps.length).map((i) => ps[i].deaths));
       const facts = [`драка без тебя: союзников погибло ${mine}, врагов ${theirs}`];
+      const where = this.replay && (this.replay.fights || []).find((f) => f.t === tf.start);
+      if (where) facts.push(where.dist <= NEAR_RADIUS ? `по реплею ты был рядом с дракой (${num(where.dist)}): ${ZONE_NAMES[where.zone]}` : `по реплею ты был в ${num(where.dist)} от драки: ${ZONE_NAMES[where.zone]}`);
       const lh = p.lh_t || [];
       const m0 = Math.floor(tf.start / 60), m1 = Math.min(Math.ceil(tf.end / 60) + 1, lh.length - 1);
       if (lh.length && m1 > m0) {
@@ -2550,6 +2558,25 @@ const CELL = 128;            // юнитов в клетке карты OpenDota
 const NEAR_RADIUS = 1500;    // юнитов: «рядом» — примерно дальность каста и подхода в драке
 const PATH_SECONDS = 20;     // путь перед смертью
 
+const APPROACH_SECONDS = 10; // как двигался перед смертью
+const BASE_GRACE = 25;       // секунд на базе после возрождения или выкупа не считаем
+// Зона карты по клетке OpenDota (64..192, Свет внизу слева). Границы подобраны по реальному реплею:
+// у каждого лайнера на 2–9 минуте больше всего точек на его линии
+export const ZONE_NAMES = {
+  base: "своя база", ebase: "база врага", top: "верхняя линия", mid: "мид", bot: "нижняя линия",
+  river: "река", jungle: "свой лес", ejungle: "лес врага",
+};
+export function mapZone(x, y, radiant) {
+  if (x < 88 && y < 88) return radiant ? "base" : "ebase";
+  if (x > 168 && y > 168) return radiant ? "ebase" : "base";
+  if (Math.abs(x - y) <= 9 && x > 88 && x < 168) return "mid";
+  if (x < 92 || y > 164) return "top";
+  if (y < 92 || x > 164) return "bot";
+  const s = x + y;
+  if (Math.abs(s - MAP_CENTER_SUM) <= 8) return "river";
+  return (radiant ? s < MAP_CENTER_SUM : s > MAP_CENTER_SUM) ? "jungle" : "ejungle";
+}
+
 // Позиции из файла реплея (tools/replay-summary.mjs): кто где стоял, кто был рядом в каждой смерти,
 // сколько времени на своей половине, на реке и на чужой. null — файла нет или игрока в нём нет
 export function replayInsights(match, player, replay) {
@@ -2578,10 +2605,24 @@ export function replayInsights(match, player, replay) {
     const nearest = allyPos.length ? Math.min(...allyPos.map((p) => dist(me, p))) : null;
     const path = [];
     for (let t = d.time - PATH_SECONDS; t <= d.time; t += step) { const p = mine[index(t)]; if (p) path.push(p); }
+    // Как двигался последние 10 секунд: к врагам, которые его убили, от них или стоял
+    const near = enemyPos.filter((p) => dist(me, p) <= NEAR_RADIUS);
+    // враги, что были рядом в смерти, но где они стояли за 10 секунд до неё: иначе догнавший всегда «впереди»
+    const before = enemies.filter((tr) => { const q = at(tr, d.time, 1); return q && dist(me, q) <= NEAR_RADIUS; })
+      .map((tr) => at(tr, d.time - APPROACH_SECONDS, 2)).filter(Boolean);
+    const from = at(mine, d.time - APPROACH_SECONDS, 2), to = at(mine, d.time - 2, 2);
+    let approach = null;
+    if (from && to && before.length) {
+      const move = [to[0] - from[0], to[1] - from[1]];
+      const c = [sum(before.map((p) => p[0])) / before.length - from[0], sum(before.map((p) => p[1])) / before.length - from[1]];
+      const len = Math.hypot(...move) * CELL, cl = Math.hypot(...c);
+      const cos = cl ? (move[0] * c[0] + move[1] * c[1]) / (Math.hypot(...move) * cl || 1) : 0;
+      approach = len < 500 ? "still" : cos > 0.5 ? "toward" : cos < -0.5 ? "away" : "side";
+    }
     return {
-      t: d.time, x: me[0], y: me[1], path,
+      t: d.time, x: me[0], y: me[1], path, zone: mapZone(me[0], me[1], radiant), approach,
       allies_near: allyPos.filter((p) => dist(me, p) <= NEAR_RADIUS).length,
-      enemies_near: enemyPos.filter((p) => dist(me, p) <= NEAR_RADIUS).length,
+      enemies_near: near.length,
       nearest_ally: nearest == null ? null : Math.round(nearest / 100) * 100,
       enemy_half: enemyHalf(me[0], me[1], radiant),
     };
@@ -2604,7 +2645,85 @@ export function replayInsights(match, player, replay) {
   }
   // тепловая карта: точка раз в 10 секунд, пока жив
   const heat = mine.filter((p, i) => p && i % Math.max(1, Math.round(10 / step)) === 0);
-  return { deaths, zones, heat, radiant };
+
+  // Где добивал крипов: прирост lh_t за минуту делим по зонам, где игрок был в эту минуту
+  const farm = {};
+  const lh = player.lh_t || [];
+  for (let m = 0; m + 1 < lh.length; m++) {
+    const got = lh[m + 1] - lh[m];
+    if (!(got > 0)) continue;
+    const z = {};
+    let n = 0;
+    for (let t = m * 60; t < m * 60 + 60; t += step) {
+      const p = mine[index(t)];
+      if (p) { const k = mapZone(p[0], p[1], radiant); z[k] = (z[k] || 0) + 1; n++; }
+    }
+    if (!n) continue;
+    const key = (phases.find(([, t0, t1]) => m * 60 >= t0 && m * 60 < t1) || phases[2])[0];
+    farm[key] = farm[key] || {};
+    for (const [k, c] of Object.entries(z)) farm[key][k] = (farm[key][k] || 0) + (got * c) / n;
+  }
+  for (const f of Object.values(farm)) for (const k of Object.keys(f)) f[k] = Math.round(f[k]);
+
+  // С командой: доля живого времени вне базы, когда рядом двое и больше своих
+  const group = {};
+  for (const [key, t0, t1] of phases) {
+    let all = 0, with2 = 0;
+    mine.forEach((p, i) => {
+      const t = start + i * step;
+      if (!p || t < Math.max(t0, 0) || t >= t1 || mapZone(p[0], p[1], radiant) === "base") return;
+      all++;
+      if (allies.filter((tr) => tr[i] && dist(p, tr[i]) <= NEAR_RADIUS).length >= 2) with2++;
+    });
+    if (all) group[key] = with2 / all;
+  }
+
+  // Время на своей базе после 10:00 сверх того, что нужно после возрождения и выкупа
+  const back = [...(player.deaths_log || []).map((d) => d.time + (d.time_dead || 0)), ...(player.buyback_log || []).map((b) => b.time)];
+  let base = 0;
+  mine.forEach((p, i) => {
+    const t = start + i * step;
+    if (!p || t < LANING_END || mapZone(p[0], p[1], radiant) !== "base") return;
+    if (back.some((r) => t >= r - step && t < r + BASE_GRACE)) return;
+    base += step;
+  });
+
+  // Где был во время каждой драки: ближе всего к месту смертей в ней
+  const idx = match.players.indexOf(player);
+  const fights = (match.teamfights || []).map((tf) => {
+    const spots = (tf.players || []).flatMap((x) => Object.entries(x.deaths_pos || {})
+      .flatMap(([fx, ys]) => Object.keys(ys).map((fy) => [parseFloat(fx), parseFloat(fy)])));
+    if (!spots.length) return null;
+    const c = [sum(spots.map((q) => q[0])) / spots.length, sum(spots.map((q) => q[1])) / spots.length];
+    let best = null;
+    for (let t = tf.start; t <= tf.end; t += step) {
+      const p = mine[index(t)];
+      if (p && (!best || dist(p, c) < best.d)) best = { d: dist(p, c), p };
+    }
+    if (!best) return null;
+    const me = (tf.players || [])[idx] || {};
+    return { t: tf.start, dist: Math.round(best.d / 100) * 100, zone: mapZone(best.p[0], best.p[1], radiant), took_part: me.damage > 0 || me.healing > 0 || me.deaths > 0 };
+  }).filter(Boolean);
+
+  return { deaths, zones, heat, radiant, farm, group, base_time: base, fights };
+}
+
+// Короткие строки для тренера: где фармил, сколько был с командой, сколько стоял на базе
+const PHASE_NAMES = { lane: "линия 0–10", mid: "мидгейм 10–25", late: "лейт 25+" };
+export function replayNotes(r) {
+  if (!r) return [];
+  const out = [];
+  for (const [key, f] of Object.entries(r.farm || {})) {
+    const total = sum(Object.values(f));
+    if (total < 20) continue;
+    const top = Object.entries(f).filter(([, n]) => n / total >= 0.15).sort((a, b) => b[1] - a[1]).slice(0, 3);
+    out.push(`крипы, ${PHASE_NAMES[key]}: ${top.map(([z, n]) => `${ZONE_NAMES[z]} ${Math.round((n / total) * 100)}%`).join(", ")} (всего ${total})`);
+  }
+  // на линии почти все стоят без двух союзников рядом: считаем с 10-й минуты
+  const g = Object.entries(r.group || {}).filter(([k]) => k !== "lane").map(([k, v]) => `${PHASE_NAMES[k]} ${Math.round(v * 100)}%`);
+  if (g.length) out.push(`время рядом с двумя и больше своими: ${g.join(", ")}`);
+  if (r.base_time >= 120) out.push(`стоял на своей базе после 10:00 без возрождения: ${mmss(r.base_time)}`);
+  return out;
 }
 
 // ---------- прогресс: цели, ачивки, ранг ----------
@@ -2702,6 +2821,9 @@ export function itemTimings(items, rows, minGames = 15) {
     // Медиана по играм: к этому времени предмет собирает половина игроков на герое
     let acc = 0, usual = b[b.length - 1].t;
     for (const x of b) { acc += x.g; if (acc >= total / 2) { usual = x.t; break; } }
+    // OpenDota считает покупки только до 30:00: если медиана упала в последнюю корзину,
+    // поздние покупки отрезаны и «обычно» врёт — такой предмет не сравниваем
+    if (usual === b[b.length - 1].t && b.length > 1) continue;
     out.push({
       key: it.key, item: it.item, time: it.time, usual, games: total,
       verdict: it.time > usual + 180 ? "late" : it.time <= usual - 180 ? "early" : "ok",

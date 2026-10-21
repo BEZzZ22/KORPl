@@ -1,8 +1,8 @@
 // Telegram Mini App: разбор матча Dota 2 внутри Телеграма.
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric,
-  CATEGORIES, BAD, WARN, GOOD,
-} from "./engine.js?v=23";
+  CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
+} from "./engine.js?v=24";
 import { aegisBadge, openShowcase } from "./aegis.js?v=1";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
@@ -762,7 +762,7 @@ async function heroStatsScreen(heroId) {
     const wa = last.slice(0, half).filter(won).length, wb = last.slice(half).filter(won).length;
     trend = h("div", {}, h("h2", {}, `Тренд за последние ${last.length} ${plural(last.length, "игру", "игры", "игр")}`), h("div", { class: "card" },
       sparkline(last),
-      h("div", { class: "small muted" }, `GPM: ${a} → ${b}. Побед: ${wa} из ${half} → ${wb} из ${last.length - half}. Точка — игра, золотая — победа.`)));
+      h("div", { class: "small muted" }, `GPM: ${a} → ${b}. Побед: ${wa} из ${half} → ${wb} из ${last.length - half}. Точка — игра: зелёная — победа, красная — поражение.`)));
   }
 
   // Враги: с кем встречался чаще всего, от 5 игр против
@@ -1406,6 +1406,7 @@ function coachPayload(a) {
     plan: a.build_plan ? a.build_plan.missing.slice(0, 3).map((i) => ({ item: i.item, why: i.why })) : [],
     draft: a.draft ? a.draft.notes.slice(0, 2).map((n) => n.text) : [],
     episodes: (a.episodes || []).slice(0, 4).map((e) => ({ clock: e.clock, kind: e.kind, facts: e.facts })),
+    map: (a.replay_notes || []).slice(0, 5),
     past: pastReviews(a),
   };
 }
@@ -1425,9 +1426,10 @@ function parseCoach(text) {
     if (step) into.push(step[1]);
     else main.push(line.replace(/^главное\s*:\s*/i, ""));
   }
-  // после «Главное:» модель часто пишет с маленькой буквы
+  // после «Главное:» модель часто пишет с маленькой буквы; моменты бывают не по порядку — ставим по времени
   const lead = main.join(" ");
-  return { main: lead.charAt(0).toUpperCase() + lead.slice(1), moments, steps };
+  const sec = (m) => { const t = /^(\d{1,2}):(\d{2})/.exec(m); return t ? Number(t[1]) * 60 + Number(t[2]) : Infinity; };
+  return { main: lead.charAt(0).toUpperCase() + lead.slice(1), moments: moments.sort((x, y) => sec(x) - sec(y)), steps };
 }
 
 // coach3: моменты с фактами о линии и размене; старые ответы писались по другим фактам и рядом с новыми врут
@@ -2166,14 +2168,41 @@ function replayBlock(a) {
       h("div", { class: "zones" }, zoneRow("Линия", r.zones.lane), zoneRow("Мидгейм", r.zones.mid), zoneRow("Лейт", r.zones.late)),
       h("div", { class: "legend" }, h("span", {}, h("i", { class: "lg-zone own" }), "своя половина"), h("span", {}, h("i", { class: "lg-zone river" }), "река"),
         h("span", {}, h("i", { class: "lg-zone enemy" }), "чужая (её доля справа)"))),
+    farmBlock(r),
     r.deaths.length > 0 && h("h2", {}, "Перед каждой смертью"),
     r.deaths.length > 0 && h("div", { class: "card map-card" },
       minimap(deaths, { label: `Пути за 20 секунд до смертей: ${r.deaths.length}` }),
       h("p", { class: "small muted" }, `Линия — где ты шёл последние 20 секунд. Один, без своих в радиусе 1 500: ${alone} из ${r.deaths.length}.`),
       ...r.deaths.map((d) => h("div", { class: `death-row ${d.allies_near ? "" : "alone"}` },
         h("time", {}, mmss(d.t)),
-        h("span", { class: "grow" }, d.allies_near ? `рядом своих ${d.allies_near}` : `один${d.nearest_ally ? `, до ближайшего своего ${num(d.nearest_ally)}` : ""}`),
+        h("span", { class: "grow" }, d.allies_near ? `рядом своих ${d.allies_near}` : `один${d.nearest_ally ? `, до ближайшего своего ${num(d.nearest_ally)}` : ""}`,
+          h("small", {}, [ZONE_NAMES[d.zone], APPROACH[d.approach]].filter(Boolean).join(" · "))),
         h("b", {}, `врагов ${d.enemies_near}`)))));
+}
+
+const APPROACH = { toward: "шёл на врагов", away: "отходил, догнали", still: "стоял на месте" };
+const FARM_PHASES = [["lane", "Линия, 0–10"], ["mid", "Мидгейм, 10–25"], ["late", "Лейт, 25+"]];
+
+// Где добивал крипов по фазам и сколько был рядом с командой (по реплею)
+function farmBlock(r) {
+  const rows = FARM_PHASES.map(([k, label]) => {
+    const f = (r.farm || {})[k];
+    const total = f ? Object.values(f).reduce((x, y) => x + y, 0) : 0;
+    if (total < 5) return null;
+    const top = Object.entries(f).sort((x, y) => y[1] - x[1]).filter(([, n]) => n / total >= 0.1).slice(0, 3);
+    return h("div", { class: "farm-row" },
+      h("div", { class: "farm-head" }, h("span", {}, label), h("b", {}, `${total} ${plural(total, "крип", "крипа", "крипов")}`)),
+      h("div", { class: "small muted" }, top.map(([z, n]) => `${ZONE_NAMES[z]} ${Math.round((n / total) * 100)}%`).join(" · ")));
+  }).filter(Boolean);
+  const group = FARM_PHASES.slice(1).filter(([k]) => r.group && r.group[k] != null);
+  if (!rows.length && !group.length) return null;
+  return h("div", {},
+    h("h2", {}, "Где добивал крипов"),
+    h("div", { class: "card" },
+      ...rows,
+      group.length > 0 && h("p", { class: "small muted" },
+        `Рядом с двумя и больше своими: ${group.map(([k, label]) => `${label.split(",")[0].toLowerCase()} ${Math.round(r.group[k] * 100)}%`).join(", ")} времени.`),
+      r.base_time >= 120 && h("p", { class: "small loss-text" }, `После 10:00 стоял на своей базе ${mmss(r.base_time)} сверх возрождений.`)));
 }
 
 function mapTab(a) {

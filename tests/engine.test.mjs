@@ -118,6 +118,15 @@ test("тайминги: медиана по играм, вердикт и вин
   assert.equal(out[0].wr_after, 40);
 });
 
+test("тайминги: медиана в последней корзине (OpenDota режет покупки после 30:00) — не сравниваем", () => {
+  const rows = [
+    { item: "ultimate_scepter", time: 1200, games: "9", wins: "4" },
+    { item: "ultimate_scepter", time: 1500, games: "18", wins: "12" },
+    { item: "ultimate_scepter", time: 1800, games: "70", wins: "47" },
+  ];
+  assert.deepEqual(itemTimings([{ key: "ultimate_scepter", item: "Aghanim's Scepter", time: 2561 }], rows), []);
+});
+
 test("драфт: лучший свой герой против врагов и предметы против их механик", () => {
   const enemies = [6, 1]; // Drow Ranger, Anti-Mage — без механик в базе пусть будет только один
   const pool = [{ hero_id: 100, games: 40, win: 22 }, { hero_id: 74, games: 30, win: 12 }, { hero_id: 21, games: 2, win: 2 }];
@@ -249,6 +258,9 @@ test("реплей: в моментах тренера правда о сосе�
   const ep = a.episodes.find((e) => e.kind === "death" && e.time >= 600);
   assert.ok(ep.facts.some((f) => /^по реплею: своих в радиусе 1 500 не было/.test(f)), ep.facts.join(" | "));
   assert.ok(ep.facts.includes("на вражеской половине карты"));
+  // «своих рядом не было» и «в командной драке» в одном моменте противоречат друг другу
+  for (const e of a.episodes.filter((x) => x.facts.some((f) => /радиусе 1 500 не было/.test(f))))
+    assert.ok(!e.facts.includes("в командной драке"), e.facts.join(" | "));
 });
 
 test("реплей: настоящий разбор матча (GitHub Actions + odota/parser)", () => {
@@ -263,4 +275,48 @@ test("реплей: настоящий разбор матча (GitHub Actions +
   assert.equal(d.allies_near, 1);
   assert.equal(d.enemies_near, 3);
   for (const z of Object.values(r.zones)) assert.ok(Math.abs(z.own + z.river + z.enemy - 1) < 1e-9);
+});
+
+import { mapZone, replayNotes } from "../docs/engine.js";
+
+test("реплей: зоны карты — у каждого лайнера на 2–9 минуте больше всего точек на его линии", () => {
+  const replay = gz("replay_9052987576.json.gz");
+  const lane = { 1: "bot", 2: "mid", 3: "top" };
+  for (const p of base.players.filter((x) => x.hero_id !== 21)) { // Windranger — роумер
+    const c = {};
+    replay.pos[p.player_slot].forEach((q, i) => {
+      const t = replay.start + i * replay.step;
+      if (q && t >= 120 && t <= 540) { const z = mapZone(q[0], q[1], p.isRadiant); c[z] = (c[z] || 0) + 1; }
+    });
+    const top = Object.entries(c).sort((a, b) => b[1] - a[1])[0][0];
+    assert.equal(top, lane[p.lane], `${od.heroName(p.hero_id)}: ${JSON.stringify(c)}`);
+  }
+  assert.equal(mapZone(70, 70, true), "base");
+  assert.equal(mapZone(70, 70, false), "ebase");
+  assert.equal(mapZone(110, 160, true), "ejungle"); // выше реки — сторона Тьмы
+  assert.equal(mapZone(110, 120, true), "jungle");
+});
+
+test("реплей: фарм по зонам, время с командой, движение перед смертью и место в моментах", () => {
+  const replay = gz("replay_9052987576.json.gz");
+  const m = copy();
+  const p = m.players.find((x) => x.hero_id === 74); // Invoker
+  const a = analyze(m, p, od, kb, tx, pro, bench, {}, [], replay);
+  const r = a.replay;
+  // крипы по зонам в сумме дают прирост lh_t (с точностью до округления)
+  const farmed = Object.values(r.farm).flatMap((f) => Object.values(f)).reduce((x, y) => x + y, 0);
+  assert.ok(Math.abs(farmed - p.lh_t[p.lh_t.length - 1]) <= 6, `${farmed} vs ${p.lh_t.at(-1)}`);
+  assert.ok(r.farm.lane.mid / Object.values(r.farm.lane).reduce((x, y) => x + y, 0) > 0.8); // мидер на линии фармит мид
+  for (const v of Object.values(r.group)) assert.ok(v >= 0 && v <= 1);
+  assert.ok(r.deaths.every((d) => d.zone in { base: 1, ebase: 1, top: 1, mid: 1, bot: 1, river: 1, jungle: 1, ejungle: 1 }));
+  assert.ok(r.deaths.some((d) => d.approach === "away") && r.deaths.some((d) => d.approach === "still"));
+  const notes = replayNotes(r);
+  assert.ok(notes.some((n) => /^крипы, линия 0–10: мид \d+%/.test(n)), notes.join(" | "));
+  assert.ok(notes.some((n) => /^время рядом с двумя и больше своими: мидгейм/.test(n)));
+  assert.deepEqual(a.replay_notes, notes);
+  const ep = a.episodes.find((e) => e.kind === "death");
+  assert.ok(ep.facts.some((f) => /^место: /.test(f)), ep.facts.join(" | "));
+  // «навстречу убийцам» только для смерти без своих рядом
+  for (const e of a.episodes) if (e.facts.some((f) => /навстречу/.test(f))) assert.ok(e.facts.some((f) => /радиусе 1 500 не было/.test(f)));
+  assert.deepEqual(replayNotes(null), []);
 });

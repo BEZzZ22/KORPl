@@ -803,3 +803,8 @@ body { background: transparent; }
 .death-row time { font: 700 13px/1 var(--display); font-variant-numeric: tabular-nums; }
 .death-row.alone .grow { color: var(--dire); font-weight: 700; }
 .death-row b { font-weight: 700; color: var(--muted); }
+.death-row small { display: block; font-size: 12px; font-weight: 400; color: var(--muted); margin-top: 2px; }
+.farm-row { padding: 8px 0; border-top: 1px solid var(--line); }
+.farm-row:first-child { border-top: 0; padding-top: 0; }
+.farm-head { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 2px; }
+.farm-head b { font-variant-numeric: tabular-nums; }

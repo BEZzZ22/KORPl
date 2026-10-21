@@ -49,7 +49,7 @@ function mockFetch(queues) {
   const calls = [];
   globalThis.fetch = async (url, init) => {
     const u = String(url);
-    const who = u.includes("groq") ? "groq" : u.includes("dreamn") ? "claude" : u.includes("telegram") ? "tg" : u.includes("githubusercontent") ? "gh"
+    const who = u.includes("groq") ? "groq" : u.includes("dreamn") ? "claude" : u.includes("telegram") ? "tg" : u.includes("githubusercontent") ? "gh" : u.includes("api.github.com") ? "actions"
       : u.includes("opendota") ? "od" : "gemini";
     calls.push({ who, url: u, body: init && init.body ? JSON.parse(init.body) : null, headers: init ? init.headers : {} });
     const next = queues[who]?.shift();
@@ -397,7 +397,7 @@ test("fetch: sync — только с подписью Телеграма, да�
 });
 
 // ---------- очередь реплеев ----------
-import { queueReplay, checkReplays } from "./coach.js";
+import { queueReplay, checkReplays, kickReplays } from "./coach.js";
 
 test("реплеи: очередь для Actions, готовый результат снимается и приходит сообщение", async (t) => {
   t.after(restore);
@@ -430,4 +430,30 @@ test("реплеи: ошибка разбора тоже снимается с �
   await checkReplays(e);
   assert.equal(kv.m.get("replay:1234567"), "error");
   assert.equal(JSON.parse(kv.m.get("replay_queue")).length, 0);
+});
+
+test("реплеи: с GH_TOKEN заявка сразу запускает workflow, крон повторяет не чаще раза в 15 минут", async (t) => {
+  t.after(restore);
+  const kv = fakeKV();
+  const e = { COACH_KV: kv, GH_TOKEN: "ghp_x" };
+  const t0 = Date.now();
+  let calls = mockFetch({ actions: [new Response(null, { status: 204 })] });
+  await queueReplay(e, 1234567, null, t0);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /actions\/workflows\/replays\.yml\/dispatches$/);
+  assert.equal(calls[0].headers.Authorization, "Bearer ghp_x");
+  assert.equal(calls[0].body.ref, "claude/opus-55-capabilities-limits-ekkxhj");
+  // вторая заявка через минуту не дёргает GitHub ещё раз
+  calls = mockFetch({});
+  await queueReplay(e, 7654321, null, t0 + 60000);
+  assert.equal(calls.length, 0);
+  // крон: результата нет, 5 минут — рано, 16 минут — повтор
+  calls = mockFetch({ gh: [404, 404, 404, 404].map((s) => new Response("", { status: s })) });
+  await checkReplays(e, t0 + 5 * 60000);
+  assert.equal(calls.filter((c) => c.who === "actions").length, 0);
+  calls = mockFetch({ gh: [404, 404, 404, 404].map((s) => new Response("", { status: s })), actions: [new Response(null, { status: 204 })] });
+  await checkReplays(e, t0 + 16 * 60000);
+  assert.equal(calls.filter((c) => c.who === "actions").length, 1);
+  // без токена ничего не запускается
+  assert.equal(await kickReplays({ COACH_KV: fakeKV() }), false);
 });
