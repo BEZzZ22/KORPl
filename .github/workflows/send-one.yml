@@ -1,0 +1,35 @@
+# Разовое личное сообщение с аккаунта проекта в существующий диалог (по просьбе владельца). После использования файл удаляют.
+name: Одно сообщение
+
+on:
+  workflow_dispatch:
+    inputs:
+      chat:
+        description: "Часть имени диалога"
+        required: true
+      text:
+        description: "Текст сообщения"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Отправляем
+        env:
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          TG_SESSION: ${{ secrets.TG_SESSION }}
+          CHAT: ${{ inputs.chat }}
+          TEXT: ${{ inputs.text }}
+        run: |
+          pip install -q telethon
+          python tools/tg_send_one.py "$CHAT" "$TEXT"
