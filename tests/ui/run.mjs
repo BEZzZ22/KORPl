@@ -185,12 +185,12 @@ await step("home", async () => {
   await shot("home");
   // UI_AEGIS=1 — кадры 3D-Аегиса в разных фазах вращения (посмотреть объём и оборот)
   if (process.env.UI_AEGIS) {
-    // щит застывает на угле; снимаем, в том числе между кадрами раскадровки (плавный переход)
+    // щит застывает на угле: анфас, вбок, ребром, сзади и наискосок (поворот по двум осям)
     await page.waitForSelector(".app-top .aegis.ready", { timeout: 10000 });
-    for (const angle of [0, 3.75, 40, 90, 180, 300]) {
+    for (const angle of [0, 40, 90, 180, 300, [35, 30], [-50, -40], [0, 80]]) {
       await page.evaluate((a) => document.querySelector(".app-top .aegis").aegisPose(a), angle);
       await page.waitForTimeout(120);
-      await page.locator(".app-top .aegis").screenshot({ path: join(OUT, `aegis-${angle}.png`) });
+      await page.locator(".app-top .aegis").screenshot({ path: join(OUT, `aegis-${[].concat(angle).join("_")}.png`) });
     }
     await page.evaluate(() => document.querySelector(".app-top .aegis").aegisPose(null));
   }

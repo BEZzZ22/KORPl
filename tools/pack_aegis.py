@@ -3,6 +3,7 @@
 Кадры снимает tools/capture_aegis.mjs с 3D-модели Sketchfab «Aegis of champions» (автор msta2219, CC BY).
 Запуск: python tools/pack_aegis.py <папка с f000.png ...>
 Пишет docs/img/aegis_spin.webp (сетка COLS × строки, кадр FRAME px) и aegis_still.webp (анфас, грузится первым).
+Сейчас главная рисует щит в 3D (docs/aegis.js): раскадровка нужна только tools/aegis_shape.py — из неё берётся вид сзади.
 """
 import sys
 from pathlib import Path
