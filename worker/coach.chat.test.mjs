@@ -222,7 +222,7 @@ test("fetch: разбор кэшируется в KV, второй раз без
 test("fetch: 3 вопроса тренеру в сутки на человека, ошибка модели лимит не тратит", async (t) => {
   t.after(restore);
   const kv = fakeKV();
-  const e = { ...env, COACH_KV: kv, BOT_TOKEN: "123:abc" };
+  const e = { ...env, COACH_KV: kv, BOT_TOKEN: "123:abc", ASK_PER_USER_DAY: "3" };
   const init = await signInit({ auth_date: String(Math.floor(Date.now() / 1000)), user: JSON.stringify({ id: 7 }) }, "123:abc");
   const ask = (ip) => worker.fetch(req({ mode: "chat", summary: raw, question: "что делать на линии?", initData: init }, ip), e);
   // упал Opus и все запасные: вопрос не засчитан

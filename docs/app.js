@@ -1407,7 +1407,7 @@ const COACH_DAILY = 5; // разборов тренера в день на ус�
 const OWNER_ACCOUNT = 801280038; // владелец приложения: лимитов тренера у него нет
 const isOwner = async () => Number(await storage.get("account_id")) === OWNER_ACCOUNT;
 const COACH_LIMIT_NOTE = `Лимит: ${COACH_DAILY} разборов тренера в сутки. Новые после полуночи по Москве.`;
-const CHAT_DAILY = 3; // вопросов тренеру (чат и сравнение) в сутки по Москве; сервер считает то же на аккаунт
+const CHAT_DAILY = 5; // вопросов тренеру (чат и сравнение) в сутки по Москве; сервер считает то же на аккаунт
 const CHAT_LIMIT_TEXT = `Лимит: ${CHAT_DAILY} ${plural(CHAT_DAILY, "вопрос", "вопроса", "вопросов")} тренеру в сутки. Новые после полуночи по Москве.`;
 const chatLeftText = (n) => n > 0 ? `${plural(n, "Остался", "Осталось", "Осталось")} ${n} ${plural(n, "вопрос", "вопроса", "вопросов")} на сегодня.` : CHAT_LIMIT_TEXT;
 const COACH_TIMEOUT = 75000;
