@@ -3,6 +3,10 @@ main = "coach.js"
 compatibility_date = "2026-10-01"
 workers_dev = true
 
+# Telegram id владельца: у него нет суточного лимита вопросов тренеру
+[vars]
+OWNER_TG_IDS = "6603684388"
+
 # Кэш разборов, расход токенов, подписки на уведомления, карточки
 [[kv_namespaces]]
 binding = "COACH_KV"

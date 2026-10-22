@@ -545,3 +545,21 @@ test("fetch: быстрый заход без Opus, заход Opus только
   assert.deepEqual(again, { text: normalize(good), cached: true, opus: true });
   assert.equal(calls.length, 0);
 });
+
+test("fetch: у владельца нет суточного лимита вопросов, у остальных есть", async (t) => {
+  t.after(restore);
+  const kv = fakeKV();
+  const e = { ...env, COACH_KV: kv, BOT_TOKEN: "123:abc", OWNER_TG_IDS: "7", ASK_PER_USER_DAY: "1" };
+  const now = String(Math.floor(Date.now() / 1000));
+  const owner = await signInit({ auth_date: now, user: JSON.stringify({ id: 7 }) }, "123:abc");
+  const other = await signInit({ auth_date: now, user: JSON.stringify({ id: 8 }) }, "123:abc");
+  const ask = (init) => worker.fetch(req({ mode: "chat", summary: raw, question: "что делать на линии?", initData: init }), e);
+  mockFetch({ claude: [sse("Держись за крипами.")] });
+  assert.equal((await ask(owner)).status, 200);
+  mockFetch({ claude: [sse("Держись за крипами.")] });
+  assert.equal((await ask(owner)).status, 200);
+  mockFetch({ claude: [sse("Держись за крипами.")] });
+  assert.equal((await ask(other)).status, 200);
+  mockFetch({ claude: [sse("Держись за крипами.")] });
+  assert.equal((await ask(other)).status, 429);
+});

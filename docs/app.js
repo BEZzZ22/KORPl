@@ -1404,6 +1404,9 @@ function stat(value, label) {
 
 const COACH_URL = "https://dotacoach.2007rggg.workers.dev"; // адрес воркера с тренером
 const COACH_DAILY = 5; // разборов тренера в день на устройство
+const OWNER_ACCOUNT = 801280038; // владелец приложения: лимитов тренера у него нет
+const isOwner = async () => Number(await storage.get("account_id")) === OWNER_ACCOUNT;
+const COACH_LIMIT_NOTE = `Лимит: ${COACH_DAILY} разборов тренера в сутки. Новые после полуночи по Москве.`;
 const CHAT_DAILY = 3; // вопросов тренеру (чат и сравнение) в сутки по Москве; сервер считает то же на аккаунт
 const CHAT_LIMIT_TEXT = `Лимит: ${CHAT_DAILY} ${plural(CHAT_DAILY, "вопрос", "вопроса", "вопросов")} тренеру в сутки. Новые после полуночи по Москве.`;
 const chatLeftText = (n) => n > 0 ? `${plural(n, "Остался", "Осталось", "Осталось")} ${n} ${plural(n, "вопрос", "вопроса", "вопросов")} на сегодня.` : CHAT_LIMIT_TEXT;
@@ -1586,10 +1589,11 @@ function coachBlock(a) {
 
   const ask = h("button", { class: "coach-btn", type: "button" }, "Разобрать с тренером");
   const note = h("p", { class: "coach-note small muted", role: "status" },
-    "Тренер разберёт ключевые моменты катки и даст три задачи на следующую. Потом можно задать ему вопросы.");
+    `Тренер разберёт ключевые моменты катки и даст три задачи на следующую. Потом можно задать ему вопросы. ${COACH_LIMIT_NOTE}`);
+  isOwner().then((yes) => { if (yes && note.isConnected) note.textContent = "Тренер разберёт ключевые моменты катки и даст три задачи на следующую. Для тебя лимитов нет."; });
   ask.onclick = async () => {
     const [used, spend] = dailyCounter("coach");
-    if (used >= COACH_DAILY) { note.textContent = `Сегодня уже ${COACH_DAILY} разборов, это лимит. Завтра снова.`; return; }
+    if (used >= COACH_DAILY && !(await isOwner())) { note.textContent = `Сегодня уже ${COACH_DAILY} разборов, это лимит. Завтра снова.`; return; }
     ask.disabled = true;
     ask.textContent = "Тренер смотрит катку…";
     box.classList.add("coach-thinking");
@@ -1677,7 +1681,7 @@ function chatBlock(a) {
     const q = String(question || "").trim().slice(0, 400);
     if (!q || busy) return;
     const [used, spend] = dailyCounter("chat");
-    if (used >= CHAT_DAILY) { note.textContent = CHAT_LIMIT_TEXT; return; }
+    if (used >= CHAT_DAILY && !(await isOwner())) { note.textContent = CHAT_LIMIT_TEXT; return; }
     busy = true;
     send.disabled = true;
     note.textContent = "";
@@ -1691,7 +1695,7 @@ function chatBlock(a) {
       const data = await postCoach({ mode: "chat", summary: coachPayload(a), coach: safeLocal.get(coachKey(a)) || "", history: before, question: q, initData: (tg && tg.initData) || "" });
       if (!data.text) throw Object.assign(new Error("Тренер сейчас недоступен."), { fromCoach: true });
       spend(chatUsed(data));
-      note.textContent = chatLeftText(CHAT_DAILY - dailyCounter("chat")[0]);
+      note.textContent = (await isOwner()) ? "" : chatLeftText(CHAT_DAILY - dailyCounter("chat")[0]);
       history = [...history, { role: "assistant", text: data.text }].slice(-CHAT_KEEP);
       safeLocal.set(chatKey(a), JSON.stringify(history));
       haptic("medium");
@@ -2012,7 +2016,7 @@ function compareBlock(a) {
   const out = h("div", { class: "compare-out", role: "status" });
   const pick = async (other, btn) => {
     const [used, spend] = dailyCounter("chat");
-    if (used >= CHAT_DAILY) { out.textContent = CHAT_LIMIT_TEXT; return; }
+    if (used >= CHAT_DAILY && !(await isOwner())) { out.textContent = CHAT_LIMIT_TEXT; return; }
     btn.disabled = true;
     out.replaceChildren(h("div", { class: "chat-msg assistant typing" }, h("i"), h("i"), h("i")));
     try {

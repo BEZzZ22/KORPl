@@ -965,7 +965,9 @@ async function handlePost(request, env, ctx, origin) {
     if (env.COACH_KV) {
       const user = env.BOT_TOKEN ? await telegramUser(raw.initData, env.BOT_TOKEN) : null;
       const limit = Number(env.ASK_PER_USER_DAY) || ASK_PER_USER_DAY;
-      quota = await takeAsk(env, user && user.id ? `tg${user.id}` : `ip${ip}`, Date.now(), limit);
+      // владелец (OWNER_TG_IDS, через запятую) без суточного лимита вопросов
+      const owner = user && user.id && String(env.OWNER_TG_IDS || "").split(",").map((x) => x.trim()).includes(String(user.id));
+      quota = owner ? { left: limit, refund: async () => {} } : await takeAsk(env, user && user.id ? `tg${user.id}` : `ip${ip}`, Date.now(), limit);
       if (!quota) return reply(429, { error: `Лимит: ${limit} ${plural(limit, "вопрос", "вопроса", "вопросов")} тренеру в сутки. Новые после полуночи по Москве.`, left: 0 }, origin);
     }
     const left = quota ? { left: quota.left } : {};
