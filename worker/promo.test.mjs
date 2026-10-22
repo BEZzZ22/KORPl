@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { due } from "../tools/promo-post.mjs";
+import { due, channelHash } from "../tools/promo-post.mjs";
 
 const q = [
   { id: "a", at: "2026-10-23T09:00:00Z", text: "A" },
@@ -18,4 +18,12 @@ test("promo: выходят только наступившие и ещё не �
 test("promo: после долгого простоя не заливаем канал — не больше двух за раз", () => {
   const now = Date.parse("2026-11-01T00:00:00Z");
   assert.deepEqual(due(q, {}, now).map((p) => p.id), ["d", "a"]);
+});
+
+test("promo: оформление канала применяется только после правки названия, описания или картинки", () => {
+  const cfg = { title: "T", about: "A" };
+  const base = channelHash(cfg, Buffer.from("img"));
+  assert.equal(base, channelHash({ ...cfg }, Buffer.from("img")));
+  assert.notEqual(base, channelHash({ ...cfg, about: "B" }, Buffer.from("img")));
+  assert.notEqual(base, channelHash(cfg, Buffer.from("img2")));
 });

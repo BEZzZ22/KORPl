@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
-from promo_userbot import body, due  # noqa: E402
+from promo_userbot import body, channel_hash, due  # noqa: E402
 
 Q = [
     {"id": "a", "at": "2026-10-23T09:00:00+00:00", "text": "A"},
@@ -30,3 +30,11 @@ def test_button_becomes_link_in_text():
     post = {"id": "x", "at": "2026-10-23T09:00:00+00:00", "text": "Привет", "button": {"text": "Разобрать катку", "url": "https://t.me/DotaRazbor_bot"}}
     assert body(post).endswith("Разобрать катку: https://t.me/DotaRazbor_bot")
     assert body({"text": "t.me/DotaRazbor_bot", "button": {"text": "x", "url": "t.me/DotaRazbor_bot"}}) == "t.me/DotaRazbor_bot"
+
+
+def test_channel_hash_changes_only_with_content():
+    cfg = {"title": "T", "about": "A"}
+    base = channel_hash(cfg, b"img")
+    assert base == channel_hash(dict(cfg), b"img")
+    assert base != channel_hash({**cfg, "title": "T2"}, b"img")
+    assert base != channel_hash(cfg, b"img2")

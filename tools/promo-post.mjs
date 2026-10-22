@@ -3,9 +3,45 @@
 // Нужны переменные: BOT_TOKEN (токен бота) и PROMO_CHAT (@канал или числовой id; бот должен быть админом канала).
 // Запуск: node tools/promo-post.mjs [--dry]. Без токена или канала ничего не делает.
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 
 const QUEUE = new URL("../promo/queue.json", import.meta.url);
 const POSTED = new URL("../promo/posted.json", import.meta.url);
+const CHANNEL = new URL("../promo/channel.json", import.meta.url);
+const CHANNEL_STATE = new URL("../promo/channel-state.json", import.meta.url);
+
+// Оформление канала (название, описание, аватарка) из promo/channel.json; хеш применённого лежит в channel-state.json,
+// так что правка файла или картинки подхватывается сама, а без правок канал не трогаем
+export function channelHash(config, photoBytes) {
+  return createHash("sha256").update(JSON.stringify([config.title, config.about])).update(photoBytes || "").digest("hex").slice(0, 16);
+}
+
+async function setupChannel(token, chat) {
+  if (!existsSync(CHANNEL)) return;
+  const config = JSON.parse(readFileSync(CHANNEL, "utf8"));
+  const photoUrl = config.photo ? new URL(`../${config.photo}`, import.meta.url) : null;
+  const photo = photoUrl && existsSync(photoUrl) ? readFileSync(photoUrl) : null;
+  const hash = channelHash(config, photo);
+  const state = existsSync(CHANNEL_STATE) ? JSON.parse(readFileSync(CHANNEL_STATE, "utf8")) : {};
+  if (state.hash === hash) return;
+  const call = async (method, body) => {
+    const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, { method: "POST", ...(body instanceof FormData ? { body } : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }) });
+    const data = await res.json();
+    if (!data.ok && !/not modified/i.test(data.description || "")) throw new Error(`${method}: ${data.description || res.status}`);
+  };
+  if (config.title) await call("setChatTitle", { chat_id: chat, title: config.title });
+  if (config.about) await call("setChatDescription", { chat_id: chat, description: config.about });
+  if (photo) {
+    const form = new FormData();
+    form.set("chat_id", chat);
+    form.set("photo", JSON.stringify({ type: "static", photo: "attach://file" }));
+    form.set("file", new Blob([photo]), "avatar.png");
+    await call("setChatPhoto", form);
+  }
+  writeFileSync(CHANNEL_STATE, JSON.stringify({ hash }, null, 1));
+  console.log("Оформление канала обновлено");
+}
+
 
 // Какие посты пора выпускать: время наступило, ещё не выходили, не больше max за раз (чтобы не залить канал после простоя)
 export function due(queue, posted, now = Date.now(), max = 2) {
@@ -43,11 +79,13 @@ async function main() {
   if (!dry && (!token || !chat)) { console.log("Нет BOT_TOKEN или PROMO_CHAT: постить некуда, пропускаю."); return; }
   const queue = JSON.parse(readFileSync(QUEUE, "utf8"));
   const posted = existsSync(POSTED) ? JSON.parse(readFileSync(POSTED, "utf8")) : {};
+  if (!dry) await setupChannel(token, chat).catch((e) => console.log(`Оформление канала не вышло (нужно право «Изменение профиля» у бота): ${e.message}`));
   const list = due(queue, posted);
   if (!list.length) { console.log("Пока нечего постить."); return; }
   for (const post of list) {
     if (dry) { console.log(`[dry] ${post.id}: ${post.text.slice(0, 60)}…`); continue; }
     posted[post.id] = await send(token, chat, post);
+    if (post.pin) await fetch(`https://api.telegram.org/bot${token}/pinChatMessage`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: chat, message_id: posted[post.id], disable_notification: true }) }).catch(() => {});
     writeFileSync(POSTED, JSON.stringify(posted, null, 1)); // сразу, чтобы упавший следующий пост не вызвал повтор этого
     console.log(`Отправлен ${post.id}, сообщение ${posted[post.id]}`);
   }
