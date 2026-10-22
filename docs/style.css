@@ -937,3 +937,8 @@ body { background: transparent; }
 .draft-note.warn .mini-hero { box-shadow: 0 0 0 1.5px var(--warn); }
 .draft-note-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); margin: 6px 0 0 14px; }
 .draft-note.good .draft-note-dot { background: var(--radiant); }
+
+/* сентри на карте вардов: голубые квадратики, свои залиты */
+.mm-sentry { fill: none; stroke: #7fb2f0; stroke-width: 0.9; opacity: .85; }
+.mm-sentry.mine { fill: #7fb2f0; stroke: none; opacity: 1; }
+.legend .lg-ward.sentry { border-radius: 2px; border-color: #7fb2f0; }

@@ -2817,7 +2817,7 @@ class MatchAnalyzer {
         }
       }
     }
-    const wards = [];
+    const wards = [], sentries = [];
     for (const a of this.allies) {
       const left = new Map((a.obs_left_log || []).filter((w) => "ehandle" in w).map((w) => [w.ehandle, w.time]));
       for (const w of a.obs_log || []) {
@@ -2825,8 +2825,11 @@ class MatchAnalyzer {
         const life = left.has(w.ehandle) ? left.get(w.ehandle) - w.time : null;
         wards.push({ x: w.x, y: w.y, t: w.time, mine: a === this.p, dewarded: life != null && life < OBSERVER_LIFETIME - 10, enemy_half: enemyHalf(w.x, w.y, this.p.isRadiant) });
       }
+      for (const w of a.sen_log || []) {
+        if (typeof w.x === "number" && typeof w.y === "number") sentries.push({ x: w.x, y: w.y, t: w.time, mine: a === this.p });
+      }
     }
-    return { radiant: this.p.isRadiant, deaths, wards };
+    return { radiant: this.p.isRadiant, deaths, wards, sentries };
   }
 
   // Дуэль с оппонентом по линии минута в минуту до 10:00: крипы, нетворс и опыт
@@ -3108,7 +3111,8 @@ export function replayInsights(match, player, replay) {
       enemy_half: enemyHalf(me[0], me[1], radiant),
     };
   }).filter(Boolean);
-  // где проводил время: своя половина, река, чужая — по фазам игры
+  // где проводил время: своя половина, середина карты, чужая — по фазам игры. Середина — полоса вдоль реки:
+  // в неё попадают и центры боковых линий, где встречаются крипы (керри у точки встречи крипов на лёгкой — это середина, а не чужая половина)
   const phases = [["lane", 0, 600], ["mid", 600, 1500], ["late", 1500, Infinity]];
   const zones = {};
   for (const [key, t0, t1] of phases) {

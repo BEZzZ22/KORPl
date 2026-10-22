@@ -2,7 +2,7 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan, skillPlan,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
-} from "./engine.js?v=34";
+} from "./engine.js?v=35";
 import { aegisBadge, openShowcase } from "./aegis.js?v=1";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
@@ -2244,18 +2244,26 @@ function replayBlock(a) {
     h("div", { class: "card map-card" },
       minimap(dots, { label: "Тепловая карта твоих позиций" }),
       h("div", { class: "zones" }, zoneRow("Линия", r.zones.lane), zoneRow("Мидгейм", r.zones.mid), zoneRow("Лейт", r.zones.late)),
-      h("div", { class: "legend" }, h("span", {}, h("i", { class: "lg-zone own" }), "своя половина"), h("span", {}, h("i", { class: "lg-zone river" }), "река"),
+      h("div", { class: "legend" }, h("span", {}, h("i", { class: "lg-zone own" }), "своя половина"), h("span", {}, h("i", { class: "lg-zone river" }), "середина: река и центр линий"),
         h("span", {}, h("i", { class: "lg-zone enemy" }), "чужая (её доля справа)"))),
     farmBlock(r),
     r.deaths.length > 0 && h("h2", {}, "Перед каждой смертью"),
     r.deaths.length > 0 && h("div", { class: "card map-card" },
       minimap(deaths, { label: `Пути за 20 секунд до смертей: ${r.deaths.length}` }),
-      h("p", { class: "small muted" }, `Линия — где ты шёл последние 20 секунд. Один, без своих в радиусе 1 500: ${alone} из ${r.deaths.length}.`),
+      h("p", { class: "small muted" }, `Линия — где ты шёл последние 20 секунд. Один — никого из своих в радиусе 1 500, это примерно экран вокруг тебя: ${alone} из ${r.deaths.length}. Карта — около 16 000 по стороне.`),
       ...r.deaths.map((d) => h("div", { class: `death-row ${d.allies_near ? "" : "alone"}` },
         h("time", {}, mmss(d.t)),
-        h("span", { class: "grow" }, d.allies_near ? `рядом своих ${d.allies_near}` : `один${d.nearest_ally ? `, до ближайшего своего ${num(d.nearest_ally)}` : ""}`,
+        h("span", { class: "grow" }, d.allies_near ? `рядом ${d.allies_near} ${plural(d.allies_near, "свой", "своих", "своих")}` : `один${allyGap(d.nearest_ally)}`,
           h("small", {}, [ZONE_NAMES[d.zone], APPROACH[d.approach]].filter(Boolean).join(" · "))),
-        h("b", {}, `врагов ${d.enemies_near}`)))));
+        h("b", {}, `${d.enemies_near} ${plural(d.enemies_near, "враг", "врага", "врагов")}`)))));
+}
+
+// Насколько далеко были свои, когда умер один: число в игровых единицах мало что говорит
+function allyGap(d) {
+  if (d == null) return "";
+  if (d > 7000) return ", свои через полкарты";
+  if (d > 3000) return `, свои далеко: ${num(d)}`;
+  return `, ближайший свой в ${num(d)}`;
 }
 
 const APPROACH = { toward: "шёл на врагов", away: "отходил, догнали", still: "стоял на месте" };
@@ -2292,26 +2300,34 @@ function mapTab(a) {
     cx: mapX(w.x).toFixed(1), cy: mapY(w.y).toFixed(1), r: w.mine ? 2.6 : 2,
     class: `mm-ward${w.mine ? " mine" : ""}${w.dewarded ? " dewarded" : ""}`,
   }, svg("title", {}, `обс ${mmss(w.t)}${w.mine ? ", твой" : ""}${w.dewarded ? ", снесли" : ""}`)));
+  const sentries = m.sentries || [];
+  const mineSen = sentries.filter((w) => w.mine).length;
+  const sentryDots = sentries.map((w) => svg("rect", {
+    x: (mapX(w.x) - 1.4).toFixed(1), y: (mapY(w.y) - 1.4).toFixed(1), width: 2.8, height: 2.8, rx: 0.6, class: `mm-sentry${w.mine ? " mine" : ""}`,
+  }, svg("title", {}, `сентри ${mmss(w.t)}${w.mine ? ", твоя" : ""}`)));
   const side = m.radiant ? "Твоя база слева внизу (Свет)." : "Твоя база справа вверху (Тьма).";
   const far = m.deaths.filter((d) => d.enemy_half).length;
   const mine = m.wards.filter((w) => w.mine);
   const dewarded = m.wards.filter((w) => w.dewarded).length;
   const deep = m.wards.filter((w) => w.enemy_half).length;
+  // с реплеем все смерти уже есть в «Перед каждой смертью», карта смертей в драках только повторит её
+  const replayDeaths = a.replay && a.replay.deaths.length > 0;
   return h("div", {},
     replayBlock(a),
-    h("h2", {}, "Где умирал в драках"),
-    h("div", { class: "card map-card" },
+    !replayDeaths && h("h2", {}, "Где умирал в драках"),
+    !replayDeaths && h("div", { class: "card map-card" },
       m.deaths.length ? minimap(deathDots, { label: `Смерти в драках на карте: ${m.deaths.length}` }) : h("p", { class: "muted" }, "В больших драках ты не умирал."),
       m.deaths.length > 0 && h("p", { class: "small muted" },
-        `${m.deaths.length} ${plural(m.deaths.length, "смерть", "смерти", "смертей")} в драках, из них на вражеской половине: ${far}. ${side} Смерти вне больших драк OpenDota без координат не отдаёт.`)),
-    h("h2", {}, "Обсы команды"),
+        `${m.deaths.length} ${plural(m.deaths.length, "смерть", "смерти", "смертей")} в драках, из них на вражеской половине: ${far}. ${side} Смерти вне больших драк OpenDota без координат не отдаёт, а реплей покажет все.`)),
+    h("h2", {}, "Варды команды"),
     h("div", { class: "card map-card" },
-      m.wards.length ? minimap(wardDots, { label: `Обсы команды на карте: ${m.wards.length}` }) : h("p", { class: "muted" }, "Обсов за игру не было."),
-      m.wards.length > 0 && h("div", { class: "legend" },
-        h("span", {}, h("i", { class: "lg-ward mine" }), `твои: ${mine.length}`),
-        h("span", {}, h("i", { class: "lg-ward" }), `команды: ${m.wards.length - mine.length}`),
-        h("span", {}, h("i", { class: "lg-ward dewarded" }), `снесли раньше времени: ${dewarded}`)),
-      m.wards.length > 0 && h("p", { class: "small muted" }, `На вражеской половине: ${deep} из ${m.wards.length}. ${side}`)),
+      m.wards.length || sentries.length ? minimap([...sentryDots, ...wardDots], { label: `Варды команды на карте: обсов ${m.wards.length}, сентри ${sentries.length}` }) : h("p", { class: "muted" }, "Вардов за игру не было."),
+      (m.wards.length > 0 || sentries.length > 0) && h("div", { class: "legend" },
+        h("span", {}, h("i", { class: "lg-ward mine" }), `твои обсы: ${mine.length}`),
+        h("span", {}, h("i", { class: "lg-ward" }), `обсы команды: ${m.wards.length - mine.length}`),
+        dewarded > 0 && h("span", {}, h("i", { class: "lg-ward dewarded" }), `снесли раньше времени: ${dewarded}`),
+        sentries.length > 0 && h("span", {}, h("i", { class: "lg-ward sentry" }), `сентри: ${sentries.length}${mineSen ? `, твоих ${mineSen}` : ""}`)),
+      m.wards.length > 0 && h("p", { class: "small muted" }, `Обсов на вражеской половине: ${deep} из ${m.wards.length}. ${side}`)),
   );
 }
 
