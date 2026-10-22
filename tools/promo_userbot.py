@@ -74,7 +74,9 @@ async def setup_channel(client, target):
     config = json.loads(CHANNEL.read_text(encoding="utf-8"))
     photo_path = ROOT / config["photo"] if config.get("photo") else None
     photo = photo_path.read_bytes() if photo_path and photo_path.exists() else b""
-    digest = channel_hash(config, photo)
+    video_path = ROOT / config["video"] if config.get("video") else None
+    video = video_path.read_bytes() if video_path and video_path.exists() else b""
+    digest = channel_hash(config, photo + video)
     state = json.loads(CHANNEL_STATE.read_text(encoding="utf-8")) if CHANNEL_STATE.exists() else {}
     if state.get("hash") == digest:
         return
@@ -90,7 +92,11 @@ async def setup_channel(client, target):
         await apply(client(EditTitleRequest(target, config["title"])))
     if config.get("about"):
         await apply(client(EditChatAboutRequest(target, config["about"])))
-    if photo:
+    if video:  # анимированная аватарка (mp4 до 10 с); у бота такой нет, он ставит статичную картинку
+        from telethon.tl.types import InputChatUploadedPhoto
+        uploaded = await client.upload_file(str(video_path))
+        await apply(client(EditPhotoRequest(target, InputChatUploadedPhoto(video=uploaded, video_start_ts=0.0))))
+    elif photo:
         from telethon.tl.types import InputChatUploadedPhoto
         await apply(client(EditPhotoRequest(target, InputChatUploadedPhoto(file=await client.upload_file(str(photo_path))))))
     CHANNEL_STATE.write_text(json.dumps({"hash": digest}, indent=1), encoding="utf-8")

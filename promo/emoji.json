@@ -1,58 +1,42 @@
 {
- "shield": {
-  "char": "🛡",
-  "id": null
+ "think": {
+  "char": "🤔",
+  "id": 5368312080338262873
+ },
+ "star": {
+  "char": "⭐",
+  "id": 5267500801240092311
+ },
+ "skull": {
+  "char": "☠️",
+  "id": 5447246917744478110
+ },
+ "nerd": {
+  "char": "🤓",
+  "id": 5444925715554244719
  },
  "fire": {
   "char": "🔥",
-  "id": null
+  "id": 5375452661036358740
  },
- "skull": {
-  "char": "💀",
-  "id": null
- },
- "brain": {
-  "char": "🧠",
-  "id": null
- },
- "chart": {
-  "char": "📊",
-  "id": null
+ "ok": {
+  "char": "👌",
+  "id": 5438400973036855663
  },
  "eyes": {
   "char": "👀",
-  "id": null
+  "id": 5210956306952758910
  },
- "crown": {
-  "char": "👑",
-  "id": null
+ "game": {
+  "char": "🎮",
+  "id": 5301120117311039703
  },
- "check": {
-  "char": "✅",
-  "id": null
- },
- "swords": {
-  "char": "⚔",
-  "id": null
+ "bolt": {
+  "char": "⚡️",
+  "id": 5438571934210082705
  },
  "clock": {
   "char": "⏱",
-  "id": null
- },
- "robot": {
-  "char": "🤖",
-  "id": null
- },
- "map": {
-  "char": "🗺",
-  "id": null
- },
- "bolt": {
-  "char": "⚡",
-  "id": null
- },
- "coin": {
-  "char": "🪙",
-  "id": null
+  "id": 5458640241915084025
  }
 }

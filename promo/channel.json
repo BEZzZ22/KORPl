@@ -1,5 +1,6 @@
 {
  "title": "DotaRazbor",
  "about": "Разбор катки Dota 2 за секунды: где слил, что собирать, как не умирать. Кидай Match ID в бота: @DotaRazbor_bot",
- "photo": "promo/avatar.png"
+ "photo": "promo/avatar.png",
+ "video": "promo/avatar.mp4"
 }
