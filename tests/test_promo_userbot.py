@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
-from promo_userbot import body, channel_hash, due  # noqa: E402
+from promo_userbot import body, channel_hash, due, plain, render  # noqa: E402
 
 Q = [
     {"id": "a", "at": "2026-10-23T09:00:00+00:00", "text": "A"},
@@ -38,3 +38,19 @@ def test_channel_hash_changes_only_with_content():
     assert base == channel_hash(dict(cfg), b"img")
     assert base != channel_hash({**cfg, "title": "T2"}, b"img")
     assert base != channel_hash(cfg, b"img2")
+
+
+def test_render_uses_premium_emoji_only_when_id_known():
+    emoji = {"fire": {"char": "F", "id": 77}, "shield": {"char": "S", "id": None}}
+    assert render("{e:fire} <b>x</b> {e:shield} {e:nope}", emoji) == '<tg-emoji emoji-id="77">F</tg-emoji> <b>x</b> S '
+    assert plain("{e:fire} <b>x</b> {e:shield}", emoji) == "F x S"
+
+
+def test_queue_posts_fit_caption_and_have_photos():
+    import json
+    queue = json.loads((Path(__file__).resolve().parent.parent / "promo" / "queue.json").read_text(encoding="utf-8"))
+    emoji = json.loads((Path(__file__).resolve().parent.parent / "promo" / "emoji.json").read_text(encoding="utf-8"))
+    for p in queue:
+        assert len(plain(body(p), emoji)) <= 1024, p["id"]
+        assert (Path(__file__).resolve().parent.parent / p["photo"]).exists(), p["id"]
+        assert "{e:" not in plain(body(p), emoji), p["id"]

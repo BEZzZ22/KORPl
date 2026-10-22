@@ -3,7 +3,7 @@
 // Запуск: node tools/ui-live.mjs <match_id> [вкладки через запятую: overview,phases,deaths,map,build,charts]
 // или node tools/ui-live.mjs 0 home,profile,hero — главная, профиль и страница героя
 // ACCOUNT=801280038 по умолчанию, UI_WIDTH=390, LIVE_CACHE=папка кэша ответов OpenDota, OPEN=1 раскрывает <details>,
-// COACH=1 — на «Обзоре» нажать «Разобрать с тренером» и сходить в настоящий воркер
+// HIDE_NAV=1 — без нижней панели, COACH=1 — на «Обзоре» нажать «Разобрать с тренером» и сходить в настоящий воркер
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
 import { join, extname } from "node:path";
@@ -89,6 +89,8 @@ await context.route("**/*", async (route) => {
 });
 
 const page = await context.newPage();
+// HIDE_NAV=1 — убрать плавающую нижнюю панель (для картинок в посты: на полной странице она висит посреди экрана)
+if (process.env.HIDE_NAV) await page.addInitScript(() => { document.addEventListener("DOMContentLoaded", () => { new MutationObserver(() => document.querySelectorAll(".tabbar").forEach((e) => { e.style.display = "none"; })).observe(document.body, { childList: true, subtree: true }); }); });
 page.setDefaultTimeout(60000);
 page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
 page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(`console: ${m.text()}`); });

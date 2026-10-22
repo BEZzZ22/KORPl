@@ -1,0 +1,38 @@
+# Премиум-эмодзи для постов: ищет наборы и печатает id эмодзи в логе (потом id кладутся в promo/emoji.json).
+# Запуск вручную: Actions -> «Премиум-эмодзи (поиск id)» -> Run workflow. Нужны секреты TG_API_ID, TG_API_HASH, TG_SESSION.
+name: Премиум-эмодзи (поиск id)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "search (искать наборы по словам) или pack (показать эмодзи набора по short_name)"
+        default: search
+        required: true
+      names:
+        description: "Слова для поиска или short_name наборов через запятую"
+        default: "dota,fire,shield"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  emoji:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Ищем эмодзи
+        env:
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          TG_SESSION: ${{ secrets.TG_SESSION }}
+          MODE: ${{ inputs.mode }}
+          NAMES: ${{ inputs.names }}
+        run: |
+          pip install -q telethon
+          python tools/promo_emoji.py "$MODE" "$NAMES"

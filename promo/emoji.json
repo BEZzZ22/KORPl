@@ -1,0 +1,58 @@
+{
+ "shield": {
+  "char": "🛡",
+  "id": null
+ },
+ "fire": {
+  "char": "🔥",
+  "id": null
+ },
+ "skull": {
+  "char": "💀",
+  "id": null
+ },
+ "brain": {
+  "char": "🧠",
+  "id": null
+ },
+ "chart": {
+  "char": "📊",
+  "id": null
+ },
+ "eyes": {
+  "char": "👀",
+  "id": null
+ },
+ "crown": {
+  "char": "👑",
+  "id": null
+ },
+ "check": {
+  "char": "✅",
+  "id": null
+ },
+ "swords": {
+  "char": "⚔",
+  "id": null
+ },
+ "clock": {
+  "char": "⏱",
+  "id": null
+ },
+ "robot": {
+  "char": "🤖",
+  "id": null
+ },
+ "map": {
+  "char": "🗺",
+  "id": null
+ },
+ "bolt": {
+  "char": "⚡",
+  "id": null
+ },
+ "coin": {
+  "char": "🪙",
+  "id": null
+ }
+}

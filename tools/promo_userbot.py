@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +15,29 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 QUEUE, POSTED = ROOT / "promo" / "queue.json", ROOT / "promo" / "posted.json"
 CHANNEL, CHANNEL_STATE = ROOT / "promo" / "channel.json", ROOT / "promo" / "channel-state.json"
+EMOJI = ROOT / "promo" / "emoji.json"
+EMOJI_TAG = re.compile(r"\{e:([a-z0-9_]+)\}")
+HTML_TAG = re.compile(r"</?(?:b|i|u|s|code)>")
+
+
+def load_emoji():
+    """promo/emoji.json: ключ -> {"char": обычный эмодзи, "id": id премиум-эмодзи или null}."""
+    return json.loads(EMOJI.read_text(encoding="utf-8")) if EMOJI.exists() else {}
+
+
+def render(text, emoji):
+    """Текст поста для Телеграма (HTML): {e:ключ} -> анимированный эмодзи, если известен id, иначе обычный символ."""
+    def sub(m):
+        e = emoji.get(m.group(1))
+        if not e:
+            return ""
+        return f'<tg-emoji emoji-id="{e["id"]}">{e["char"]}</tg-emoji>' if e.get("id") else e["char"]
+    return EMOJI_TAG.sub(sub, text)
+
+
+def plain(text, emoji):
+    """Тот же текст без разметки и без премиум-эмодзи (для лога и для бота)."""
+    return HTML_TAG.sub("", EMOJI_TAG.sub(lambda m: emoji.get(m.group(1), {}).get("char", ""), text))
 
 
 def channel_hash(config, photo_bytes=b""):
@@ -84,7 +108,7 @@ async def main():
     posts = due(queue, posted)
     if dry:
         for p in posts:
-            print(f"[dry] {p['id']}: {body(p)[:60]}…")
+            print(f"[dry] {p['id']}: {plain(body(p), load_emoji())[:60]}…")
         return
     from telethon import TelegramClient
     from telethon.sessions import StringSession
@@ -92,6 +116,7 @@ async def main():
     chat = env["PROMO_CHAT"]
     async with TelegramClient(StringSession(env["TG_SESSION"]), int(env["TG_API_ID"]), env["TG_API_HASH"]) as client:
         target = await client.get_entity(int(chat) if chat.lstrip("-").isdigit() else chat)
+        emoji = load_emoji()
         try:
             await setup_channel(client, target)
         except Exception as e:  # оформление не должно мешать постам
@@ -100,7 +125,8 @@ async def main():
             print("Пока нечего постить.")
         for p in posts:
             photo = ROOT / p["photo"] if p.get("photo") else None
-            msg = await client.send_message(target, body(p), file=str(photo) if photo else None, link_preview=True)
+            msg = await client.send_message(target, render(body(p), emoji), parse_mode="html",
+                                            file=str(photo) if photo else None, link_preview=True)
             posted[p["id"]] = msg.id
             if p.get("pin"):
                 try:

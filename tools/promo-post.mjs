@@ -7,6 +7,12 @@ import { createHash } from "node:crypto";
 
 const QUEUE = new URL("../promo/queue.json", import.meta.url);
 const POSTED = new URL("../promo/posted.json", import.meta.url);
+const EMOJI = new URL("../promo/emoji.json", import.meta.url);
+
+// Бот не умеет премиум-эмодзи и разметку: {e:ключ} -> обычный символ, теги <b>, <i> убираем
+export function plain(text, emoji = {}) {
+  return text.replace(/\{e:([a-z0-9_]+)\}/g, (_, k) => emoji[k]?.char ?? "").replace(/<\/?(?:b|i|u|s|code)>/g, "");
+}
 const CHANNEL = new URL("../promo/channel.json", import.meta.url);
 const CHANNEL_STATE = new URL("../promo/channel-state.json", import.meta.url);
 
@@ -51,7 +57,9 @@ export function due(queue, posted, now = Date.now(), max = 2) {
     .slice(0, max);
 }
 
-async function send(token, chat, post) {
+async function send(token, chat, post0) {
+  const emoji = existsSync(EMOJI) ? JSON.parse(readFileSync(EMOJI, "utf8")) : {};
+  const post = { ...post0, text: plain(post0.text, emoji) };
   const base = `https://api.telegram.org/bot${token}`;
   const markup = post.button ? { inline_keyboard: [[{ text: post.button.text, url: post.button.url }]] } : undefined;
   let res;

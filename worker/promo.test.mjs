@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { due, channelHash } from "../tools/promo-post.mjs";
+import { due, channelHash, plain } from "../tools/promo-post.mjs";
 
 const q = [
   { id: "a", at: "2026-10-23T09:00:00Z", text: "A" },
@@ -26,4 +26,9 @@ test("promo: оформление канала применяется тольк
   assert.equal(base, channelHash({ ...cfg }, Buffer.from("img")));
   assert.notEqual(base, channelHash({ ...cfg, about: "B" }, Buffer.from("img")));
   assert.notEqual(base, channelHash(cfg, Buffer.from("img2")));
+});
+
+test("promo: у бота {e:ключ} становится обычным символом, а теги разметки пропадают", () => {
+  const emoji = { fire: { char: "🔥", id: 5 } };
+  assert.equal(plain("{e:fire} <b>Тест</b> {e:нет}", emoji), "🔥 Тест {e:нет}");
 });
