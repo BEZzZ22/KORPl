@@ -43,6 +43,8 @@ const CARD_PER_DAY = 2000;
 const MAX_SYNC_BODY = 400000; // профиль с историей разборов
 const MAX_BODY = 10000;        // байт: сюда влезает вся сводка разбора вместе с моментами
 const PER_IP_PER_HOUR = 6;     // мягкий лимит на человека (память воркера, сбрасывается при перезапуске)
+const FAST_PER_IP_PER_HOUR = 30; // быстрый заход дёшев и часто повторяется (кнопка «ещё раз», тесты): лимит щедрый
+const OPUS_PER_IP_PER_HOUR = 12;
 const GLOBAL_PER_DAY = 400;    // не даём выжечь бесплатный лимит ключей одному энтузиасту
 
 const hits = new Map();
@@ -995,8 +997,9 @@ async function handlePost(request, env, ctx, origin) {
   if (best) return reply(200, { text: best, cached: true, opus: true }, origin);
   const hit = tier === "fast" && await env.COACH_KV.get(cacheKey);
   if (hit) return reply(200, { text: hit, cached: true }, origin);
-  const limited = throttle(ip, Date.now(), Number(env.COACH_IP_LIMIT) || PER_IP_PER_HOUR, tier === "opus" ? "opus" : "coach");
-  if (limited) return reply(429, { error: limited }, origin);
+  const perHour = tier === "fast" ? FAST_PER_IP_PER_HOUR : tier === "opus" ? OPUS_PER_IP_PER_HOUR : PER_IP_PER_HOUR;
+  const limited = throttle(ip, Date.now(), Number(env.COACH_IP_LIMIT) || perHour, tier === "opus" ? "opus" : tier === "fast" ? "fast" : "coach", tier === "fast" ? 2 * GLOBAL_PER_DAY : GLOBAL_PER_DAY);
+  if (limited) { console.warn(`coach ${tier || "all"} 429 ${ip}: ${limited}`); return reply(429, { error: limited }, origin); }
   const setup = tier === "fast" ? { ...run, CLAUDE_API_KEY: "" }
     : tier === "opus" ? { ...run, GROQ_API_KEY: "", GEMINI_API_KEY: "", CLAUDE_TIMEOUT: String(OPUS_TIMEOUT), CLAUDE_FIRST_BYTE: String(OPUS_TIMEOUT) }
       : run;
@@ -1009,6 +1012,7 @@ async function handlePost(request, env, ctx, origin) {
     const out = { text, ...(opus ? { opus: true } : {}) };
     return reply(200, env.COACH_DEBUG ? { ...out, log: meter.log } : out, origin, meter.by_name);
   } catch (e) {
+    console.warn(`coach ${tier || "all"} 502: ${(e.log || []).join(" | ")}`);
     return reply(502, debug(e), origin);
   } finally { later(addUsage(env, meter)); }
 }

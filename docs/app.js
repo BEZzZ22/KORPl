@@ -1436,7 +1436,7 @@ async function postCoach(body, timeout = COACH_TIMEOUT) {
   try {
     const res = await fetch(COACH_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: ctrl.signal });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw Object.assign(new Error(data.error || "Тренер сейчас недоступен."), { fromCoach: true });
+    if (!res.ok) throw Object.assign(new Error(data.error || "Тренер сейчас недоступен."), { fromCoach: true, status: res.status });
     return data;
   } finally {
     clearTimeout(timer);
@@ -1596,13 +1596,20 @@ function coachBlock(a) {
     haptic("medium");
     try {
       let data;
-      try {
-        data = await postCoach({ ...coachPayload(a), tier: "fast" });
-        if (!data.text) throw new Error("пусто");
-      } catch {
-        // быстрые модели не справились — ждём Opus, он дольше, но обычно отвечает
-        ask.textContent = "Тренер думает дольше обычного…";
-        data = await postCoach({ ...coachPayload(a), tier: "opus" }, OPUS_WAIT);
+      // быстрые модели иногда заняты: одна повторная попытка через пару секунд, потом ждём Opus
+      for (let attempt = 0; !data; attempt++) {
+        try {
+          data = await postCoach({ ...coachPayload(a), tier: "fast" });
+          if (!data.text) throw new Error("пусто");
+        } catch (e) {
+          data = null;
+          // лимит или битый запрос: Opus тут не поможет, говорим причину сразу
+          if (e && (e.status === 429 || e.status === 400 || e.status === 413)) throw e;
+          if (attempt === 0) { await new Promise((r) => setTimeout(r, 2000)); continue; }
+          ask.textContent = "Быстрые модели заняты, жду Opus…";
+          note.textContent = "Opus отвечает от 30 секунд до двух минут. Можно свернуть приложение, разбор сохранится.";
+          data = await postCoach({ ...coachPayload(a), tier: "opus" }, OPUS_WAIT);
+        }
       }
       if (!data.text) throw Object.assign(new Error("Тренер сейчас недоступен."), { fromCoach: true });
       if (!data.cached) spend();
