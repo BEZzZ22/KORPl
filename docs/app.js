@@ -2,7 +2,7 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan, skillPlan,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
-} from "./engine.js?v=33";
+} from "./engine.js?v=34";
 import { aegisBadge, openShowcase } from "./aegis.js?v=1";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
@@ -2032,13 +2032,15 @@ const HIST_TTL = 30 * 60 * 1000;
 const HIST_MIN = 5;
 const HIST_FIELDS = ["hero_id", "duration", "game_mode", "kills", "deaths", "assists", "gold_per_min", "xp_per_min", "last_hits"];
 
-async function histMatches(account, heroId) {
-  const key = `hm:v1:${account}:${heroId || "all"}`;
+async function histMatches(account, heroId, turbo = false) {
+  const key = `hm:v1:${account}:${heroId || "all"}${turbo ? ":turbo" : ""}`;
   try {
     const c = JSON.parse(safeLocal.get(key) || "null");
     if (c && Date.now() - c.t < HIST_TTL && Array.isArray(c.rows)) return c.rows;
   } catch { /* битый кэш — перезапросим */ }
-  const q = `limit=${heroId ? 30 : 20}&significant=1${heroId ? `&hero_id=${heroId}` : ""}&` + HIST_FIELDS.map((f) => `project=${f}`).join("&");
+  // significant=1 у OpenDota выкидывает турбо, поэтому для турбо просим именно его
+  const mode = turbo ? `significant=0&game_mode=${TURBO_MODE}` : "significant=1";
+  const q = `limit=${heroId ? 30 : 20}&${mode}${heroId ? `&hero_id=${heroId}` : ""}&` + HIST_FIELDS.map((f) => `project=${f}`).join("&");
   const rows = await api(`/players/${account}/matches?${q}`);
   if (!Array.isArray(rows)) return [];
   safeLocal.set(key, JSON.stringify({ t: Date.now(), rows }));
@@ -2087,12 +2089,14 @@ function historyBlock(a) {
   const box = h("details", { class: "card timeline-box hist-box" }, h("summary", {}, "Обычно у тебя"),
     h("div", { class: "small muted" }, "Собираю прошлые игры..."));
   const seq = navSeq;
-  const usable = (m) => m.match_id !== a.facts.match_id && m.duration >= 600 && m.game_mode !== TURBO_MODE && m.gold_per_min != null;
+  // турбо сравниваем только с турбо: там золото и опыт идут быстрее
+  const turbo = a.facts.game_mode === TURBO_MODE;
+  const usable = (m) => m.match_id !== a.facts.match_id && m.duration >= 600 && (m.game_mode === TURBO_MODE) === turbo && m.gold_per_min != null;
   (async () => {
-    let pool = (await histMatches(self.account, a.facts.hero_id)).filter(usable);
+    let pool = (await histMatches(self.account, a.facts.hero_id, turbo)).filter(usable);
     let sample = `на ${a.facts.hero}`;
     if (pool.length < HIST_MIN) {
-      pool = (await histMatches(self.account, null)).filter(usable);
+      pool = (await histMatches(self.account, null, turbo)).filter(usable);
       sample = "на всех героях";
     }
     if (stale(seq)) return;
@@ -2103,7 +2107,7 @@ function historyBlock(a) {
       const { rows, verdict } = historyRows(self, pool);
       body[0] = h("summary", {}, "Обычно у тебя", h("span", { class: "muted" }, ` · ${verdict.toLowerCase().replace(/\.$/, "")}`));
       body.push(...rows.filter(Boolean),
-        h("div", { class: "small muted" }, `${verdict} Медиана ${pool.length} ${plural(pool.length, "прошлой игры", "прошлых игр", "прошлых игр")} ${sample} → эта игра. Турбо и игры короче 10 минут не считаю.`));
+        h("div", { class: "small muted" }, `Медиана ${pool.length} ${plural(pool.length, "прошлой игры", "прошлых игр", "прошлых игр")} ${sample}${turbo ? " в турбо" : ""} → эта игра. ${turbo ? "Турбо сравниваю только с турбо" : "Турбо и игры короче 10 минут не считаю"}.`));
     }
     box.replaceChildren(...body);
   })().catch(() => {
@@ -2131,7 +2135,8 @@ function draftBlock(a) {
   if (!d || !d.notes.length) return null;
   return h("div", {},
     h("h2", {}, "Драфт"),
-    h("div", { class: "card" }, ...d.notes.slice(0, 2).map((n) => h("div", { class: n.severity === GOOD ? "strength" : "problem-fact" }, n.text))),
+    h("div", { class: "card draft-notes" }, ...d.notes.slice(0, 2).map((n) => h("div", { class: `draft-note ${n.severity}` },
+      n.hero_id ? heroImg(n.hero_id, "mini-hero") : h("span", { class: "draft-note-dot" }), h("span", {}, n.text)))),
   );
 }
 
@@ -2894,7 +2899,7 @@ async function boot() {
     const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
       api("/constants/heroes"), api("/constants/items"), api("/constants/abilities", { timeout: 40000 }),
       api("/constants/item_ids"),
-      fetch("knowledge.json?v=12").then((r) => r.json()), fetch("texts.json?v=17").then((r) => r.json()),
+      fetch("knowledge.json?v=12").then((r) => r.json()), fetch("texts.json?v=18").then((r) => r.json()),
     ]);
     dictionary = createDictionary({ heroes, items, abilities });
     itemIds = ids;

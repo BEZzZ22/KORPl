@@ -928,3 +928,12 @@ body { background: transparent; }
 .lane-odds { font: 800 13px/1 var(--display); padding: 5px 9px; border-radius: 8px; background: rgba(255, 255, 255, 0.07); margin-right: 4px; }
 .lane-odds.hard { background: rgba(242, 85, 90, 0.16); color: #f7a2a5; }
 .lane-odds.easy { background: rgba(79, 209, 165, 0.14); color: var(--radiant); }
+
+/* драфт в обзоре: враг иконкой и вывод по матчапу */
+.draft-note { display: grid; grid-template-columns: 36px 1fr; gap: 10px; align-items: start; padding: 9px 0; font-size: 14px; color: var(--muted); }
+.draft-note + .draft-note { border-top: 1px solid var(--line); }
+.draft-note .mini-hero { width: 36px; height: 20px; border-radius: 4px; object-fit: cover; margin-top: 1px; }
+.draft-note.good .mini-hero { box-shadow: 0 0 0 1.5px var(--radiant); }
+.draft-note.warn .mini-hero { box-shadow: 0 0 0 1.5px var(--warn); }
+.draft-note-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); margin: 6px 0 0 14px; }
+.draft-note.good .draft-note-dot { background: var(--radiant); }

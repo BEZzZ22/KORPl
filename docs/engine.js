@@ -148,7 +148,9 @@ const RANK_METRICS = {
   first_item: { what: "Тайминг первого кор-айтема", cat: "Предметы", roles: [1, 2, 3], lower: true, fmt: (v) => mmss(v) },
   obs10: { what: "Обсы за 10 минут", cat: "Видение", roles: [4, 5], fmt: (v) => tenths(v) },
 };
-// Сколько примерно золота стоит отставание по показателю — для сортировки проблем в сводке
+// Первый крупный предмет дороже этого (Radiance, Battle Fury) с нормой «первого кор-айтема» не сравниваем
+const PRICEY_FIRST_ITEM = 4000;
+// Что считается первым крупным предметом (плюс основа про на позиции и любой собранный от 1800)
 const FIRST_ITEM_KEYS = new Set(["blink", "black_king_bar", "battle_fury", "bfury", "desolator", "maelstrom", "radiance", "manta",
   "echo_sabre", "aghanims_shard", "ultimate_scepter", "orchid", "kaya", "sange", "yasha", "armlet", "witch_blade",
   "diffusal_blade", "dragon_lance", "mask_of_madness", "hand_of_midas", "vanguard", "blade_mail", "force_staff",
@@ -470,7 +472,9 @@ class MatchAnalyzer {
   firstBigItem() {
     const b = heroBuild(this.builds, null, this.p.hero_id, this.od.heroKey(this.p.hero_id), this.pos);
     const coreKeys = new Set(b ? b.core.map((r) => r[0]).filter((k) => k !== "aghanims_shard") : []);
-    return (this.p.purchase_log || []).find((x) => FIRST_ITEM_KEYS.has(x.key) || coreKeys.has(x.key));
+    // любой собранный предмет от 1800 тоже крупный: Specialist's Array (2550) у Drow раньше Dragon Lance
+    return (this.p.purchase_log || []).find((x) => FIRST_ITEM_KEYS.has(x.key) || coreKeys.has(x.key)
+      || (this.isFinalItem(x.key) && this.od.itemCost(x.key) >= 1800));
   }
 
   collectMetrics() {
@@ -478,6 +482,7 @@ class MatchAnalyzer {
     const minutes = this.duration / 60;
     const teamKills = sum(this.match.players.filter((x) => x.isRadiant === p.isRadiant).map((x) => x.kills));
     const first = this.firstBigItem();
+    this.firstItem = first;
     return {
       lh10: this.minutes >= 10 ? atMinute(p.lh_t, 10) : null,
       gpm: p.gold_per_min,
@@ -502,7 +507,13 @@ class MatchAnalyzer {
     if (!this.bracket) return out;
     // При спорной роли не сравниваем с нормами, которые сильно зависят от роли
     const roleBound = new Set(["lh10", "first_item", "obs10", "gpm"]);
+    // Нормы ранга собраны по обычным играм. В турбо золото, опыт, тайминги и время смерти другие:
+    // GPM 1391 «лучше 99% мидеров» там ничего не значит. Сравнимо только участие в киллах
+    const turbo = this.match.game_mode === TURBO_MODE;
     for (const [key, m] of Object.entries(RANK_METRICS)) {
+      if (turbo && key !== "kp") continue;
+      // Radiance или Battle Fury первым (4000+) с нормой «первого кор-айтема» (обычно предмет за 2–2,5 тыс.) не сравниваем
+      if (key === "first_item" && this.firstItem && this.od.itemCost(this.firstItem.key) >= PRICEY_FIRST_ITEM) continue;
       const v = this.metrics[key];
       const q = this.normFor(key);
       if (v == null || !q || !m.roles.includes(this.pos)) continue;
@@ -936,6 +947,12 @@ class MatchAnalyzer {
 
   // Сводка смертей: каждая смерть с типом (линия, драка, один, размен, стычка), фазой и пометками,
   // сверху — повторяющиеся паттерны с временами (один вне драк, сразу после возрождения, первым в драке, без кнопок...)
+  // Тип смерти: lane — до 10:00 вне драки, fight — в драке OpenDota, trade — сам убил героя ±20 с, solo — один, без своих
+  deathKind(t) {
+    const traded = (this.p.kills_log || []).some((k) => k.key.startsWith("npc_dota_hero_") && Math.abs(k.time - t) <= 20);
+    return t < LANING_END && !this.inFight(t) ? "lane" : this.inFight(t) ? "fight" : traded ? "trade" : this.isSoloDeath(t) ? "solo" : "skirmish";
+  }
+
   deathSummary() {
     const p = this.p, deaths = p.deaths_log || [];
     if (!deaths.length) return null;
@@ -944,8 +961,7 @@ class MatchAnalyzer {
     let back = null;
     for (const d of deaths) {
       const t = d.time;
-      const traded = (p.kills_log || []).some((k) => k.key.startsWith("npc_dota_hero_") && Math.abs(k.time - t) <= 20);
-      const kind = t < LANING_END && !this.inFight(t) ? "lane" : this.inFight(t) ? "fight" : traded ? "trade" : this.isSoloDeath(t) ? "solo" : "skirmish";
+      const kind = this.deathKind(t);
       // сразу после возрождения: от возрождения (или выкупа) до новой смерти меньше минуты
       const fresh = back != null && t - back >= 0 && t - back <= 60;
       back = t + (d.time_dead || 0);
@@ -1330,14 +1346,16 @@ class MatchAnalyzer {
           `${this.od.itemName(first.key)} только на ${mmss(r.value)} — у ${ROLE_GEN_PLURAL[this.pos]} на ранге ${RANKS[this.bracket][0]} первый кор-айтем обычно к ${mmss(r.median)}`,
           "Сначала собирай главный кор-айтем героя, ситуативку — потом. Не трать голду на лишние расходники и не умирай с полным карманом");
       }
-    } else if (this.core && items.length) {
-      const first = items[0];
+    } else if (this.core && this.firstItem) {
+      // без нормы ранга — грубые пороги; в турбо и для дорогого первого предмета они не подходят
+      const first = this.firstItem;
       const minute = first.time / 60;
-      const params = { item: first.item, time: mmss(first.time) };
-      if (minute >= 20) this.add(ITEMS, BAD, "items_first_bad", "items_first_bad_tip", params);
+      const params = { item: this.od.itemName(first.key), time: mmss(first.time) };
+      if (this.match.game_mode === TURBO_MODE || this.od.itemCost(first.key) >= PRICEY_FIRST_ITEM) { /* не оцениваем */ }
+      else if (minute >= 20) this.add(ITEMS, BAD, "items_first_bad", "items_first_bad_tip", params);
       else if (minute >= 17) this.add(ITEMS, WARN, "items_first_warn", null, params);
       else if (minute <= 13) this.add(ITEMS, GOOD, "items_first_good", null, params);
-    } else if (this.core && this.minutes >= 20) {
+    } else if (this.core && this.minutes >= 20 && !items.length) {
       this.add(ITEMS, BAD, "items_none");
     }
 
@@ -1495,11 +1513,14 @@ class MatchAnalyzer {
       if (!ranked.length) [missing, had] = this.pickCounters(mechanics, mainType, owned);
       const whyByKey = Object.fromEntries(ranked.map((r) => [r.key, r.why]));
       const name = this.od.heroName(enemy.hero_id);
+      const kinds = {};
+      for (const d of this.p.deaths_log || []) if (d.key === key) kinds[this.deathKind(d.time)] = (kinds[this.deathKind(d.time)] || 0) + 1;
       killers.push({
         hero: name,
         hero_id: enemy.hero_id,
         key,
         deaths: n,
+        kinds,
         damage: total,
         main_type: mainType,
         main_type_share: share,
@@ -1556,7 +1577,7 @@ class MatchAnalyzer {
     this.addRaw(SURVIVAL, n >= 4 ? BAD : WARN, text, tipParts.join(". "), "killer", roast);
     if (n >= 3) {
       const how = k.sources.slice(0, 2).map((s) => (s.name === "Автоатаки" ? "автоатаки" : s.name)).join(" и ");
-      const action = [k.tips[0], k.counters.length ? `Купи ${k.counters.slice(0, 2).join(" или ")}` : ""]
+      const action = [k.tips[0] || this.killerContextTip(k), k.counters.length ? `Купи ${k.counters.slice(0, 2).join(" или ")}` : ""]
         .filter(Boolean).join(". ");
       this.issue(`killer_${k.key}`, n * 380, `Частые смерти от ${k.hero}`,
         `${n} ${deathsWord(n)} от ${k.hero}${how ? `, в основном ${how}` : ""}`,
@@ -1565,6 +1586,20 @@ class MatchAnalyzer {
           ? `Цель на следующую катку: не больше одной смерти от ${k.hero}, если снова против него (помогут ${k.counters[0]})`
           : `Цель на следующую катку: не больше одной смерти от ${k.hero}`);
     }
+  }
+
+  // Совет по тому, где именно этот враг тебя убивал, когда про его механику сказать нечего
+  killerContextTip(k) {
+    const kinds = k.kinds || {};
+    // самый частый тип, если на него приходится хотя бы 40% смертей от этого героя
+    const [kind, m] = Object.entries(kinds).filter(([x]) => x !== "trade").sort((a, b) => b[1] - a[1])[0] || [];
+    if (!kind || m < k.deaths * 0.4) return "";
+    return {
+      lane: `На линии ${k.hero} забирал тебя ${m} ${timesWord(m)}: держись за своими крипами и отходи, когда он подходит с готовыми скиллами`,
+      solo: `${k.hero} ловил тебя одного: без своих рядом не фарми там, куда он успевает прийти`,
+      fight: `В драках ${k.hero} убивал тебя первым делом: стой за спинами своих и не заходи в драку первым`,
+      skirmish: `${k.hero} забирал тебя в мелких стычках: не принимай размен без сейва и отходи, как только он заходит на тебя`,
+    }[kind] || "";
   }
 
   // ---------- что реально происходило с тобой: урон и контроль по всем врагам ----------
@@ -2842,16 +2877,20 @@ class MatchAnalyzer {
     rows.sort((a, b) => a.wr - b.wr);
     const hero = this.od.heroName(this.p.hero_id);
     const notes = [];
-    for (const r of rows.filter((x) => x.wr <= DRAFT_BAD_WR).slice(0, 2)) {
-      notes.push({ severity: WARN, text: this.say("draft_bad", { hero, enemy: r.name, wr: pyRound(r.wr * 100), games: r.games }, r.name) });
+    // Матчапы OpenDota — про-матчи, игр мало: 41% на 49 играх ещё случайность. Отклонение от 50% должно быть
+    // больше полутора стандартных ошибок, иначе молчим
+    const real = (wr, games) => Math.abs(wr - 0.5) >= 1.5 * Math.sqrt(0.25 / games);
+    const params = (r) => ({ hero, enemy: r.name, enemy_id: r.hero_id, wr: pyRound(r.wr * 100), games: r.games, games_text: `${r.games} ${plural(r.games, "игра", "игры", "игр")}` });
+    for (const r of rows.filter((x) => x.wr <= DRAFT_BAD_WR && real(x.wr, x.games)).slice(0, 2)) {
+      notes.push({ severity: WARN, hero_id: r.hero_id, text: this.say("draft_bad", params(r), r.name) });
     }
-    for (const r of rows.filter((x) => x.wr >= DRAFT_GOOD_WR).slice(-2)) {
-      notes.push({ severity: GOOD, text: this.say("draft_good", { hero, enemy: r.name, wr: pyRound(r.wr * 100), games: r.games }, r.name) });
+    for (const r of rows.filter((x) => x.wr >= DRAFT_GOOD_WR && real(x.wr, x.games)).slice(-2)) {
+      notes.push({ severity: GOOD, hero_id: r.hero_id, text: this.say("draft_good", params(r), r.name) });
     }
     const total = sum(rows.map((r) => r.games));
     const avg = sum(rows.map((r) => r.wr * r.games)) / total;
-    if (rows.length >= 4 && avg <= 0.47) notes.push({ severity: WARN, text: this.say("draft_hard", { hero, wr: pyRound(avg * 100) }) });
-    if (rows.length >= 4 && avg >= 0.53) notes.push({ severity: GOOD, text: this.say("draft_easy", { hero, wr: pyRound(avg * 100) }) });
+    if (rows.length >= 4 && avg <= 0.47 && real(avg, total)) notes.push({ severity: WARN, text: this.say("draft_hard", { hero, wr: pyRound(avg * 100) }) });
+    if (rows.length >= 4 && avg >= 0.53 && real(avg, total)) notes.push({ severity: GOOD, text: this.say("draft_easy", { hero, wr: pyRound(avg * 100) }) });
     return { hero_id: this.p.hero_id, hero, avg_wr: avg, rows: rows.map((r) => ({ ...r, wr: r.wr })), notes };
   }
 
