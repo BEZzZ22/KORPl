@@ -2,7 +2,7 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan, skillPlan,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
-} from "./engine.js?v=29";
+} from "./engine.js?v=30";
 import { aegisBadge, openShowcase } from "./aegis.js?v=1";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
@@ -1459,14 +1459,22 @@ function rememberReview(a, main) {
   safeLocal.set(memoryKey(a), JSON.stringify(list.slice(0, MEMORY_SIZE)));
 }
 
+// Мелочи для тренера: две свои, главное по сборке и прокачке, остальное — снова свои (воркер берёт четыре)
+function coachMicro(a) {
+  const own = a.findings.filter((x) => x.kind === "micro" && x.severity !== GOOD).map((x) => ({ text: x.text, tip: x.tip }));
+  const build = ((a.item_plan && a.item_plan.verdict) || []).slice(0, 1).map((t) => ({ text: `Сборка: ${t}` }));
+  const skill = ((a.skill_plan && a.skill_plan.notes) || []).slice(0, 1).map((t) => ({ text: `Прокачка: ${t}` }));
+  const first = own.slice(0, 4 - build.length - skill.length);
+  return [...first.slice(0, 2), ...build, ...skill, ...first.slice(2)].slice(0, 4);
+}
+
 function coachPayload(a) {
   const s = a.summary || {}, f = a.facts;
   return {
     hero: f.hero, role: s.role || "", rank: s.rank || "", won: f.won, kda: f.kda, duration: f.duration,
     problems: (s.problems || []).slice(0, 3).map((p) => ({ title: p.title, fact: p.fact, action: p.action })),
     strengths: (s.strengths || []).slice(0, 2).map((x) => ({ title: x.title, fact: x.fact })),
-    micro: [...a.findings.filter((x) => x.kind === "micro" && x.severity !== GOOD).map((x) => ({ text: x.text, tip: x.tip })),
-      ...((a.skill_plan && a.skill_plan.notes) || []).map((t) => ({ text: `Прокачка: ${t}` }))].slice(0, 4),
+    micro: coachMicro(a),
     plan: a.build_plan ? a.build_plan.missing.slice(0, 3).map((i) => ({ item: i.item, why: i.why })) : [],
     draft: a.draft ? a.draft.notes.slice(0, 2).map((n) => n.text) : [],
     episodes: (a.episodes || []).slice(0, 4).map((e) => ({ clock: e.clock, kind: e.kind, facts: e.facts })),
@@ -2324,28 +2332,26 @@ function laneDuelBlock(a) {
 // ---------- тайминги предметов против всех игр на герое ----------
 
 const timingCache = new Map();
-function itemTimingBlock(a) {
-  // готовые предметы: компонент, ушедший в сборку (Demon Edge в Daedalus), сравнивать нет смысла
-  const core = ((a.timeline && a.timeline.items) || a.items || []).filter((it) => it.time > 0);
-  if (!core.length) return null;
-  const box = h("div", {}, h("h2", {}, "Тайминги предметов"), h("div", { class: "card small muted" }, "Сравниваю с играми на герое..."));
+// Тайминги пабов (OpenDota по публичным играм на герое) прямо в строках сборки: когда обычно собирают
+// и как меняется винрейт, если собрать позже
+function pubTimings(a, root) {
+  const plan = a.item_plan;
+  const keys = [...new Set([...plan.early, ...plan.core, ...plan.counters, ...(plan.extra || [])].map((r) => r.key))];
+  if (!keys.length) return;
   const seq = navSeq;
   (async () => {
     if (!timingCache.has(a.facts.hero_id)) timingCache.set(a.facts.hero_id, await api(`/scenarios/itemTimings?hero_id=${a.facts.hero_id}`));
     if (stale(seq)) return;
-    const rows = itemTimings(core, timingCache.get(a.facts.hero_id)).slice(0, 5);
-    if (!rows.length) { box.remove(); return; }
-    box.replaceChildren(h("h2", {}, "Тайминги предметов"), h("div", { class: "card" },
-      ...rows.map((r) => h("div", { class: "timing-row" },
-        img(dictionary.itemImage(r.key), null, ""),
-        h("div", { class: "grow" },
-          h("div", {}, r.item),
-          h("div", { class: "small muted" }, `обычно к ${mmss(r.usual)}` +
-            (r.wr_by != null && r.wr_after != null ? ` · до этого побеждают в ${r.wr_by}%, позже в ${r.wr_after}%` : ""))),
-        h("b", { class: r.verdict === "late" ? "loss-text" : r.verdict === "early" ? "win-text" : "" }, mmss(r.time)))),
-      h("p", { class: "small muted" }, "Твоё время справа. Статистика OpenDota по публичным играм на этом герое.")));
-  })().catch(() => { if (!stale(seq)) box.remove(); });
-  return box;
+    const bought = new Map(((plan.bought_order || [])).map((x) => [x.key, x.time]));
+    const rows = itemTimings(keys.map((k) => ({ key: k, item: dictionary.itemName(k), time: bought.get(k) || 0 })), timingCache.get(a.facts.hero_id));
+    for (const r of rows) {
+      for (const el of root.querySelectorAll(`[data-key="${r.key}"] .grow`)) {
+        // винрейт «раньше / позже» показываем только на большой выборке и при заметной разнице
+        const wr = r.games >= 300 && r.wr_by != null && r.wr_after != null && Math.abs(r.wr_by - r.wr_after) >= 8;
+        el.append(h("div", { class: "small muted ip-pub" }, `в пабах к ${mmss(r.usual)}` + (wr ? ` · до этого ${r.wr_by}% побед, позже ${r.wr_after}%` : "")));
+      }
+    }
+  })().catch(() => {});
 }
 
 function killersTab(a) {
@@ -2399,19 +2405,35 @@ function planSource(p) {
 // Статус предмета после игры: когда купил, поздно или не было
 function planStatus(r) {
   if (r.owned == null) return null;
+  if (r.pending) return h("span", { class: "ip-st pending" }, "не успел", h("small", {}, "игра кончилась"));
   if (!r.owned) return h("span", { class: "ip-st miss" }, "не было");
   return h("span", { class: `ip-st ${r.late ? "late" : "have"}` }, r.time != null && r.time > 0 ? mmss(r.time) : "было", r.late && h("small", {}, "поздно"));
 }
 
 function planRow(r) {
-  const meta = [r.share != null && `берут ${r.share}%`, r.med != null && r.med > 0 && `обычно к ${mmss(r.med)}`].filter(Boolean).join(" · ");
-  return h("div", { class: `ip-row ${r.owned === false ? "miss" : ""}` },
+  const meta = [r.share != null && `у про ${r.share}% игр`, r.med != null && r.med > 0 && `к ${mmss(r.med)}`].filter(Boolean).join(" · ");
+  return h("div", { class: `ip-row ${r.owned === false && !r.pending ? "miss" : ""}`, "data-key": r.key },
     img(dictionary.itemImage(r.key), null, ""),
     h("div", { class: "grow" },
       h("div", { class: "ip-name" }, r.item),
       meta && h("div", { class: "small muted" }, meta),
       r.important && h("div", { class: "small ip-why" }, `в этой катке важнее обычного: ${r.important}`)),
     planStatus(r));
+}
+
+// Порядок: твои готовые предметы по времени и основа про по медиане — видно, что собрал раньше времени, а что позже
+function planOrder(p) {
+  const mine = p.bought_order || [];
+  const pro = p.core.filter((r) => r.med);
+  if (mine.length < 2 || pro.length < 2) return null;
+  const off = new Set((p.extra || []).map((e) => e.key));
+  const line = (label, list, cls, when) => h("div", { class: `ip-order ${label === "ты" ? "mine" : ""}` }, h("span", { class: "ip-order-label" }, label),
+    h("div", { class: "ip-order-items" }, ...list.map((x) => h("span", { class: `ip-step ${cls(x)}`, title: x.item },
+      img(dictionary.itemImage(x.key), null, x.item), h("small", {}, mmss(when(x)))))));
+  return h("div", {}, h("div", { class: "ip-label" }, "Порядок"),
+    line("ты", mine, (x) => (off.has(x.key) ? "off" : ""), (x) => x.time),
+    line("про", pro, (x) => (x.owned ? "have" : ""), (x) => x.med),
+    h("p", { class: "small muted" }, "Сверху твои готовые предметы по времени (рамка — вне сборки), снизу основа у про; яркие — те, что ты собрал."));
 }
 
 function planChips(list, named = false) {
@@ -2423,18 +2445,28 @@ function planChips(list, named = false) {
 // after — разбор сыгранной катки: рядом с каждым предметом, купил ли и когда
 function itemPlanCard(p, { after = false, facts = [] } = {}) {
   if (!p) return null;
-  const counters = p.counters.map((c, i) => h("div", { class: "plan-item" },
+  const counters = p.counters.map((c, i) => h("div", { class: "plan-item", "data-key": c.key },
     h("div", { class: "plan-num" }, String(i + 1)),
     img(dictionary.itemImage(c.key), null, ""),
     h("div", { class: "grow" },
       h("div", { class: "plan-name" }, c.item, c.popular && h("span", { class: "tag" }, "берут про")),
+      (c.vs_ids || []).length > 0 && h("div", { class: "ip-vs" }, ...c.vs_ids.map((id) => heroImg(id, "mini-hero"))),
       ...c.whys.map((w) => h("div", { class: "small muted" }, w)),
       c.next && h("div", { class: "small plan-extra" }, `потом собирается в ${c.next}`),
       after && h("div", { class: "ip-st-line" }, planStatus(c)))));
+  const extra = after && (p.extra || []).length > 0 && [h("div", { class: "ip-label" }, "Купил вне сборки"),
+    ...p.extra.map((e) => h("div", { class: "ip-row extra", "data-key": e.key },
+      img(dictionary.itemImage(e.key), null, ""),
+      h("div", { class: "grow" }, h("div", { class: "ip-name" }, e.item),
+        h("div", { class: "small muted" }, e.instead ? `вместо ${e.instead}, у про на этой позиции почти не берут` : "у про на этой позиции почти не берут")),
+      h("span", { class: "ip-st" }, e.time > 0 ? mmss(e.time) : "")))];
   return h("div", { class: "card item-plan" },
     h("div", { class: "small muted" }, planSource(p)),
+    after && (p.verdict || []).length > 0 && h("div", { class: "ip-verdict" }, h("div", { class: "ip-label" }, "Главное по сборке"),
+      ...p.verdict.map((t) => h("p", {}, t))),
     ...facts.map((t) => h("div", { class: "plan-fact" }, t)),
     after && p.core_total > 0 && h("div", { class: "ip-score" }, h("b", {}, `${p.core_have} из ${p.core_total}`), " основных предметов собрал"),
+    after && planOrder(p),
     p.start.length > 0 && h("div", { class: "ip-label" }, "Старт"),
     p.start.length > 0 && planChips(p.start),
     p.early.length > 0 && h("div", { class: "ip-label" }, "Ранняя игра"),
@@ -2444,7 +2476,9 @@ function itemPlanCard(p, { after = false, facts = [] } = {}) {
     ...p.notes.map((t) => h("p", { class: "small plan-extra" }, t)),
     h("div", { class: "ip-label" }, "Против этого пика"),
     counters.length ? h("div", {}, ...counters)
-      : h("p", { class: "small muted" }, "Ничего особенного против тебя не играло: обычной сборки хватит."),
+      : p.core.some((r) => r.important) ? h("p", { class: "small muted" }, `Главное против этого пика уже в основе: ${p.core.filter((r) => r.important).map((r) => r.item).join(", ")} (отмечено выше).`)
+        : h("p", { class: "small muted" }, "Ничего особенного против тебя не играло: обычной сборки хватит."),
+    ...(extra || []),
     p.sit.length > 0 && h("div", { class: "ip-label" }, "Ещё берут по ситуации"),
     p.sit.length > 0 && planChips(p.sit, true),
     after && p.turbo && h("p", { class: "small muted" }, "Это турбо: время покупки с обычными играми про не сравниваю."));
@@ -2481,7 +2515,8 @@ function buildTab(a) {
       h("div", { class: "item-row" }, img(dictionary.itemImage(it.key), null, ""), h("span", {}, it.item), h("time", {}, mmss(it.time))))),
   );
   if (!plan && !yours && !skills) return h("p", { class: "muted" }, "Крупных предметов не было.");
-  return h("div", {}, plan, skills, itemTimingBlock(a), yours);
+  if (plan) pubTimings(a, plan);
+  return h("div", {}, plan, skills, yours);
 }
 
 const HINT_KEY = "charts_hint_seen";

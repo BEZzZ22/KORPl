@@ -1684,6 +1684,7 @@ class MatchAnalyzer {
       builds: this.builds, guides: this.guides, od: this.od, knowledge: this.k, heroId: this.p.hero_id, pos: this.pos,
       enemies: this.enemies.map((e) => e.hero_id), tags: this.enemyMechanics(), threat, owned, bought, minutes: this.minutes,
       upgrade: (k) => this.upgradeOf(k), turbo: this.match.game_mode === TURBO_MODE,
+      duration: this.duration, finished: this.finishedItems(),
     });
     if (this._plan) this._plan.facts = this.threatFacts(t);
     return this._plan;
@@ -3125,7 +3126,7 @@ export function enemyTags(knowledge, od, enemies) {
 
 // Сборка под пик. enemies — id вражеских героев; tags — механики врагов {invis: [имена]};
 // threat — предметы против того, чем реально били (после игры, из rankCounters); owned/bought — что купил игрок
-export function itemPlan({ builds, guides, od, knowledge, heroId, pos, enemies = [], tags = null, threat = [], owned = null, bought = null, minutes = null, upgrade = null, turbo = false }) {
+export function itemPlan({ builds, guides, od, knowledge, heroId, pos, enemies = [], tags = null, threat = [], owned = null, bought = null, minutes = null, upgrade = null, turbo = false, duration = null, finished = null }) {
   // без сборки героя (нет справочника или героя в нём) остаются только предметы против этого пика
   const base = heroBuild(builds, guides, heroId, od.heroKey(heroId), pos)
     || { source: "none", pos, start: [], early: [], core: [], sit: [] };
@@ -3138,10 +3139,12 @@ export function itemPlan({ builds, guides, od, knowledge, heroId, pos, enemies =
   // Предмет годится, если его носят на этом герое и позиции, либо это защита, которая подходит всем
   const fits = (k) => !pool.size || pool.has(k) || universal.has(k);
   const cand = new Map();
-  const add = (key, score, why, vs) => {
+  const add = (key, score, why, vs, strong = false) => {
     if (!known(key) || !fits(key)) return;
-    const c = cand.get(key) || { key, score: 0, whys: [], vs: new Set() };
+    const c = cand.get(key) || { key, score: 0, whys: [], vs: new Set(), strong: false, strongWhy: null };
     c.score += score;
+    c.strong = c.strong || strong;
+    if (strong && !c.strongWhy) c.strongWhy = why;
     if (why && !c.whys.includes(why)) c.whys.push(why);
     for (const v of [].concat(vs || [])) c.vs.add(v);
     cand.set(key, c);
@@ -3152,7 +3155,7 @@ export function itemPlan({ builds, guides, od, knowledge, heroId, pos, enemies =
     const invis = ((knowledge.heroes || {})[od.heroKey(e)] || []).includes("invis");
     for (const [item, lift] of vsTable[e] || []) {
       if (DETECTION.has(item) && !invis) continue;
-      add(item, (lift - 1) * 2.5, `против ${od.heroName(e)} про берут его в ${fmtLift(lift)} раза чаще`, od.heroName(e));
+      add(item, (lift - 1) * 2.5, `против ${od.heroName(e)} про берут его в ${fmtLift(lift)} раза чаще`, od.heroName(e), lift >= 1.7);
     }
   }
   // 2. Механики врагов: невидимость, уклонение, лечение, иллюзии, контроль
@@ -3162,10 +3165,10 @@ export function itemPlan({ builds, guides, od, knowledge, heroId, pos, enemies =
     if (!m || !m.roles.includes(grp)) continue;
     // «лечение» в справочнике стоит у многих: одно это ещё не повод для Vessel
     const w = tag === "heal" ? MECH_WEIGHT * 0.6 : MECH_WEIGHT;
-    for (const item of m[grp] || []) add(item, w * Math.min(names.length, 2), `${names.join(", ")}: ${m.name}`, names);
+    for (const item of m[grp] || []) add(item, w * Math.min(names.length, 2), `${m.name} у ${names.join(", ")}`, names, names.length >= 2 && tag !== "heal");
   }
   // 3. После игры: чем тебя реально били (урон по типам, контроль)
-  for (const r of threat || []) add(r.key, r.score / 3, r.why, r.vs ? r.vs.split(", ") : []);
+  for (const r of threat || []) add(r.key, r.score / 3, r.why, r.vs ? r.vs.split(", ") : [], r.score >= 6);
 
   const inCore = new Set([...base.early, ...base.core].map((r) => r[0]));
   const status = (key) => ({
@@ -3177,7 +3180,9 @@ export function itemPlan({ builds, guides, od, knowledge, heroId, pos, enemies =
     const st = status(key);
     // поздно: на 5+ минут позже, чем обычно у про
     const late = !turbo && st.time != null && med != null && med > 0 && st.time > med + 300;
-    return { key, item: od.itemName(key), share, med, wr, ...st, late };
+    // не успел: игра кончилась раньше, чем про обычно его собирают — это не ошибка
+    const pending = st.owned === false && duration != null && med != null && med > duration - 60;
+    return { key, item: od.itemName(key), share, med, wr, ...st, late, pending };
   };
   const ranked = [...cand.values()].filter((c) => c.score >= PLAN_MIN_SCORE).sort((a, b) => b.score - a.score);
   // Предметы из основы, которые против этого пика ещё важнее: отмечаем в основе, а не дублируем
@@ -3192,9 +3197,12 @@ export function itemPlan({ builds, guides, od, knowledge, heroId, pos, enemies =
     counterGroups(c.key).forEach((g) => covered.add(g));
     const r = proShare.get(c.key);
     counters.push({
-      key: c.key, item: od.itemName(c.key), score: Math.round(c.score * 10) / 10, why: c.whys[0], whys: c.whys.slice(0, 2),
-      vs: [...c.vs].slice(0, 2).join(", ") || null, popular: !!r && r[1] != null && r[1] >= 8, share: r ? r[1] : null, med: r ? r[2] : null,
-      next: upgrade ? upgrade(c.key) : null, ...status(c.key),
+      // вторая причина — только если про других врагов: «уклонение у PL» и «PL уклоняется» — одно и то же
+      key: c.key, item: od.itemName(c.key), score: Math.round(c.score * 10) / 10, why: c.whys[0],
+      whys: c.whys.filter((w, i) => i === 0 || ![...c.vs].some((n) => c.whys[0].includes(n) && w.includes(n))).slice(0, 2),
+      vs: [...c.vs].slice(0, 2).join(", ") || null, vs_ids: enemies.filter((e) => c.vs.has(od.heroName(e))).slice(0, 3),
+      popular: !!r && r[1] != null && r[1] >= 8, share: r ? r[1] : null, med: r ? r[2] : null,
+      next: upgrade ? upgrade(c.key) : null, strong: c.strong, strong_why: c.strongWhy, ...status(c.key),
     });
     if (counters.length >= PLAN_MAX_COUNTERS) break;
   }
@@ -3210,14 +3218,95 @@ export function itemPlan({ builds, guides, od, knowledge, heroId, pos, enemies =
   const ctrl = [...new Set([...(mech.silence || []), ...(mech.hex || []), ...(mech.hook || []), ...(mech.blink_init || [])])];
   const bkb = core.find((r) => r.key === "black_king_bar");
   if (bkb && ctrl.length >= 2 && bkb.med && bkb.med > 1200) notes.push(`Black King Bar раньше обычного: у ${ctrl.slice(0, 3).join(", ")} контроль, без него в драки не зайти`);
-  const coreKeys = core.filter((r) => r.key !== "aghanims_shard");
+  const coreKeys = core.filter((r) => r.key !== "aghanims_shard" && !r.pending);
+  const early = base.early.map(mark);
+  const after = owned && finished ? reviewPurchases({ od, base, core, early, counters, finished, turbo }) : { extra: [], inversion: null, verdict: [] };
   return {
     hero: od.heroName(heroId), hero_id: heroId, pos: base.pos, want: pos, source: base.source, games: base.g || null, wr: base.wr ?? null, patch: base.patch || null, guide: base.guide || null,
     start: (base.start || []).map((k) => ({ key: k, item: od.itemName(k), ...status(k) })),
-    early: base.early.map(mark), core, counters, notes,
+    early, core, counters, notes,
     sit: base.sit.filter((r) => !counters.some((c) => c.key === r[0])).slice(0, 8).map(row),
     core_have: owned ? coreKeys.filter((r) => r.owned).length : null, core_total: coreKeys.length, turbo,
+    extra: after.extra, inversion: after.inversion, verdict: after.verdict,
+    // порядок покупок игрока (готовые предметы) — рядом с порядком основы у про
+    bought_order: finished ? finished.filter((x) => x.time > 0).map(({ key, item, time }) => ({ key, item, time })) : null,
   };
+}
+
+// Защита, которую про собирают раньше жадных предметов: если у игрока наоборот — это ошибка приоритета
+const DEFENSIVE = new Set(["black_king_bar", "sphere", "aeon_disk", "manta", "glimmer_cape", "force_staff", "ghost", "lotus_orb", "pipe", "eternal_shroud", "hurricane_pike", "cyclone", "satanic"]);
+// Апгрейды, которые съедают основной предмет: Blessing после Aghanim's Scepter — не «вне сборки»
+const CONSUMED = { ultimate_scepter_2: "ultimate_scepter", travel_boots_2: "travel_boots" };
+
+// Все компоненты из справочника предметов (считаем один раз на справочник)
+const componentSets = new WeakMap();
+function ALL_COMPONENTS(od) {
+  const items = od.items || {};
+  if (!componentSets.has(items)) componentSets.set(items, new Set(Object.values(items).flatMap((v) => (v && v.components) || [])));
+  return componentSets.get(items);
+}
+
+// Разбор покупок после игры: что купил вне сборки (и вместо чего), где перепутал порядок, и главное по сборке
+function reviewPurchases({ od, base, core, early, counters, finished, turbo }) {
+  const pool = new Set([...(base.start || []), ...[...base.early, ...base.core, ...base.sit].map((r) => r[0]), ...counters.map((c) => c.key)]);
+  const shareOf = new Map([...base.early, ...base.core, ...base.sit].map((r) => [r[0], r[1]]));
+  const comps = (k) => ((od.items || {})[k] || {}).components || [];
+  // общий крупный компонент (Dragon Lance у Pike и Hydra's Breath) — значит, собирал вместо
+  const shareBig = (a, b) => comps(a).some((c) => c && comps(b).includes(c) && od.itemCost(c) >= 1000);
+  const missing = core.filter((r) => r.owned === false && !r.pending);
+  // компонент предмета из сборки (Crystalys — шаг к Daedalus) — не «вне сборки», а недособранный
+  const stepToPool = (k) => [...pool].some((x) => comps(x).includes(k));
+  const extra = [];
+  const seen = new Set();
+  for (const it of finished) {
+    const key = CONSUMED[it.key] || it.key;
+    if (seen.has(it.key)) continue;
+    seen.add(it.key);
+    if (pool.has(key) || pool.has(it.key) || stepToPool(it.key)) continue;
+    // сырой компонент (Hyperstone) — часть чего-то большего; апгрейд предмета из сборки (Arcane Blink из Blink) — тоже не ошибка
+    if (!comps(it.key).length && ALL_COMPONENTS(od).has(it.key)) continue;
+    if (comps(it.key).some((c) => pool.has(c))) continue;
+    // ситуативная защита (BKB у саппорта, Vessel у четвёрки) — не ошибка сама по себе
+    if (DEFENSIVE.has(it.key) || UNIVERSAL_COUNTERS.core.has(it.key) || UNIVERSAL_COUNTERS.support.has(it.key)) continue;
+    const instead = missing.find((r) => shareBig(it.key, r.key));
+    extra.push({ key: it.key, item: it.item, time: it.time, share: shareOf.get(it.key) ?? null, instead: instead ? instead.item : null });
+  }
+  // порядок: защиту про берут раньше, а игрок — после жадного предмета
+  let inversion = null;
+  const got = core.filter((r) => r.owned && r.time != null && r.med);
+  for (const a of got) {
+    // ругаемся на порядок, только если защита в итоге пришла позже, чем у про
+    if (a.time <= a.med + 120) continue;
+    for (const b of got) {
+      if (a === b || a.med + 180 >= b.med || a.time <= b.time + 120) continue;
+      const w = (a.important ? 2 : 0) + (DEFENSIVE.has(a.key) ? 1 : 0) - (DEFENSIVE.has(b.key) ? 1 : 0);
+      if (w <= 0) continue;
+      if (!inversion || w > inversion.w) inversion = { w, first: a.item, then: b.item, first_med: a.med, then_med: b.med, first_time: a.time, then_time: b.time, why: a.important || null };
+    }
+  }
+  // Главное по сборке: самые дорогие ошибки первыми
+  const v = [];
+  const min = (sec) => Math.round(sec / 60);
+  const cap = (t) => (t ? t.charAt(0).toUpperCase() + t.slice(1) : "");
+  for (const r of core) {
+    if (r.important && r.owned === false && !r.pending) v.push({ w: 100, text: `${r.item} так и не собрал, а в этой катке он был нужнее обычного. ${cap(r.important)}` });
+    else if (r.important && r.late) v.push({ w: 90 + min(r.time - r.med), text: `${r.item} только на ${mmss(r.time)}, у про к ${mmss(r.med)}, а в этой катке он был нужнее обычного. ${cap(r.important)}` });
+  }
+  if (inversion && !v.some((x) => x.text.startsWith(inversion.first))) {
+    v.push({ w: 80, text: `${inversion.then} собрал раньше ${inversion.first} (${mmss(inversion.then_time)} и ${mmss(inversion.first_time)}), у про наоборот: ${inversion.first} к ${mmss(inversion.first_med)}, ${inversion.then} к ${mmss(inversion.then_med)}` });
+  }
+  // «вместо BKB собрал Echo» не повторяем, если про BKB уже сказали выше
+  for (const e of extra.filter((x) => x.instead && !v.some((y) => y.text.startsWith(x.instead)))) v.push({ w: 70, text: `Вместо ${e.instead} собрал ${e.item}: про на этой позиции его почти не берут` });
+  const firstCore = core.find((r) => r.key !== "aghanims_shard" && r.share >= 50);
+  if (!turbo && firstCore && firstCore.late) v.push({ w: 60 + min(firstCore.time - firstCore.med), text: `Первый главный предмет ${firstCore.item} на ${mmss(firstCore.time)}, у про к ${mmss(firstCore.med)}: на ${min(firstCore.time - firstCore.med)} мин позже` });
+  // из контр-предметов в главное — один, и только с сильной причиной
+  const strongCounter = counters.find((x) => x.owned === false && x.strong);
+  if (strongCounter) v.push({ w: 55, text: `Не было ${strongCounter.item}${strongCounter.vs ? ` (против ${strongCounter.vs})` : ""}. ${cap(strongCounter.strong_why || strongCounter.why)}` });
+  const skipped = missing.filter((r) => r.share >= 40).map((r) => r.item);
+  if (skipped.length >= 2) v.push({ w: 50, text: `Из основы не было ${skipped.slice(0, 3).join(", ")}: у про они в ${skipped.length > 2 ? "большинстве" : "половине и больше"} игр` });
+  for (const e of extra.filter((x) => !x.instead)) v.push({ w: 40, text: `${e.item} на ${mmss(e.time)}: про на этой позиции его почти не собирают` });
+  void early;
+  return { extra, inversion, verdict: v.sort((a, b) => b.w - a.w).slice(0, 3).map((x) => x.text) };
 }
 
 // ---------- прокачка ----------

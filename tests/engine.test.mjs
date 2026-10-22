@@ -473,3 +473,33 @@ test("прокачка: очки к 10 уровню против про, уль�
   assert.deepEqual(pro.notes, []);
   assert.equal(skillPlan({ skills: {} }, 1, 1), null);
 });
+
+test("разбор покупок: вне сборки и «вместо», компоненты и сырые части не в счёт, «не успел» в короткой игре", () => {
+  const b = { patch: "7.41", heroes: { 44: { 1: { g: 300, wr: 50, start: [], early: [],
+    core: [["black_king_bar", 60, 1500, 50], ["manta", 50, 1800, 50], ["butterfly", 50, 2000, 50], ["skadi", 40, 2500, 50]],
+    sit: [["greater_crit", 10, 2600, 50]] } } }, vs: { core: {}, support: {} } };
+  const finished = [["butterfly", 1900], ["echo_sabre", 1700], ["lesser_crit", 2200], ["hyperstone", 2300]].map(([key, time]) => ({ key, item: od.itemName(key), time }));
+  const owned = new Set(finished.map((x) => x.key));
+  const bought = new Map(finished.map((x) => [x.key, x.time]));
+  const plan = itemPlan({ builds: b, od, knowledge: kb, heroId: 44, pos: 1, enemies: [], owned, bought, duration: 2100, finished });
+  assert.deepEqual(plan.extra.map((e) => [e.key, e.instead]), [["echo_sabre", "Black King Bar"]]); // общий Ogre Axe
+  assert.equal(plan.core.find((r) => r.key === "skadi").pending, true); // у про к 41:40, а игра кончилась на 35:00
+  assert.equal(plan.core_total, 3);
+  assert.ok(plan.verdict.some((t) => /^Вместо Black King Bar собрал Echo Sabre/.test(t)), plan.verdict.join(" | "));
+  assert.deepEqual(plan.bought_order.map((x) => x.key), finished.map((x) => x.key));
+});
+
+test("разбор покупок: порядок ругаем, только если защита в итоге опоздала", () => {
+  const b = { patch: "7.41", heroes: { 44: { 1: { g: 300, wr: 50, start: [], early: [],
+    core: [["black_king_bar", 60, 1500, 50], ["butterfly", 50, 2000, 50]], sit: [] } } }, vs: { core: {}, support: {} } };
+  const run2 = (bkb, fly) => {
+    const finished = [{ key: "butterfly", item: "Butterfly", time: fly }, { key: "black_king_bar", item: "Black King Bar", time: bkb }].sort((x, y) => x.time - y.time);
+    return itemPlan({ builds: b, od, knowledge: kb, heroId: 44, pos: 1, enemies: [], owned: new Set(["butterfly", "black_king_bar"]),
+      bought: new Map(finished.map((x) => [x.key, x.time])), duration: 3000, finished });
+  };
+  const late = run2(2500, 1600);
+  assert.equal(late.inversion.first, "Black King Bar");
+  assert.ok(late.verdict.some((t) => /^Butterfly собрал раньше Black King Bar/.test(t)), late.verdict.join(" | "));
+  // BKB пришёл вовремя (25:50 при обычных 25:00 + 2 мин запаса) — порядок не важен
+  assert.equal(run2(1550, 1400).inversion, null);
+});

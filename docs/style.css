@@ -879,3 +879,21 @@ body { background: transparent; }
 .skills .sk-opt.pop { color: var(--text); }
 .skills .sk-opt.picked { box-shadow: inset 0 0 0 1.5px var(--radiant); color: var(--text); }
 .skills .sk-opt small { color: var(--muted); }
+
+/* сборка: главное, порядок, вне сборки */
+.ip-verdict { margin: 12px 0 4px; padding: 12px 14px; border-radius: 12px; background: rgba(232, 194, 122, 0.08); border: 1px solid rgba(232, 194, 122, 0.25); }
+.ip-verdict .ip-label { margin-top: 0; color: var(--aegis); }
+.ip-verdict p { margin: 6px 0 0; font-size: 14px; line-height: 1.4; }
+.ip-st.pending { color: var(--muted); }
+.ip-row.extra img { box-shadow: 0 0 0 1.5px #f0a54a; }
+.ip-vs { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+.ip-vs .mini-hero { width: 34px; height: 19px; border-radius: 4px; object-fit: cover; }
+.ip-pub { margin-top: 2px; }
+.ip-order { display: grid; grid-template-columns: 30px 1fr; gap: 8px; align-items: start; margin-top: 6px; }
+.ip-order-label { font-size: 12px; font-weight: 800; color: var(--muted); padding-top: 8px; }
+.ip-order-items { display: flex; flex-wrap: wrap; gap: 6px; }
+.ip-step { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.ip-step img { width: 38px; height: 28px; border-radius: 6px; object-fit: cover; opacity: .55; filter: grayscale(.4); }
+.ip-step.have img, .ip-order.mine .ip-step img { opacity: 1; filter: none; }
+.ip-step.off img { box-shadow: 0 0 0 1.5px #f0a54a; }
+.ip-step small { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
