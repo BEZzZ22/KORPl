@@ -503,3 +503,33 @@ test("разбор покупок: порядок ругаем, только е�
   // BKB пришёл вовремя (25:50 при обычных 25:00 + 2 мин запаса) — порядок не важен
   assert.equal(run2(1550, 1400).inversion, null);
 });
+
+import { checkGoal as checkGoal2, formatMetric as formatMetric2 } from "../docs/engine.js";
+
+test("цель по сборке: «предмет к времени» проверяется по следующей катке той же группы ролей", () => {
+  const check = { group: "build", metric: "itemtime:black_king_bar", op: "<=", target: 1980, grp: "core" };
+  assert.deepEqual(checkGoal2(check, { pos: 1, minutes: 40, item_times: { black_king_bar: 1700 } }), { status: "done", value: 1700 });
+  assert.equal(checkGoal2(check, { pos: 2, minutes: 40, item_times: { black_king_bar: 2100 } }).status, "failed");
+  assert.equal(checkGoal2(check, { pos: 1, minutes: 45, item_times: {} }).status, "failed"); // долгая катка, так и не купил
+  assert.equal(checkGoal2(check, { pos: 1, minutes: 30, item_times: {} }).status, "skip"); // катка кончилась раньше
+  assert.equal(checkGoal2(check, { pos: 5, minutes: 45, item_times: {} }).status, "skip"); // на саппорте не проверить
+  assert.equal(formatMetric2("itemtime:black_king_bar", 1700), "28:20");
+  assert.equal(formatMetric2("itemtime:black_king_bar", null), "не купил");
+});
+
+test("ошибка сборки попадает в проблемы катки с целью: важный предмет сильно опоздал", () => {
+  const m = copy();
+  const p = m.players.find((x) => od.heroName(x.hero_id) === "Invoker");
+  // основа с BKB к 20:00; у Invoker BKB на 45:00, а врагов с контролем хватает
+  const builds = { patch: "7.41", heroes: { [p.hero_id]: { 2: { g: 300, wr: 50, start: [], early: [], core: [["black_king_bar", 60, 1200, 55]], sit: [] } } }, vs: { core: {}, support: {} } };
+  p.purchase_log = [...(p.purchase_log || []).filter((x) => x.key !== "black_king_bar"), { time: 2700, key: "black_king_bar" }];
+  const a = analyze(m, p, od, kb, tx, pro, bench, {}, [], null, { builds });
+  const bkb = a.item_plan.core.find((r) => r.key === "black_king_bar");
+  assert.equal(bkb.late, true);
+  assert.match(bkb.important, /Tiny|Enigma/);
+  const issue = a.summary.problems.find((x) => x.group === "build");
+  assert.ok(issue, JSON.stringify(a.summary.problems.map((x) => x.group)));
+  assert.match(issue.title, /Black King Bar слишком поздно/);
+  assert.ok(issue.impact <= 4500); // даже очень поздний предмет не перебивает всё остальное
+  assert.deepEqual(a.summary.goal_check, { group: "build", metric: "itemtime:black_king_bar", op: "<=", target: 1320, grp: "core" });
+});

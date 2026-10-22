@@ -600,6 +600,7 @@ class MatchAnalyzer {
     this.checkDispel();
     const proBuild = this.proBuild();
     this.checkProBuild(proBuild);
+    this.checkBuildPlan();
     this.checkRoshan();
     this.checkDeathZones();
     this.checkWardZones();
@@ -816,6 +817,7 @@ class MatchAnalyzer {
     if (g === "lead_deaths") return num("lead_deaths", "<=", 0);
     if (g.startsWith("unused_")) return num(`unused:${g.slice(7)}`, "<=", 0);
     if (g.startsWith("killer_")) return num(`killer:${g.slice(7)}`, "<=", 1);
+    if (g === "build") return this.buildGoal || null;
     return null;
   }
 
@@ -848,6 +850,8 @@ class MatchAnalyzer {
       lane_nw10: nw10,
       lane_gaps: this.laneGapCount ?? null,
       enemy_keys: this.enemies.map((e) => this.od.heroKey(e.hero_id)),
+      // первая покупка крупных предметов: по ним проверяется цель «BKB к 28:00»
+      item_times: Object.fromEntries(this.coreItems().reverse().map((x) => [x.key, x.time])),
       runes12: this.pos === 2 ? runes : null,
       wasted_buybacks: this.wastedBuybacks ?? 0,
       farm_pace: this.farmPace ?? null,
@@ -918,6 +922,44 @@ class MatchAnalyzer {
       owned: owned.has(k),
       time: k in purchases ? purchases[k] : null,
     }));
+  }
+
+  // Самая дорогая ошибка сборки под этот пик — в общий список проблем со своей ценой:
+  // важный предмет не собран или сильно опоздал, жадный предмет раньше защиты, которая в итоге опоздала
+  checkBuildPlan() {
+    const plan = this.itemPlan();
+    if (!plan || this.minutes < 20 || plan.turbo) return;
+    const gpm = this.p.gold_per_min || 400;
+    const cap = (t) => (t ? t.charAt(0).toUpperCase() + t.slice(1) : "");
+    // что собрать перед ним: предыдущий предмет основы в порядке про (Shard не в счёт)
+    const before = (key) => plan.core.slice(0, plan.core.findIndex((r) => r.key === key)).filter((r) => r.key !== "aghanims_shard").pop();
+    const cands = [];
+    for (const r of plan.core) {
+      if (!r.important || !r.med) continue;
+      if (r.owned === false && !r.pending) {
+        cands.push({ impact: 2600 + (this.minutes >= 30 ? 800 : 0), key: r.key, item: r.item, med: r.med, title: `Не было ${r.item}`,
+          fact: `${r.item} так и не собрал, а против этого пика он был нужнее обычного: ${r.important}. У про на этой позиции он${r.share != null ? ` в ${r.share}% игр` : ""} к ${mmss(r.med)}` });
+      } else if (r.late) {
+        cands.push({ impact: ((r.time - r.med) / 60) * gpm * 0.45, key: r.key, item: r.item, med: r.med, title: `${r.item} слишком поздно`,
+          fact: `${r.item} только на ${mmss(r.time)}, у про на этой позиции к ${mmss(r.med)}. ${cap(r.important)}` });
+      }
+    }
+    const inv = plan.inversion;
+    if (inv) {
+      cands.push({ impact: ((inv.first_time - inv.first_med) / 60) * gpm * 0.35, key: inv.first_key, item: inv.first, med: inv.first_med, title: "Жадный предмет раньше защиты",
+        action: `Собирай ${inv.first} до ${inv.then}: у про на этой позиции ${inv.first} к ${mmss(inv.first_med)}, а ${inv.then} уже потом`,
+        fact: `${inv.then} на ${mmss(inv.then_time)}, а ${inv.first} только на ${mmss(inv.first_time)}. У про наоборот: ${inv.first} к ${mmss(inv.first_med)}, ${inv.then} к ${mmss(inv.then_med)}` });
+    }
+    const best = cands.sort((a, b) => b.impact - a.impact)[0];
+    if (!best || best.impact < 600) return;
+    best.impact = Math.min(best.impact, 4500);
+    const prev = before(best.key);
+    // цель: этот предмет к времени про + 2 минуты, проверяется следующей каткой той же группы ролей
+    const target = Math.ceil((best.med + 120) / 60) * 60;
+    this.buildGoal = { group: "build", metric: `itemtime:${best.key}`, op: "<=", target, grp: this.core ? "core" : "support" };
+    this.issue("build", best.impact, best.title, best.fact,
+      best.action || `Против таких врагов собирай ${best.item} сразу после ${prev ? prev.item : "сапог"}: у про на этой позиции он к ${mmss(best.med)}`,
+      `Цель на следующую катку: ${best.item} к ${mmss(target)}`);
   }
 
   checkProBuild(build) {
@@ -2975,6 +3017,13 @@ export function checkGoal(check, m) {
     const key = check.metric.slice(7);
     if (!(m.bought || []).includes(key)) return { status: "skip" };
     value = (m.unused || []).includes(key) ? 1 : 0;
+  } else if (check.metric.startsWith("itemtime:")) {
+    // другая группа ролей (цель кора, а катка на саппорте) — не проверить
+    if (check.grp && m.pos != null && (m.pos <= 3 ? "core" : "support") !== check.grp) return { status: "skip" };
+    const t = (m.item_times || {})[check.metric.slice(9)];
+    // не купил: провал, только если катка шла заметно дольше цели
+    if (t == null) return m.minutes != null && m.minutes * 60 >= check.target + 600 ? { status: "failed", value: null } : { status: "skip" };
+    value = t;
   } else if (check.metric.startsWith("killer:")) {
     const key = check.metric.slice(7);
     if (!(m.enemy_keys || []).includes(key)) return { status: "skip" };
@@ -2989,9 +3038,10 @@ export function checkGoal(check, m) {
 
 // Показатель катки для людей: проценты, время, знак
 export function formatMetric(metric, v) {
-  if (v == null) return "—";
+  if (v == null) return metric.startsWith("itemtime:") ? "не купил" : "—";
   if (["dead_share", "kp"].includes(metric)) return `${Math.round(v * 100)}%`;
   if (["first_item", "ward_gap"].includes(metric)) return mmss(v);
+  if (metric.startsWith("itemtime:")) return v == null ? "не купил" : mmss(v);
   if (metric === "lane_nw10") return signed(v);
   if (["obs10", "farm_pace", "deaths10"].includes(metric)) return tenths(v);
   if (metric.startsWith("unused:")) return v ? "не нажат" : "нажат";
@@ -3281,7 +3331,7 @@ function reviewPurchases({ od, base, core, early, counters, finished, turbo }) {
       if (a === b || a.med + 180 >= b.med || a.time <= b.time + 120) continue;
       const w = (a.important ? 2 : 0) + (DEFENSIVE.has(a.key) ? 1 : 0) - (DEFENSIVE.has(b.key) ? 1 : 0);
       if (w <= 0) continue;
-      if (!inversion || w > inversion.w) inversion = { w, first: a.item, then: b.item, first_med: a.med, then_med: b.med, first_time: a.time, then_time: b.time, why: a.important || null };
+      if (!inversion || w > inversion.w) inversion = { w, first_key: a.key, first: a.item, then: b.item, first_med: a.med, then_med: b.med, first_time: a.time, then_time: b.time, why: a.important || null };
     }
   }
   // Главное по сборке: самые дорогие ошибки первыми
