@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker, { buildPrompt, normalize, problemsOf, ask } from "./coach.js";
+import worker, { buildPrompt, normalize, problemsOf, ask, rateGuard } from "./coach.js";
 
 const raw = {
   hero: "Phantom Assassin", role: "керри", rank: "Рекрут", won: false, kda: "2/11/3", duration: 2100,
@@ -437,8 +437,9 @@ test("fetch: лимит 6 запросов в час на IP, седьмой —
   t.after(restore);
   mockFetch({ groq: Array.from({ length: 6 }, () => groqOk(good)) });
   const ip = nextIp();
-  for (let i = 0; i < 6; i++) assert.equal((await worker.fetch(req({ ip }), both)).status, 200, `запрос ${i + 1}`);
-  const res = await worker.fetch(req({ ip }), both);
+  const open = { ...both, RATE_PER_MIN: "100" }; // поминутная защита здесь не мешает: проверяем часовой лимит
+  for (let i = 0; i < 6; i++) assert.equal((await worker.fetch(req({ ip }), open)).status, 200, `запрос ${i + 1}`);
+  const res = await worker.fetch(req({ ip }), open);
   assert.equal(res.status, 429);
   assert.equal((await json(res)).error, "Слишком часто. Подожди немного.");
   // другой IP не задет
@@ -615,4 +616,47 @@ test("проверка: свой герой в моменте и предмет 
 — Смотри на миникарту перед тем, как идти фармить.`;
   const bad = problemsOf(text, p).filter((b) => /то, чего нет в его фактах/.test(b));
   assert.deepEqual(bad, []);
+});
+
+test("rateGuard: 3 запроса в минуту, дальше бан 5 минут, 30 минут, 12 часов", async () => {
+  const kv = new Map();
+  const env = { COACH_KV: { get: async (k) => (kv.has(k) ? JSON.parse(kv.get(k)) : null), put: async (k, v) => { kv.set(k, v); } } };
+  const ip = "198.51.100.7";
+  const t0 = 1_000_000_000_000;
+  for (let i = 0; i < 3; i++) assert.equal(await rateGuard(env, ip, t0 + i * 1000), null, `запрос ${i + 1}`);
+  const first = await rateGuard(env, ip, t0 + 3000);
+  assert.equal(first.wait, 5 * 60_000);
+  assert.match(first.text, /Бан на 5 минут/);
+  // в бане любой запрос отбивается и сообщает остаток
+  const during = await rateGuard(env, ip, t0 + 100_000);
+  assert.match(during.text, /Подожди 4 минуты/);
+  // после бана снова 3 запроса, четвёртый — бан на 30 минут
+  let t = t0 + 6 * 60_000;
+  for (let i = 0; i < 3; i++) assert.equal(await rateGuard(env, ip, t + i * 1000), null);
+  assert.equal((await rateGuard(env, ip, t + 3000)).wait, 30 * 60_000);
+  t += 31 * 60_000;
+  for (let i = 0; i < 3; i++) assert.equal(await rateGuard(env, ip, t + i * 1000), null);
+  const third = await rateGuard(env, ip, t + 3000);
+  assert.equal(third.wait, 12 * 3600_000);
+  assert.match(third.text, /Бан на 12 часов/);
+  // бан живёт в KV: другой изолят (пустая память) его тоже видит
+  assert.ok(kv.has(`ban:${ip}`));
+  // через сутки после последнего нарушения лестница начинается заново
+  t += 40 * 3600_000;
+  for (let i = 0; i < 3; i++) assert.equal(await rateGuard(env, ip, t + i * 1000), null);
+  assert.equal((await rateGuard(env, ip, t + 3000)).wait, 5 * 60_000);
+  // фоновый заход Opus и чужой IP не считаются
+  assert.equal(await rateGuard(env, "198.51.100.8", t), null);
+});
+
+test("fetch: четвёртый разбор за минуту с одного IP — 429 с баном", async (t) => {
+  t.after(restore);
+  mockFetch({ groq: Array.from({ length: 3 }, () => groqOk(good)) });
+  const ip = nextIp();
+  for (let i = 0; i < 3; i++) assert.equal((await worker.fetch(req({ ip }), both)).status, 200);
+  const res = await worker.fetch(req({ ip }), both);
+  assert.equal(res.status, 429);
+  const out = await json(res);
+  assert.match(out.error, /Бан на 5 минут/);
+  assert.equal(out.retry_after, 300);
 });

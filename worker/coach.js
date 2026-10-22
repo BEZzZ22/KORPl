@@ -107,6 +107,50 @@ function throttle(ip, now, perHour = PER_IP_PER_HOUR, bucket = "coach", perDay =
   return null;
 }
 
+// ---------- защита от потока запросов: 3 в минуту с IP, дальше бан 5 минут, 30 минут, 12 часов ----------
+
+const RATE_PER_MIN = 3;
+const BAN_STEPS = [5 * 60_000, 30 * 60_000, 12 * 3600_000];
+const STRIKE_MEMORY = 24 * 3600_000; // сколько нарушение помнится: потом лестница бана начинается заново
+const rateStamps = new Map(); // ip -> время последних запросов (память воркера, на один изолят)
+const banCache = new Map();   // ip -> { strikes, until, last }: сверяется с KV, чтобы бан держался между изолятами
+
+const waitText = (ms) => {
+  const m = Math.ceil(ms / 60_000);
+  if (m >= 60) { const h = Math.ceil(m / 60); return `${h} ${plural(h, "час", "часа", "часов")}`; }
+  return `${m} ${plural(m, "минуту", "минуты", "минут")}`;
+};
+
+// null — пропускаем; { wait, text } — бан. Только дорогие запросы: разбор, вопрос тренеру, сравнение
+export async function rateGuard(env, ip, now = Date.now()) {
+  if (!ip || ip === "anon") return null;
+  try {
+    let st = banCache.get(ip);
+    if ((!st || st.until <= now) && env.COACH_KV) {
+      const kv = await env.COACH_KV.get(`ban:${ip}`, "json");
+      if (kv && (!st || kv.last > st.last)) { st = kv; banCache.set(ip, kv); }
+    }
+    if (st && st.until > now) return { wait: st.until - now, text: `Слишком много запросов. Подожди ${waitText(st.until - now)}.` };
+    const limit = Number(env.RATE_PER_MIN) || RATE_PER_MIN;
+    const recent = (rateStamps.get(ip) || []).filter((t) => now - t < 60_000);
+    if (recent.length >= limit) {
+      const strikes = (st && now - st.last < STRIKE_MEMORY ? st.strikes : 0) + 1;
+      const step = BAN_STEPS[Math.min(strikes, BAN_STEPS.length) - 1];
+      const next = { strikes, until: now + step, last: now };
+      banCache.set(ip, next);
+      rateStamps.delete(ip);
+      if (banCache.size > 5000) banCache.clear();
+      if (env.COACH_KV) await env.COACH_KV.put(`ban:${ip}`, JSON.stringify(next), { expirationTtl: Math.ceil((step + STRIKE_MEMORY) / 1000) });
+      console.warn(`ban ${ip}: нарушение ${strikes}, на ${waitText(step)}`);
+      return { wait: step, text: `Слишком много запросов. Бан на ${waitText(step)}.` };
+    }
+    recent.push(now);
+    rateStamps.set(ip, recent);
+    if (rateStamps.size > 5000) rateStamps.clear();
+  } catch { /* защита не должна ронять сервис: при сбое пропускаем */ }
+  return null;
+}
+
 // Лимит вопросов на человека живёт в KV: память воркера сбрасывается при перезапуске.
 // Место занимается до ответа (два запроса разом не проскочат), при ошибке возвращается
 const plural = (n, one, few, many) => {
@@ -873,6 +917,12 @@ async function handlePost(request, env, ctx, origin) {
   const run = { ...env, meter };
   const later = (p) => { const q = p.catch(() => {}); if (ctx && ctx.waitUntil) ctx.waitUntil(q); return q; };
   const debug = (e) => (env.COACH_DEBUG ? { error: busyError(e), log: e.log } : { error: busyError(e) });
+
+  // дорогие запросы к нейросетям: 3 в минуту с IP, дальше лестница банов. Фоновый заход Opus — продолжение разбора, не считается
+  if ((mode === "coach" || mode === "chat" || mode === "compare") && raw.tier !== "opus") {
+    const ban = await rateGuard(env, ip);
+    if (ban) return reply(429, { error: ban.text, retry_after: Math.ceil(ban.wait / 1000) }, origin);
+  }
 
   if (mode === "card") {
     if (!env.COACH_KV) return reply(500, { error: "Карточки не настроены." }, origin);
