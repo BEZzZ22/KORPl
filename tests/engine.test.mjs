@@ -601,3 +601,16 @@ test("сводка смертей: типы, «сразу после возро�
   // «5 раз», а не «5 раза»
   for (const x of d.patterns) { const m2 = /(\d+) раза умер/.exec(x.text); if (m2) assert.ok([2, 3, 4].includes(Number(m2[1]) % 10)); }
 });
+
+test("линия 1 на 2: расклад в дуэли и фраза перед оценкой линии", () => {
+  const a = run(copy(), "Batrider");
+  assert.equal(a.lane.setup.mine, 1);
+  assert.equal(a.lane.setup.theirs, 2);
+  assert.deepEqual(a.lane.setup.enemies, ["Tiny", "Witch Doctor"]);
+  assert.match(a.phases[0].text, /^Ты один против Tiny и Witch Doctor/);
+  // мид 1 на 1: роумящий Windranger не в счёт, фразы о раскладе нет
+  const mid = run(copy(), "Invoker");
+  assert.equal(mid.lane.setup.mine, 1);
+  assert.equal(mid.lane.setup.theirs, 1);
+  assert.ok(!/против/.test(mid.phases[0].text.split(".")[0]) || !/^Ты/.test(mid.phases[0].text));
+});

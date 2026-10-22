@@ -1,7 +1,7 @@
 // Приложение в Chromium на настоящих данных: живая OpenDota (через Node, с кэшем на диске), аккаунт игрока.
 // Тренер подменён заглушкой, Телеграма нет. Скриншоты в tests/ui/live/.
 // Запуск: node tools/ui-live.mjs <match_id> [вкладки через запятую: overview,phases,deaths,map,build,charts]
-// ACCOUNT=801280038 по умолчанию, UI_WIDTH=390, LIVE_CACHE=папка кэша ответов OpenDota
+// ACCOUNT=801280038 по умолчанию, UI_WIDTH=390, LIVE_CACHE=папка кэша ответов OpenDota, OPEN=1 раскрывает <details>
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
 import { join, extname } from "node:path";
@@ -139,6 +139,8 @@ for (const t of TABS) {
     console.log(`опыт: 10 мин → ${(await c.locator("text.tt").allTextContents()).filter(Boolean).join(" | ")}`);
     await page.locator(".chart-seg button", { hasText: "Золото" }).click();
   }
+  // OPEN=1 — раскрыть все сворачиваемые блоки (хронология и пр.) перед скриншотом
+  if (process.env.OPEN) await page.evaluate(() => document.querySelectorAll("details").forEach((d) => { d.open = true; }));
   const file = join(OUT, String(MATCH), `${t}.png`);
   await page.screenshot({ path: file, fullPage: true });
   console.log("screenshot", file);

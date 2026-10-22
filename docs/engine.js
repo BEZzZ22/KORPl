@@ -2490,8 +2490,34 @@ class MatchAnalyzer {
 
   // ---------- фазы игры ----------
 
+  // Кто стоял на линии: союзники и враги на той же линии (не роумеры). Для «1 на 2» и честной оценки линии
+  laneSetup() {
+    const p = this.p;
+    if (!p.lane || p.lane > 3) return null;
+    const same = (x) => x.lane === p.lane && !x.is_roaming;
+    const allies = this.allies.filter((a) => a !== p && same(a));
+    const enemies = this.enemies.filter(same);
+    if (!enemies.length) return null;
+    const names = (xs) => xs.map((x) => this.od.heroName(x.hero_id));
+    return {
+      mine: allies.length + 1, theirs: enemies.length, allies: names(allies), enemies: names(enemies),
+      hero_id: p.hero_id, ally_ids: allies.map((x) => x.hero_id), enemy_ids: enemies.map((x) => x.hero_id),
+      text: `${allies.length ? `ты и ${names(allies).join(", ")}` : "ты один"} против ${names(enemies).join(" и ")}`,
+    };
+  }
+
+  // Фраза о раскладе перед оценкой линии: один против двоих в ноль — это норм, двое на одного в ноль — нет
+  laneOddsText(setup, verdict) {
+    const who = setup.text[0].toUpperCase() + setup.text.slice(1);
+    if (setup.mine < setup.theirs) {
+      return { good: `${who}, и линия всё равно за тобой.`, even: `${who}: выйти в ноль тут уже нормально.`, bad: `${who}, так что проигранная линия не только на тебе.` }[verdict];
+    }
+    return { good: `${who}: с перевесом по людям линию и надо было забирать.`, even: `${who}: с перевесом по людям линию надо было выигрывать.`, bad: `${who}, и даже с перевесом по людям линия проиграна.` }[verdict];
+  }
+
   phases() {
     const p = this.p;
+    const setup = this.laneSetup();
     const lh = p.lh_t || [];
     if (!lh.length) return [];
     const kills = (p.kills_log || []).filter((k) => k.key.startsWith("npc_dota_hero_")).map((k) => k.time);
@@ -2518,10 +2544,13 @@ class MatchAnalyzer {
       const killsText = `${nKills} ${plural(nKills, "убийство", "убийства", "убийств")}`;
       const deathsText = nDeaths === 0 ? "без смертей" : `${nDeaths} ${deathsWord(nDeaths)}`;
       let verdict, text;
+      // на линии считаем расклад: выстоять одному против двоих — уже хорошо, вдвоём против одного — спрос строже
+      const odds = key === "lane" && setup ? setup.mine - setup.theirs : 0;
       if (this.core) {
-        const score = nKills - nDeaths * 1.5 + swing;
+        const score = nKills - nDeaths * 1.5 + swing - odds * 1.5;
         verdict = score >= 2 ? "good" : score <= -2 ? "bad" : "even";
-        text = this.say(`phase_${key}_${verdict}`, { lh: lhGain, kills_text: killsText, deaths_text: deathsText, nw_text: nwText });
+        text = this.say(`phase_${key}_${verdict}`, { lh: lhGain, kills_text: killsText, deaths_text: deathsText, nw_text: nwText, from: start, to: stop });
+        if (odds) text = `${this.laneOddsText(setup, verdict)} ${text}`;
       } else {
         // Саппорта оцениваем по дракам, смертям и вардам, а не по крипам
         const fights = this.fightsInWindow(t0, t1);
@@ -2529,13 +2558,14 @@ class MatchAnalyzer {
         const score = fights.took * 0.8 + nKills * 0.5 - nDeaths * 1.5 + teamDelta / 3000 - Math.max(0, fights.total - fights.took) * 0.5;
         verdict = score >= 2 ? "good" : score <= -2 ? "bad" : "even";
         const fightsText = fights.total
-          ? `в ${fights.took} из ${fights.total} ${plural(fights.total, "файта", "файтов", "файтов")}`
+          ? `участвовал в ${fights.took} из ${fights.total} ${plural(fights.total, "файта", "файтов", "файтов")}`
           : "файтов почти не было";
         const wardsText = wards ? `${wards} ${plural(wards, "обс", "обса", "обсов")}` : "ноль обсов";
         text = this.say(`phase_sup_${verdict}`, {
           fights_text: fightsText, deaths_text: deathsText, wards_text: wardsText,
           nw_text: `Команда за этот отрезок: ${signed(teamDelta)} золота.`,
         }, key);
+        if (odds) text = `${this.laneOddsText(setup, verdict)} ${text}`;
       }
       result.push({
         key,
@@ -2588,10 +2618,11 @@ class MatchAnalyzer {
       const note = this.deathNotes && this.deathNotes.get(d.time);
       add(d.time, BAD, this.say(key, { killer }, String(d.time)) + (traded ? " (размен)" : "") + (note ? ` — ${note}` : ""));
     }
-    for (const x of p.purchase_log || []) {
-      if (this.isFinalItem(x.key) && this.od.itemCost(x.key) >= 2000) {
-        add(x.time, "item", this.say("moment_item", { item: this.od.itemName(x.key) }, String(x.time)));
-      }
+    // Промежуточный предмет, который через пару минут ушёл в большой (Crystalys -> Daedalus), отдельным моментом не нужен
+    const bought = (p.purchase_log || []).filter((x) => this.isFinalItem(x.key) && this.od.itemCost(x.key) >= 2000);
+    for (const x of bought) {
+      const merged = bought.some((y) => y.time > x.time && y.time - x.time <= 300 && (this.od.items[y.key]?.components || []).includes(x.key));
+      if (!merged) add(x.time, "item", this.say("moment_item", { item: this.od.itemName(x.key) }, String(x.time)));
     }
     for (const [t, n] of this.missedFights()) add(t, WARN, this.say("moment_missed_fight", { n }, String(t)));
     for (const b of p.buyback_log || []) add(b.time, "info", this.say("moment_buyback", {}, String(b.time)));
@@ -2778,7 +2809,7 @@ class MatchAnalyzer {
         xp: [at(p.xp_t, m), at(o.xp_t, m)],
       });
     }
-    return { opponent: this.oppName, opponent_id: o.hero_id, rows };
+    return { opponent: this.oppName, opponent_id: o.hero_id, rows, setup: this.laneSetup() };
   }
 
   // ---------- оценки и итоги ----------

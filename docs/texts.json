@@ -391,33 +391,33 @@
   ],
   "phase_mid_good": [
     "В мидгейме ты разогнался: +{lh} {creeps}, {kills_text}, {deaths_text}. {nw_text}",
-    "С 10-й по 25-ю минуту ты задавал темп: +{lh} {creeps}, {kills_text}, {deaths_text}. {nw_text}",
+    "С {from}-й по {to}-ю минуту ты задавал темп: +{lh} {creeps}, {kills_text}, {deaths_text}. {nw_text}",
     "Мидгейм — лучшая часть твоей игры: +{lh} {lasthits}, {kills_text}, {deaths_text}. {nw_text}"
   ],
   "phase_mid_even": [
     "Мидгейм прошёл ровно: +{lh} {creeps}, {kills_text}, {deaths_text}. {nw_text}",
-    "С 10-й по 25-ю минуту без резких движений: +{lh} {lasthits}, {kills_text}, {deaths_text}. {nw_text}",
+    "С {from}-й по {to}-ю минуту без резких движений: +{lh} {lasthits}, {kills_text}, {deaths_text}. {nw_text}",
     "В середине игры всё по нулям: +{lh} {creeps}, {kills_text}, {deaths_text}. {nw_text}"
   ],
   "phase_mid_bad": [
     "Мидгейм провален: +{lh} {creeps}, {kills_text}, {deaths_text}. {nw_text}",
-    "С 10-й по 25-ю минуту игра уходила из рук: +{lh} {lasthits}, {kills_text}, {deaths_text}. {nw_text}",
+    "С {from}-й по {to}-ю минуту игра уходила из рук: +{lh} {lasthits}, {kills_text}, {deaths_text}. {nw_text}",
     "Самый слабый отрезок — мидгейм: +{lh} {creeps}, {kills_text}, {deaths_text}. {nw_text}"
   ],
   "phase_late_good": [
     "В лейте ты тащил: +{lh} {creeps}, {kills_text}, {deaths_text}. {nw_text}",
     "Концовка за тобой: +{lh} {lasthits}, {kills_text}, {deaths_text}. {nw_text}",
-    "После 25-й минуты ты был ключевым героем: {kills_text}, {deaths_text}. {nw_text}"
+    "После {from}-й минуты ты был ключевым героем: {kills_text}, {deaths_text}. {nw_text}"
   ],
   "phase_late_even": [
     "Лейт прошёл ровно: +{lh} {creeps}, {kills_text}, {deaths_text}. {nw_text}",
-    "После 25-й минуты без явного перевеса: {kills_text}, {deaths_text}. {nw_text}",
+    "После {from}-й минуты без явного перевеса: {kills_text}, {deaths_text}. {nw_text}",
     "Концовка в обычном темпе: +{lh} {lasthits}, {kills_text}, {deaths_text}. {nw_text}"
   ],
   "phase_late_bad": [
     "В лейте ты отдавал игру: {kills_text}, {deaths_text}. {nw_text}",
     "Концовка не твоя: +{lh} {creeps}, {kills_text}, {deaths_text}. {nw_text}",
-    "После 25-й минуты всё пошло не так: {kills_text}, {deaths_text}. {nw_text}"
+    "После {from}-й минуты всё пошло не так: {kills_text}, {deaths_text}. {nw_text}"
   ],
   "moment_death_fight": [
     "Смерть в файте от {killer}",
@@ -451,14 +451,14 @@
     "Команда дралась без тебя и отдала {n}"
   ],
   "moment_swing_down": [
-    "С {from} по {to} команда потеряла {gold} золота преимущества",
-    "Провал: с {from} по {to} команда отдала {gold} золота",
-    "{from}–{to}: самый тяжёлый отрезок, минус {gold} для команды"
+    "За 5 минут, до {to}, команда потеряла {gold} золота преимущества",
+    "Провал до {to}: команда отдала {gold} золота",
+    "Самый тяжёлый отрезок, до {to}: минус {gold} для команды"
   ],
   "moment_swing_up": [
-    "С {from} по {to} команда набрала {gold} золота преимущества",
-    "Рывок: с {from} по {to} команда прибавила {gold} золота",
-    "{from}–{to}: лучший отрезок, плюс {gold} для команды"
+    "За 5 минут, до {to}, команда набрала {gold} золота преимущества",
+    "Рывок до {to}: команда прибавила {gold} золота",
+    "Лучший отрезок игры, до {to}: плюс {gold} для команды"
   ],
   "moment_buyback": [
     "Выкуп",
@@ -711,17 +711,17 @@
     "Ноль смертей: враги до тебя не добрались"
   ],
   "phase_sup_good": [
-    "Сильный отрезок: участвовал {fights_text}, {deaths_text}, поставил {wards_text}. {nw_text}",
+    "Сильный отрезок: {fights_text}, {deaths_text}, поставил {wards_text}. {nw_text}",
     "Ты был там, где нужно: {fights_text}, {deaths_text}, {wards_text} на карте. {nw_text}",
     "Отличная работа саппорта: {fights_text}, {deaths_text}, {wards_text}. {nw_text}"
   ],
   "phase_sup_even": [
-    "Ровный отрезок: участвовал {fights_text}, {deaths_text}, поставил {wards_text}. {nw_text}",
+    "Ровный отрезок: {fights_text}, {deaths_text}, поставил {wards_text}. {nw_text}",
     "Без провалов, но и без яркого вклада: {fights_text}, {deaths_text}, {wards_text}. {nw_text}",
     "Средне: {fights_text}, {deaths_text}, {wards_text}. {nw_text}"
   ],
   "phase_sup_bad": [
-    "Тяжёлый отрезок: участвовал {fights_text}, {deaths_text}, поставил {wards_text}. {nw_text}",
+    "Тяжёлый отрезок: {fights_text}, {deaths_text}, поставил {wards_text}. {nw_text}",
     "Здесь ты больше мешал себе, чем помогал команде: {fights_text}, {deaths_text}, {wards_text}. {nw_text}",
     "Провал: {fights_text}, {deaths_text}, {wards_text}. {nw_text}"
   ],

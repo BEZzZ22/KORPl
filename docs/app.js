@@ -2,7 +2,7 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan, skillPlan,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
-} from "./engine.js?v=32";
+} from "./engine.js?v=33";
 import { aegisBadge, openShowcase } from "./aegis.js?v=1";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
@@ -2321,9 +2321,13 @@ function laneDuelBlock(a) {
     const d = me - opp;
     return h("td", {}, h("b", {}, fmt(me)), h("span", { class: `delta ${d > 0 ? "win-text" : d < 0 ? "loss-text" : "muted"}` }, d === 0 ? "=" : (d > 0 ? "+" : "−") + fmt(Math.abs(d))));
   };
+  const st = l.setup;
   return h("div", {},
     h("h2", {}, `Линия против ${l.opponent}`),
     h("div", { class: "card lane-duel" },
+      st && h("div", { class: "lane-setup" },
+        h("span", { class: `lane-odds ${st.mine < st.theirs ? "hard" : st.mine > st.theirs ? "easy" : ""}` }, `${st.mine} на ${st.theirs}`),
+        ...[st.hero_id, ...st.ally_ids].map((id) => heroImg(id, "mini-hero")), h("span", { class: "small muted" }, "против"), ...st.enemy_ids.map((id) => heroImg(id, "mini-hero"))),
       h("table", {},
         h("thead", {}, h("tr", {}, h("th", {}, "мин"), h("th", {}, "крипы"), h("th", {}, "нетворс"), h("th", {}, "опыт"))),
         h("tbody", {}, ...l.rows.map((r) => h("tr", {}, h("th", {}, String(r.m)), diff(r.lh, String), diff(r.nw), diff(r.xp))))),
@@ -2890,7 +2894,7 @@ async function boot() {
     const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
       api("/constants/heroes"), api("/constants/items"), api("/constants/abilities", { timeout: 40000 }),
       api("/constants/item_ids"),
-      fetch("knowledge.json?v=12").then((r) => r.json()), fetch("texts.json?v=16").then((r) => r.json()),
+      fetch("knowledge.json?v=12").then((r) => r.json()), fetch("texts.json?v=17").then((r) => r.json()),
     ]);
     dictionary = createDictionary({ heroes, items, abilities });
     itemIds = ids;

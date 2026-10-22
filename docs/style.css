@@ -921,3 +921,10 @@ body { background: transparent; }
 .ds-row { display: grid; grid-template-columns: 44px 36px 1fr; gap: 10px; align-items: center; padding: 7px 0; border-top: 1px solid var(--line); }
 .ds-row time { font: 700 13px/1 var(--display); font-variant-numeric: tabular-nums; }
 .ds-row .mini-hero { width: 36px; height: 20px; border-radius: 4px; object-fit: cover; }
+
+/* состав линии */
+.lane-setup { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.lane-setup .mini-hero { width: 36px; height: 20px; border-radius: 4px; object-fit: cover; }
+.lane-odds { font: 800 13px/1 var(--display); padding: 5px 9px; border-radius: 8px; background: rgba(255, 255, 255, 0.07); margin-right: 4px; }
+.lane-odds.hard { background: rgba(242, 85, 90, 0.16); color: #f7a2a5; }
+.lane-odds.easy { background: rgba(79, 209, 165, 0.14); color: var(--radiant); }
