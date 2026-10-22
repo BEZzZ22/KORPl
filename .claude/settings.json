@@ -1,0 +1,5 @@
+{
+  "permissions": {
+    "allow": ["Bash(python tools/tg_send_one.py:*)"]
+  }
+}
