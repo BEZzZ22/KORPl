@@ -1,5 +1,6 @@
 # Автопостинг в Телеграм-канал: раз в час берёт из promo/queue.json посты, чьё время пришло, и шлёт их ботом.
-# Секреты репозитория: BOT_TOKEN (токен бота, он же в воркере) и PROMO_CHAT (@канал или id; бот — админ канала).
+# Секреты репозитория: PROMO_CHAT (@канал или id) и либо BOT_TOKEN (бот — админ канала), либо TG_API_ID + TG_API_HASH + TG_SESSION
+# (отдельный аккаунт проекта: сессию получают один раз скриптом tools/tg-session.py на своём устройстве).
 # Без них прогон ничего не делает. Что уже ушло, записывается в promo/posted.json.
 name: Автопостинг
 
@@ -24,11 +25,24 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Есть TG_SESSION — постит отдельный аккаунт проекта (Telethon), иначе бот из BOT_TOKEN
       - name: Постим то, что пора
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           PROMO_CHAT: ${{ secrets.PROMO_CHAT }}
-        run: node tools/promo-post.mjs
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          TG_SESSION: ${{ secrets.TG_SESSION }}
+        run: |
+          if [ -n "$TG_SESSION" ]; then
+            pip install -q telethon
+            python tools/promo_userbot.py
+          else
+            node tools/promo-post.mjs
+          fi
       - name: Сохранить, что вышло
         run: |
           git config user.name "promo-bot"
