@@ -625,7 +625,7 @@ async function profileScreen() {
     recent.length > 0 && h("h2", {}, "Форма — последние игры"),
     recent.length > 0 && h("div", { class: "card" },
       h("div", { class: "form-strip" }, ...dots),
-      h("div", { class: "small muted" }, `${((w) => `${w} ${plural(w, "победа", "победы", "побед")}`)(recent.filter((m) => (m.player_slot < 128) === m.radiant_win).length)} из ${recent.length}`),
+      h("div", { class: "small muted" }, `${((w) => `${w} ${plural(w, "победа", "победы", "побед")}`)(recent.filter((m) => (m.player_slot < 128) === m.radiant_win).length)} из ${recent.length} · слева последняя`),
     ),
     trendBlock(recent),
     ...progressBlocks(account),
@@ -1050,7 +1050,7 @@ function matchListItem(m, account) {
       h("div", { class: "grow" },
         h("div", {}, h("span", { class: `result ${won ? "win-text" : "loss-text"}` }, won ? "Победа" : "Поражение"), " · ",
           dictionary.heroName(m.hero_id)),
-        h("div", { class: "small muted" }, `${m.kills}/${m.deaths}/${m.assists} · ${Math.floor(m.duration / 60)} мин · ${date}`),
+        h("div", { class: "small muted" }, `${m.kills}/${m.deaths}/${m.assists} · ${Math.floor(m.duration / 60)} мин${m.game_mode === TURBO_MODE ? " · турбо" : ""} · ${date}`),
       ),
     ),
   );
@@ -1835,7 +1835,8 @@ function weekBlock(account, list) {
         h("div", { class: "metric" }, h("b", {}, String(cur.length)), h("span", {}, plural(cur.length, "игра", "игры", "игр"))),
         h("div", { class: "metric" }, h("b", {}, `${Math.round((cur.filter(won).length / cur.length) * 100)}%`), h("span", {}, "побед")),
         h("div", { class: "metric" }, h("b", {}, avg(cur, kda).toFixed(1)), h("span", {}, "KDA"))),
-      line("Винрейт", (m) => (won(m) ? 100 : 0), (v) => `${Math.round(v)}%`),
+      // без прошлой недели винрейт уже в плитке сверху, строка его только повторит
+      prev.length > 0 && line("Винрейт", (m) => (won(m) ? 100 : 0), (v) => `${Math.round(v)}%`),
       line("Смертей за игру", (m) => m.deaths, (v) => v.toFixed(1), true),
       line("GPM", (m) => m.gold_per_min, (v) => String(Math.round(v))),
       top && h("div", { class: "week-mistake" }, h("span", {}, "Главная ошибка недели"), h("b", {}, top[0]),

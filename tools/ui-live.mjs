@@ -1,6 +1,7 @@
 // Приложение в Chromium на настоящих данных: живая OpenDota (через Node, с кэшем на диске), аккаунт игрока.
 // Тренер подменён заглушкой, Телеграма нет. Скриншоты в tests/ui/live/.
 // Запуск: node tools/ui-live.mjs <match_id> [вкладки через запятую: overview,phases,deaths,map,build,charts]
+// или node tools/ui-live.mjs 0 home,profile,hero — главная, профиль и страница героя
 // ACCOUNT=801280038 по умолчанию, UI_WIDTH=390, LIVE_CACHE=папка кэша ответов OpenDota, OPEN=1 раскрывает <details>
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
@@ -16,7 +17,7 @@ const CACHE = process.env.LIVE_CACHE || join(OUT, ".cache");
 const MATCH = Number(process.argv[2]);
 const TABS = (process.argv[3] || "overview,phases,deaths,map,build,charts").split(",");
 const ACCOUNT = Number(process.env.ACCOUNT || 801280038);
-if (!MATCH) { console.error("нужен match_id"); process.exit(1); }
+if (!MATCH && !process.argv[3]) { console.error("нужен match_id"); process.exit(1); }
 rmSync(join(OUT, String(MATCH)), { recursive: true, force: true });
 mkdirSync(join(OUT, String(MATCH)), { recursive: true });
 mkdirSync(CACHE, { recursive: true });
@@ -96,6 +97,34 @@ if (process.env.DRAFT) {
   const file = join(OUT, String(MATCH), "draft.png");
   await page.screenshot({ path: file, fullPage: true });
   console.log("screenshot", file);
+  const text = await page.locator("#app").innerText();
+  for (const bad of ["undefined", "NaN", "null", "[object"]) if (text.includes(bad)) errors.push(`на экране «${bad}»`);
+  await browser.close();
+  server.close();
+  if (errors.length) { console.log(errors.join("\n")); process.exit(1); }
+  console.log("ok");
+  process.exit(0);
+}
+// node tools/ui-live.mjs 0 home,profile,hero — главная, профиль и страница самого частого героя на живых данных
+if (TABS.some((t) => ["home", "profile", "hero"].includes(t))) {
+  await page.goto(`${BASE}/`);
+  await page.waitForSelector(".match-item", { timeout: 90000 });
+  for (const t of TABS) {
+    if (t === "profile") {
+      await page.locator('.tabbtn[data-tab="profile"]').click();
+      await page.waitForSelector(".profile-card", { timeout: 90000 });
+      await page.waitForTimeout(4000); // профиль догружает героев и друзей
+    }
+    if (t === "hero") {
+      await page.locator(".hero-stat").first().click();
+      await page.waitForSelector(".page-head", { timeout: 90000 });
+      await page.waitForTimeout(3000);
+    }
+    if (process.env.OPEN) await page.evaluate(() => document.querySelectorAll("details").forEach((d) => { d.open = true; }));
+    const file = join(OUT, String(MATCH), `${t}.png`);
+    await page.screenshot({ path: file, fullPage: true });
+    console.log("screenshot", file);
+  }
   const text = await page.locator("#app").innerText();
   for (const bad of ["undefined", "NaN", "null", "[object"]) if (text.includes(bad)) errors.push(`на экране «${bad}»`);
   await browser.close();
