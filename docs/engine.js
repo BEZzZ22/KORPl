@@ -153,7 +153,8 @@ const FIRST_ITEM_KEYS = new Set(["blink", "black_king_bar", "battle_fury", "bfur
   "diffusal_blade", "dragon_lance", "mask_of_madness", "hand_of_midas", "vanguard", "blade_mail", "force_staff",
   "glimmer_cape", "cyclone", "aether_lens", "spirit_vessel", "pipe", "crimson_guard", "invis_sword", "phylactery",
   "harpoon", "sange_and_yasha", "kaya_and_sange", "yasha_and_kaya", "mjollnir", "skadi", "basher", "heavens_halberd",
-  "solar_crest", "pavise", "holy_locket", "rod_of_atos", "ghost", "lotus_orb", "meteor_hammer", "travel_boots"]);
+  "solar_crest", "pavise", "holy_locket", "rod_of_atos", "ghost", "lotus_orb", "meteor_hammer", "travel_boots", "dagon",
+  "eternal_shroud", "falcon_blade", "orb_of_corrosion", "gleipnir", "ethereal_blade", "veil_of_discord"]);
 
 // Механика засчитывается, только если враг ею реально пользовался в этом матче
 const INVIS_ABILITIES = new Set(["clinkz_wind_walk", "bounty_hunter_wind_walk", "weaver_shukuchi", "nyx_assassin_vendetta",
@@ -464,11 +465,18 @@ class MatchAnalyzer {
     return null;
   }
 
+  // Первый крупный предмет: из общего списка или из основы про на этой позиции (у Rubick-мида это Dagon)
+  firstBigItem() {
+    const b = heroBuild(this.builds, null, this.p.hero_id, this.od.heroKey(this.p.hero_id), this.pos);
+    const coreKeys = new Set(b ? b.core.map((r) => r[0]).filter((k) => k !== "aghanims_shard") : []);
+    return (this.p.purchase_log || []).find((x) => FIRST_ITEM_KEYS.has(x.key) || coreKeys.has(x.key));
+  }
+
   collectMetrics() {
     const p = this.p;
     const minutes = this.duration / 60;
     const teamKills = sum(this.match.players.filter((x) => x.isRadiant === p.isRadiant).map((x) => x.kills));
-    const first = (p.purchase_log || []).find((x) => FIRST_ITEM_KEYS.has(x.key));
+    const first = this.firstBigItem();
     return {
       lh10: this.minutes >= 10 ? atMinute(p.lh_t, 10) : null,
       gpm: p.gold_per_min,
@@ -1257,7 +1265,7 @@ class MatchAnalyzer {
     if (this.core && this.roleSure && this.rankCheck("first_item", { tipKey: "items_first_bad_tip", roastKey: "items_first_bad_roast" })) {
       const r = this.rank.first_item;
       if (r.pct < 25) {
-        const first = (p.purchase_log || []).find((x) => FIRST_ITEM_KEYS.has(x.key));
+        const first = this.firstBigItem();
         this.issue("first_item", ((r.value - r.median) / 60) * (p.gold_per_min || 300) * 0.6, "Медленный тайминг кор-айтема",
           `${this.od.itemName(first.key)} только на ${mmss(r.value)} — у ${ROLE_GEN_PLURAL[this.pos]} на ранге ${RANKS[this.bracket][0]} первый кор-айтем обычно к ${mmss(r.median)}`,
           "Сначала собирай главный кор-айтем героя, ситуативку — потом. Не трать голду на лишние расходники и не умирай с полным карманом");
@@ -2769,8 +2777,19 @@ class MatchAnalyzer {
   // Готовые предметы для графика нетворса: компонент, который потом ушёл в сборку (Crystalys в Daedalus), не показываем
   finishedItems() {
     const log = this.coreItems();
-    return log.filter((x, i) => !log.slice(i + 1).some((y) => ((this.od.items[y.key] || {}).components || []).includes(x.key)))
-      .map(({ key, item, time }) => ({ key, item, time }));
+    const items = this.od.items || {};
+    const done = log.filter((x, i) => !log.slice(i + 1).some((y) => ((items[y.key] || {}).components || []).includes(x.key)));
+    // уровни одного предмета (Dagon 1…5, Necronomicon): оставляем последний купленный, с номером уровня
+    const lvl = (k) => leveledItem(k, items);
+    const top = new Map();
+    for (const x of done) {
+      const l = lvl(x.key);
+      if (!l) continue;
+      const prev = top.get(l.base);
+      if (!prev || l.level > prev.level) top.set(l.base, { ...l, key: x.key });
+    }
+    return done.filter((x) => { const l = lvl(x.key); return !l || top.get(l.base).key === x.key; })
+      .map(({ key, item, time }) => { const l = lvl(key); return { key, item: l && l.level > 1 ? `${item} ${l.level}` : item, time }; });
   }
 
   // Вышки, бараки и Рошан для графика преимущества: mine — в пользу команды игрока
@@ -3288,6 +3307,14 @@ const DEFENSIVE = new Set(["black_king_bar", "sphere", "aeon_disk", "manta", "gl
 // Апгрейды, которые съедают основной предмет: Blessing после Aghanim's Scepter — не «вне сборки»
 const CONSUMED = { ultimate_scepter_2: "ultimate_scepter", travel_boots_2: "travel_boots" };
 
+// Уровень предмета: dagon_5 → { base: "dagon", level: 5 }; dagon → уровень 1, если в справочнике есть dagon_2
+export function leveledItem(key, items) {
+  const m = /^(.+)_(\d)$/.exec(key);
+  if (m && items[m[1]] && (items[key] || {}).dname === items[m[1]].dname) return { base: m[1], level: Number(m[2]) };
+  if (items[`${key}_2`] && items[`${key}_2`].dname === (items[key] || {}).dname) return { base: key, level: 1 };
+  return null;
+}
+
 // Все компоненты из справочника предметов (считаем один раз на справочник)
 const componentSets = new WeakMap();
 function ALL_COMPONENTS(od) {
@@ -3312,6 +3339,15 @@ function reviewPurchases({ od, base, core, early, counters, finished, turbo }) {
     const key = CONSUMED[it.key] || it.key;
     if (seen.has(it.key)) continue;
     seen.add(it.key);
+    // прокачанный уровень (Dagon 5), когда у про на этой позиции дальше первого уровня почти не идут
+    const lv = leveledItem(it.key, od.items || {});
+    if (lv && lv.level > 1 && pool.has(lv.base) && !pool.has(it.key)) {
+      const extraGold = od.itemCost(it.key) - od.itemCost(lv.base);
+      extra.push({ key: it.key, item: it.item, time: it.time, share: null, instead: null, leveled: true,
+        note: `прокачал до ${lv.level} уровня${extraGold > 0 ? ` (${num(extraGold)} золота сверху)` : ""}: про на этой позиции дальше первого уровня почти не качают` });
+      continue;
+    }
+    if (lv) continue;
     if (pool.has(key) || pool.has(it.key) || stepToPool(it.key)) continue;
     // сырой компонент (Hyperstone) — часть чего-то большего; апгрейд предмета из сборки (Arcane Blink из Blink) — тоже не ошибка
     if (!comps(it.key).length && ALL_COMPONENTS(od).has(it.key)) continue;
@@ -3347,14 +3383,18 @@ function reviewPurchases({ od, base, core, early, counters, finished, turbo }) {
   }
   // «вместо BKB собрал Echo» не повторяем, если про BKB уже сказали выше
   for (const e of extra.filter((x) => x.instead && !v.some((y) => y.text.startsWith(x.instead)))) v.push({ w: 70, text: `Вместо ${e.instead} собрал ${e.item}: про на этой позиции его почти не берут` });
-  const firstCore = core.find((r) => r.key !== "aghanims_shard" && r.share >= 50);
-  if (!turbo && firstCore && firstCore.late) v.push({ w: 60 + min(firstCore.time - firstCore.med), text: `Первый главный предмет ${firstCore.item} на ${mmss(firstCore.time)}, у про к ${mmss(firstCore.med)}: на ${min(firstCore.time - firstCore.med)} мин позже` });
+  // первый купленный предмет основы опоздал — значит, фарма не хватило с самого начала
+  const firstCore = core.filter((r) => r.key !== "aghanims_shard" && r.owned && r.time != null && r.med).sort((a, b) => a.time - b.time)[0];
+  if (!turbo && firstCore && firstCore.late) v.push({ w: 60 + min(firstCore.time - firstCore.med), text: `Первый предмет основы ${firstCore.item} на ${mmss(firstCore.time)}, у про к ${mmss(firstCore.med)}: на ${min(firstCore.time - firstCore.med)} мин позже` });
   // из контр-предметов в главное — один, и только с сильной причиной
   const strongCounter = counters.find((x) => x.owned === false && x.strong);
   if (strongCounter) v.push({ w: 55, text: `Не было ${strongCounter.item}${strongCounter.vs ? ` (против ${strongCounter.vs})` : ""}. ${cap(strongCounter.strong_why || strongCounter.why)}` });
   const skipped = missing.filter((r) => r.share >= 40).map((r) => r.item);
   if (skipped.length >= 2) v.push({ w: 50, text: `Из основы не было ${skipped.slice(0, 3).join(", ")}: у про они в ${skipped.length > 2 ? "большинстве" : "половине и больше"} игр` });
-  for (const e of extra.filter((x) => !x.instead)) v.push({ w: 40, text: `${e.item} на ${mmss(e.time)}: про на этой позиции его почти не собирают` });
+  for (const e of extra.filter((x) => x.leveled)) v.push({ w: 45, text: `${e.item.replace(/ \d$/, "")} ${e.note}` });
+  // остальное вне сборки — одной строкой
+  const other = extra.filter((x) => !x.instead && !x.leveled);
+  if (other.length) v.push({ w: 40, text: `${other.map((e) => `${e.item} (${mmss(e.time)})`).join(", ")}: про на этой позиции ${other.length > 1 ? "их" : "его"} почти не собирают` });
   void early;
   return { extra, inversion, verdict: v.sort((a, b) => b.w - a.w).slice(0, 3).map((x) => x.text) };
 }

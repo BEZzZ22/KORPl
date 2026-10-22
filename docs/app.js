@@ -2458,7 +2458,7 @@ function itemPlanCard(p, { after = false, facts = [] } = {}) {
     ...p.extra.map((e) => h("div", { class: "ip-row extra", "data-key": e.key },
       img(dictionary.itemImage(e.key), null, ""),
       h("div", { class: "grow" }, h("div", { class: "ip-name" }, e.item),
-        h("div", { class: "small muted" }, e.instead ? `вместо ${e.instead}, у про на этой позиции почти не берут` : "у про на этой позиции почти не берут")),
+        h("div", { class: "small muted" }, e.note || (e.instead ? `вместо ${e.instead}, у про на этой позиции почти не берут` : "у про на этой позиции почти не берут"))),
       h("span", { class: "ip-st" }, e.time > 0 ? mmss(e.time) : "")))];
   return h("div", { class: "card item-plan" },
     h("div", { class: "small muted" }, planSource(p)),

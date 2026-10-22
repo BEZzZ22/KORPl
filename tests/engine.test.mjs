@@ -533,3 +533,22 @@ test("ошибка сборки попадает в проблемы катки 
   assert.ok(issue.impact <= 4500); // даже очень поздний предмет не перебивает всё остальное
   assert.deepEqual(a.summary.goal_check, { group: "build", metric: "itemtime:black_king_bar", op: "<=", target: 1320, grp: "core" });
 });
+
+import { leveledItem } from "../docs/engine.js";
+
+test("уровни предмета: Dagon 5 — один предмет, «прокачал до 5 уровня», если у про дальше первого не идут", () => {
+  const items = { dagon: { dname: "Dagon", cost: 3050 }, dagon_2: { dname: "Dagon", cost: 4200 }, dagon_5: { dname: "Dagon", cost: 7650 }, travel_boots: { dname: "Boots of Travel" }, travel_boots_2: { dname: "Boots of Travel 2" } };
+  assert.deepEqual(leveledItem("dagon_5", items), { base: "dagon", level: 5 });
+  assert.deepEqual(leveledItem("dagon", items), { base: "dagon", level: 1 });
+  assert.equal(leveledItem("travel_boots_2", items), null); // у BoT 2 своё название — это отдельный предмет
+  const odx = { ...od, items: { ...od.items, ...items }, itemName: (k) => (items[k] ? items[k].dname : od.itemName(k)), itemCost: (k) => (items[k] ? items[k].cost : od.itemCost(k)) };
+  const b = { patch: "7.41", heroes: { 86: { 2: { g: 200, wr: 50, start: [], early: [], core: [["dagon", 47, 700, 50], ["blink", 85, 980, 50]], sit: [] } } }, vs: { core: {}, support: {} } };
+  const finished = [{ key: "dagon_5", item: "Dagon 5", time: 1394 }, { key: "blink", item: "Blink Dagger", time: 1870 }];
+  const plan = itemPlan({ builds: b, od: odx, knowledge: kb, heroId: 86, pos: 2, enemies: [], owned: new Set(["dagon", "dagon_5", "blink"]),
+    bought: new Map([["dagon", 729], ["dagon_5", 1394], ["blink", 1870]]), duration: 2310, finished });
+  assert.equal(plan.extra.length, 1);
+  assert.match(plan.extra[0].note, /до 5 уровня \(4\s600 золота сверху\)/);
+  assert.ok(plan.verdict.some((t) => /^Dagon прокачал до 5 уровня/.test(t)), plan.verdict.join(" | "));
+  // первый предмет основы — Dagon вовремя, значит «первый предмет поздно» не пишем, хотя Blink опоздал
+  assert.ok(!plan.verdict.some((t) => /Первый предмет основы/.test(t)));
+});
