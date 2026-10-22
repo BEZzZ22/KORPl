@@ -107,9 +107,9 @@ function throttle(ip, now, perHour = PER_IP_PER_HOUR, bucket = "coach", perDay =
   return null;
 }
 
-// ---------- защита от потока запросов: 3 в минуту с IP, дальше бан 5 минут, 30 минут, 12 часов ----------
+// ---------- антиддос: лимит запросов в минуту с IP, дальше бан 5 минут, 30 минут, 12 часов ----------
 
-const RATE_PER_MIN = 3;
+const RATE_PER_MIN = 20; // любые запросы с одного IP в минуту: страница делает несколько вызовов подряд, поэтому не 3
 const BAN_STEPS = [5 * 60_000, 30 * 60_000, 12 * 3600_000];
 const STRIKE_MEMORY = 24 * 3600_000; // сколько нарушение помнится: потом лестница бана начинается заново
 const rateStamps = new Map(); // ip -> время последних запросов (память воркера, на один изолят)
@@ -121,7 +121,7 @@ const waitText = (ms) => {
   return `${m} ${plural(m, "минуту", "минуты", "минут")}`;
 };
 
-// null — пропускаем; { wait, text } — бан. Только дорогие запросы: разбор, вопрос тренеру, сравнение
+// null — пропускаем; { wait, text } — бан. Считаются все запросы к воркеру
 export async function rateGuard(env, ip, now = Date.now()) {
   if (!ip || ip === "anon") return null;
   try {
@@ -158,14 +158,28 @@ const plural = (n, one, few, many) => {
   return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many;
 };
 const mskDay = (now) => new Date(now + 3 * 3600_000).toISOString().slice(0, 10);
-export async function takeAsk(env, who, now = Date.now(), limit = ASK_PER_USER_DAY) {
-  const key = `ask:${who}:${mskDay(now)}`;
+export async function takeAsk(env, who, now = Date.now(), limit = ASK_PER_USER_DAY, kind = "chat") {
+  const key = `ask:${kind}:${who}:${mskDay(now)}`;
   const used = Number(await env.COACH_KV.get(key)) || 0;
   if (used >= limit) return null;
   const put = (n) => env.COACH_KV.put(key, String(n), { expirationTtl: 2 * 86400 });
   await put(used + 1);
   // возврат — минус один от текущего: за время ответа мог пройти ещё вопрос
   return { left: limit - used - 1, refund: async () => put(Math.max(0, (Number(await env.COACH_KV.get(key)) || 1) - 1)) };
+}
+
+const LIMIT_WORDS = {
+  coach: ["разбор тренера", "разбора тренера", "разборов тренера"],
+  chat: ["вопрос тренеру", "вопроса тренеру", "вопросов тренеру"],
+  compare: ["сравнение каток", "сравнения каток", "сравнений каток"],
+};
+const limitText = (kind, limit) => `Лимит: ${limit} ${plural(limit, ...LIMIT_WORDS[kind])} в сутки. Новые после полуночи по Москве.`;
+// Суточная квота человека на вид запроса (coach, chat, compare), у каждого вида свой счётчик. Владелец (OWNER_TG_IDS) без лимита
+async function takeQuota(env, user, ip, kind) {
+  const limit = Number(env.ASK_PER_USER_DAY) || ASK_PER_USER_DAY;
+  const owner = user && user.id && String(env.OWNER_TG_IDS || "").split(",").map((x) => x.trim()).includes(String(user.id));
+  if (owner) return { left: limit, refund: async () => {} };
+  return takeAsk(env, user && user.id ? `tg${user.id}` : `ip${ip}`, Date.now(), limit, kind);
 }
 
 const duration = (d) => (Number.isFinite(Number(d)) && Number(d) > 0 ? `${Math.round(Number(d) / 60)} мин` : clip(d, 12));
@@ -918,12 +932,6 @@ async function handlePost(request, env, ctx, origin) {
   const later = (p) => { const q = p.catch(() => {}); if (ctx && ctx.waitUntil) ctx.waitUntil(q); return q; };
   const debug = (e) => (env.COACH_DEBUG ? { error: busyError(e), log: e.log } : { error: busyError(e) });
 
-  // дорогие запросы к нейросетям: 3 в минуту с IP, дальше лестница банов. Фоновый заход Opus — продолжение разбора, не считается
-  if ((mode === "coach" || mode === "chat" || mode === "compare") && raw.tier !== "opus") {
-    const ban = await rateGuard(env, ip);
-    if (ban) return reply(429, { error: ban.text, retry_after: Math.ceil(ban.wait / 1000) }, origin);
-  }
-
   if (mode === "card") {
     if (!env.COACH_KV) return reply(500, { error: "Карточки не настроены." }, origin);
     const limited = throttle(ip, Date.now(), CARD_PER_IP_PER_HOUR, "card", CARD_PER_DAY);
@@ -1015,10 +1023,8 @@ async function handlePost(request, env, ctx, origin) {
     if (env.COACH_KV) {
       const user = env.BOT_TOKEN ? await telegramUser(raw.initData, env.BOT_TOKEN) : null;
       const limit = Number(env.ASK_PER_USER_DAY) || ASK_PER_USER_DAY;
-      // владелец (OWNER_TG_IDS, через запятую) без суточного лимита вопросов
-      const owner = user && user.id && String(env.OWNER_TG_IDS || "").split(",").map((x) => x.trim()).includes(String(user.id));
-      quota = owner ? { left: limit, refund: async () => {} } : await takeAsk(env, user && user.id ? `tg${user.id}` : `ip${ip}`, Date.now(), limit);
-      if (!quota) return reply(429, { error: `Лимит: ${limit} ${plural(limit, "вопрос", "вопроса", "вопросов")} тренеру в сутки. Новые после полуночи по Москве.`, left: 0 }, origin);
+      quota = await takeQuota(env, user, ip, mode);
+      if (!quota) return reply(429, { error: limitText(mode, limit), left: 0 }, origin);
     }
     const left = quota ? { left: quota.left } : {};
     try {
@@ -1049,9 +1055,17 @@ async function handlePost(request, env, ctx, origin) {
   if (best) return reply(200, { text: best, cached: true, opus: true }, origin);
   const hit = tier === "fast" && await env.COACH_KV.get(cacheKey);
   if (hit) return reply(200, { text: hit, cached: true }, origin);
+  // 5 разборов тренера в сутки на человека (аккаунт Телеграма, вне него — IP); владелец без лимита.
+  // Фоновый заход Opus после быстрого разбора (cont) — продолжение, квоту не берёт; ответ из кэша тоже
+  let quota = null;
+  if (env.COACH_KV && !(tier === "opus" && raw.cont)) {
+    const user = env.BOT_TOKEN && raw.initData ? await telegramUser(raw.initData, env.BOT_TOKEN) : null;
+    quota = await takeQuota(env, user, ip, "coach");
+    if (!quota) return reply(429, { error: limitText("coach", Number(env.ASK_PER_USER_DAY) || ASK_PER_USER_DAY), left: 0 }, origin);
+  }
   const perHour = tier === "fast" ? FAST_PER_IP_PER_HOUR : tier === "opus" ? OPUS_PER_IP_PER_HOUR : PER_IP_PER_HOUR;
   const limited = throttle(ip, Date.now(), Number(env.COACH_IP_LIMIT) || perHour, tier === "opus" ? "opus" : tier === "fast" ? "fast" : "coach", tier === "fast" ? 2 * GLOBAL_PER_DAY : GLOBAL_PER_DAY);
-  if (limited) { console.warn(`coach ${tier || "all"} 429 ${ip}: ${limited}`); return reply(429, { error: limited }, origin); }
+  if (limited) { if (quota) await quota.refund(); console.warn(`coach ${tier || "all"} 429 ${ip}: ${limited}`); return reply(429, { error: limited }, origin); }
   const setup = tier === "fast" ? { ...run, CLAUDE_API_KEY: "" }
     : tier === "opus" ? { ...run, GROQ_API_KEY: "", GEMINI_API_KEY: "", CLAUDE_TIMEOUT: String(OPUS_TIMEOUT), CLAUDE_FIRST_BYTE: String(OPUS_TIMEOUT) }
       : run;
@@ -1061,10 +1075,11 @@ async function handlePost(request, env, ctx, origin) {
     // в общий ключ — только ответ Opus: его потом получают и быстрые заходы
     const opus = meter.by_name === "askClaude";
     if (hash) later(env.COACH_KV.put(opus || !tier ? `coach:${hash}` : cacheKey, text, { expirationTtl: COACH_CACHE_TTL }));
-    const out = { text, ...(opus ? { opus: true } : {}) };
+    const out = { text, ...(opus ? { opus: true } : {}), ...(quota ? { left: quota.left } : {}) };
     return reply(200, env.COACH_DEBUG ? { ...out, log: meter.log } : out, origin, meter.by_name);
   } catch (e) {
     console.warn(`coach ${tier || "all"} 502: ${(e.log || []).join(" | ")}`);
+    if (quota) await quota.refund();
     return reply(502, debug(e), origin);
   } finally { later(addUsage(env, meter)); }
 }
@@ -1072,6 +1087,11 @@ async function handlePost(request, env, ctx, origin) {
 export default {
   async fetch(request, env, ctx) {
     const origin = request.headers.get("Origin") || "";
+    // антиддос: любой запрос с одного IP считается, при превышении лестница банов (5 мин, 30 мин, 12 ч)
+    if (request.method !== "OPTIONS") {
+      const ban = await rateGuard(env, request.headers.get("CF-Connecting-IP") || "anon");
+      if (ban) return reply(429, { error: ban.text, retry_after: Math.ceil(ban.wait / 1000) }, origin);
+    }
     if (request.method === "GET") {
       const url = new URL(request.url);
       // Картинка карточки для истории и скачивания: открывается без Origin

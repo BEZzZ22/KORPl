@@ -209,7 +209,7 @@ test("fetch: разбор кэшируется в KV, второй раз без
   const waits = [];
   const ctx = { waitUntil: (p) => waits.push(p) };
   mockFetch({ claude: [sse(good)] });
-  assert.deepEqual(await (await worker.fetch(req(raw, "10.8.0.1"), e, ctx)).json(), { text: normalize(good), opus: true });
+  assert.deepEqual(await (await worker.fetch(req(raw, "10.8.0.1"), e, ctx)).json(), { text: normalize(good), opus: true, left: 4 });
   await Promise.all(waits);
   assert.deepEqual(await (await worker.fetch(req(raw, "10.8.0.1"), e, ctx)).json(), { text: normalize(good), cached: true, opus: true });
   const usage = [...kv.m.keys()].find((k) => k.startsWith("usage:"));
@@ -562,4 +562,32 @@ test("fetch: у владельца нет суточного лимита воп
   assert.equal((await ask(other)).status, 200);
   mockFetch({ claude: [sse("Держись за крипами.")] });
   assert.equal((await ask(other)).status, 429);
+});
+
+test("fetch: у каждого вида своя суточная квота — разбор, вопрос, сравнение по 5, у владельца без лимита", async (t) => {
+  t.after(restore);
+  const kv = fakeKV();
+  const e = { ...env, COACH_KV: kv, BOT_TOKEN: "123:abc", OWNER_TG_IDS: "7", ASK_PER_USER_DAY: "2", COACH_IP_LIMIT: "100", RATE_PER_MIN: "1000" };
+  const now = String(Math.floor(Date.now() / 1000));
+  const user = await signInit({ auth_date: now, user: JSON.stringify({ id: 8 }) }, "123:abc");
+  const boss = await signInit({ auth_date: now, user: JSON.stringify({ id: 7 }) }, "123:abc");
+  const coach = (init, n) => worker.fetch(req({ ...raw, kda: `1/${n}/2`, tier: "fast", initData: init }), e);
+  const status = async (init, n) => {
+    mockFetch({ groq: [okChoice(good)] });
+    return (await coach(init, n)).status;
+  };
+  assert.equal(await status(user, 1), 200);
+  assert.equal(await status(user, 2), 200);
+  assert.equal(await status(user, 3), 429); // третий разбор за сутки
+  // вопросы и сравнение считаются отдельно: разборы их не съели
+  mockFetch({ claude: [sse("Ответ один.")] });
+  assert.equal((await worker.fetch(req({ mode: "chat", summary: raw, question: "что делать на линии?", initData: user }), e)).status, 200);
+  mockFetch({ claude: [sse("Ответ два.")] });
+  assert.equal((await worker.fetch(req({ mode: "compare", a: raw, b: { ...raw, hero: "Tusk" }, initData: user }), e)).status, 200);
+  // владелец сколько угодно
+  for (let n = 10; n < 14; n++) assert.equal(await status(boss, n), 200);
+  // продолжение Opus после быстрого разбора квоту не берёт
+  mockFetch({ claude: [sse(good)] });
+  const cont = await worker.fetch(req({ ...raw, kda: "1/1/2", tier: "opus", cont: true, initData: user }), e);
+  assert.equal(cont.status, 200);
 });

@@ -1409,6 +1409,7 @@ const isOwner = async () => Number(await storage.get("account_id")) === OWNER_AC
 const COACH_LIMIT_NOTE = `Лимит: ${COACH_DAILY} разборов тренера в сутки. Новые после полуночи по Москве.`;
 const CHAT_DAILY = 5; // вопросов тренеру (чат и сравнение) в сутки по Москве; сервер считает то же на аккаунт
 const CHAT_LIMIT_TEXT = `Лимит: ${CHAT_DAILY} ${plural(CHAT_DAILY, "вопрос", "вопроса", "вопросов")} тренеру в сутки. Новые после полуночи по Москве.`;
+const COMPARE_LIMIT_TEXT = `Лимит: ${CHAT_DAILY} сравнений каток в сутки. Новые после полуночи по Москве.`;
 const chatLeftText = (n) => n > 0 ? `${plural(n, "Остался", "Осталось", "Осталось")} ${n} ${plural(n, "вопрос", "вопроса", "вопросов")} на сегодня.` : CHAT_LIMIT_TEXT;
 const COACH_TIMEOUT = 75000;
 const OPUS_WAIT = 110000;      // заход Opus в фоне: посредник думает 30–70 с, иногда дольше
@@ -1570,7 +1571,7 @@ function coachBlock(a) {
     status.textContent = "Opus дописывает подробный разбор, заменю, когда будет готов…";
     if (!status.isConnected) box.insertBefore(status, title.nextSibling);
     try {
-      const data = await postCoach({ ...coachPayload(a), tier: "opus" }, OPUS_WAIT);
+      const data = await postCoach({ ...coachPayload(a), tier: "opus", cont: true, initData: (tg && tg.initData) || "" }, OPUS_WAIT);
       if (!data.text || !data.opus) throw new Error("не Opus");
       safeLocal.set(key, data.text);
       safeLocal.set(`${key}:by`, "opus");
@@ -1603,7 +1604,7 @@ function coachBlock(a) {
       // быстрые модели иногда заняты: одна повторная попытка через пару секунд, потом ждём Opus
       for (let attempt = 0; !data; attempt++) {
         try {
-          data = await postCoach({ ...coachPayload(a), tier: "fast" });
+          data = await postCoach({ ...coachPayload(a), tier: "fast", initData: (tg && tg.initData) || "" });
           if (!data.text) throw new Error("пусто");
         } catch (e) {
           data = null;
@@ -1612,7 +1613,7 @@ function coachBlock(a) {
           if (attempt === 0) { await new Promise((r) => setTimeout(r, 2000)); continue; }
           ask.textContent = "Быстрые модели заняты, жду Opus…";
           note.textContent = "Opus отвечает от 30 секунд до двух минут. Можно свернуть приложение, разбор сохранится.";
-          data = await postCoach({ ...coachPayload(a), tier: "opus" }, OPUS_WAIT);
+          data = await postCoach({ ...coachPayload(a), tier: "opus", initData: (tg && tg.initData) || "" }, OPUS_WAIT);
         }
       }
       if (!data.text) throw Object.assign(new Error("Тренер сейчас недоступен."), { fromCoach: true });
@@ -2015,8 +2016,8 @@ function compareBlock(a) {
   if (!others.length) return null;
   const out = h("div", { class: "compare-out", role: "status" });
   const pick = async (other, btn) => {
-    const [used, spend] = dailyCounter("chat");
-    if (used >= CHAT_DAILY && !(await isOwner())) { out.textContent = CHAT_LIMIT_TEXT; return; }
+    const [used, spend] = dailyCounter("compare");
+    if (used >= CHAT_DAILY && !(await isOwner())) { out.textContent = COMPARE_LIMIT_TEXT; return; }
     btn.disabled = true;
     out.replaceChildren(h("div", { class: "chat-msg assistant typing" }, h("i"), h("i"), h("i")));
     try {
@@ -2031,7 +2032,7 @@ function compareBlock(a) {
   };
   return h("details", { class: "card timeline-box compare" },
     h("summary", {}, "Сравнить с другой каткой"),
-    h("p", { class: "small muted" }, "Тренер скажет, что ты делал по-другому. В списке катки, которые ты уже открывал."),
+    h("p", { class: "small muted" }, `Тренер скажет, что ты делал по-другому. В списке катки, которые ты уже открывал. Лимит: ${CHAT_DAILY} сравнений в сутки.`),
     h("div", { class: "compare-list" }, ...others.map((o) => {
       const btn = h("button", { class: `compare-item ${o.won ? "win" : "loss"}`, type: "button" },
         heroImg(o.hero_id, "hero-img small"), h("span", { class: "grow" }, o.hero), h("span", { class: "muted" }, o.kda));

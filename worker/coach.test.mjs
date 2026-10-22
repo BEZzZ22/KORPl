@@ -618,9 +618,9 @@ test("проверка: свой герой в моменте и предмет 
   assert.deepEqual(bad, []);
 });
 
-test("rateGuard: 3 запроса в минуту, дальше бан 5 минут, 30 минут, 12 часов", async () => {
+test("rateGuard: лимит в минуту с IP, дальше бан 5 минут, 30 минут, 12 часов", async () => {
   const kv = new Map();
-  const env = { COACH_KV: { get: async (k) => (kv.has(k) ? JSON.parse(kv.get(k)) : null), put: async (k, v) => { kv.set(k, v); } } };
+  const env = { RATE_PER_MIN: "3", COACH_KV: { get: async (k) => (kv.has(k) ? JSON.parse(kv.get(k)) : null), put: async (k, v) => { kv.set(k, v); } } };
   const ip = "198.51.100.7";
   const t0 = 1_000_000_000_000;
   for (let i = 0; i < 3; i++) assert.equal(await rateGuard(env, ip, t0 + i * 1000), null, `запрос ${i + 1}`);
@@ -645,18 +645,21 @@ test("rateGuard: 3 запроса в минуту, дальше бан 5 мин�
   t += 40 * 3600_000;
   for (let i = 0; i < 3; i++) assert.equal(await rateGuard(env, ip, t + i * 1000), null);
   assert.equal((await rateGuard(env, ip, t + 3000)).wait, 5 * 60_000);
-  // фоновый заход Opus и чужой IP не считаются
+  // чужой IP не задет
   assert.equal(await rateGuard(env, "198.51.100.8", t), null);
 });
 
-test("fetch: четвёртый разбор за минуту с одного IP — 429 с баном", async (t) => {
+test("fetch: частота запросов с IP выше лимита — 429 с баном на любом пути", async (t) => {
   t.after(restore);
   mockFetch({ groq: Array.from({ length: 3 }, () => groqOk(good)) });
   const ip = nextIp();
-  for (let i = 0; i < 3; i++) assert.equal((await worker.fetch(req({ ip }), both)).status, 200);
-  const res = await worker.fetch(req({ ip }), both);
+  const env2 = { ...both, RATE_PER_MIN: "3" };
+  for (let i = 0; i < 3; i++) assert.equal((await worker.fetch(req({ ip }), env2)).status, 200);
+  const res = await worker.fetch(req({ ip }), env2);
   assert.equal(res.status, 429);
   const out = await json(res);
   assert.match(out.error, /Бан на 5 минут/);
   assert.equal(out.retry_after, 300);
+  // GET тоже считается
+  assert.equal((await worker.fetch(req({ ip, method: "GET" }), env2)).status, 429);
 });
