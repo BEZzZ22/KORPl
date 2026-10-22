@@ -1,0 +1,71 @@
+# Деплой воркера тренера в Cloudflare: при изменениях в worker/ и вручную (Actions → «Воркер тренера» → Run workflow).
+# Нужны секреты репозитория CLOUDFLARE_API_TOKEN (шаблон «Edit Cloudflare Workers») и CLOUDFLARE_ACCOUNT_ID.
+# Ключи самого воркера (CLAUDE_API_KEY, GROQ_API_KEY, GEMINI_API_KEY, GH_TOKEN, BOT_TOKEN) можно тоже держать в секретах
+# репозитория: заданные перекладываются в воркер, не заданные остаются как были в Cloudflare.
+name: Воркер тренера
+
+on:
+  push:
+    branches: [claude/opus-55-capabilities-limits-ekkxhj]
+    paths: ["worker/**", ".github/workflows/worker.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worker
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Тесты воркера
+        run: node --test worker/coach.test.mjs worker/coach.chat.test.mjs
+
+      - name: Есть ли доступ к Cloudflare
+        id: access
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::warning::Нет секрета CLOUDFLARE_API_TOKEN: воркер не задеплоен. Settings → Secrets and variables → Actions."
+            echo "ok=" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Деплой
+        if: steps.access.outputs.ok
+        working-directory: worker
+        run: npx --yes wrangler@4 deploy -c wrangler.toml
+
+      - name: Ключи воркера из секретов репозитория
+        if: steps.access.outputs.ok
+        working-directory: worker
+        env:
+          CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        run: |
+          for name in CLAUDE_API_KEY GROQ_API_KEY GEMINI_API_KEY GH_TOKEN BOT_TOKEN; do
+            value="${!name}"
+            [ -z "$value" ] && continue
+            printf '%s' "$value" | npx --yes wrangler@4 secret put "$name" -c wrangler.toml > /dev/null
+            echo "$name переложен в воркер"
+          done
+
+      - name: Воркер отвечает
+        if: steps.access.outputs.ok
+        run: curl -sf --max-time 30 https://dotacoach.2007rggg.workers.dev/stats > /dev/null && echo "живой"
