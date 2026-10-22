@@ -1408,6 +1408,8 @@ const CHAT_DAILY = 3; // вопросов тренеру (чат и сравне
 const CHAT_LIMIT_TEXT = `Лимит: ${CHAT_DAILY} ${plural(CHAT_DAILY, "вопрос", "вопроса", "вопросов")} тренеру в сутки. Новые после полуночи по Москве.`;
 const chatLeftText = (n) => n > 0 ? `${plural(n, "Остался", "Осталось", "Осталось")} ${n} ${plural(n, "вопрос", "вопроса", "вопросов")} на сегодня.` : CHAT_LIMIT_TEXT;
 const COACH_TIMEOUT = 75000;
+const OPUS_WAIT = 110000;      // заход Opus в фоне: посредник думает 30–70 с, иногда дольше
+const OPUS_RETRY = 30 * 60000; // не чаще раза в полчаса пробуем заменить быстрый разбор разбором Opus
 const MEMORY_SIZE = 10; // прошлых разборов в памяти тренера
 const COMPARE_SIZE = 8; // каток, с которыми можно сравнить
 
@@ -1427,10 +1429,10 @@ function dailyCounter(name) {
 const chatUsed = (data) => (Number.isInteger(data.left) ? CHAT_DAILY - data.left : undefined);
 
 // Запрос к воркеру. Ошибка с текстом воркера помечена fromCoach, остальные переводятся на русский
-async function postCoach(body) {
+async function postCoach(body, timeout = COACH_TIMEOUT) {
   const ctrl = new AbortController();
   // воркер в худшем случае ждёт Opus и запасные модели около минуты: дольше ждать нет смысла
-  const timer = setTimeout(() => ctrl.abort(), COACH_TIMEOUT);
+  const timer = setTimeout(() => ctrl.abort(), timeout);
   try {
     const res = await fetch(COACH_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: ctrl.signal });
     const data = await res.json().catch(() => ({}));
@@ -1557,8 +1559,30 @@ function coachBlock(a) {
       steps.length > 0 && list);
     rememberReview(a, main);
   };
+  // Разбор в два захода: быстрый тренер (Groq/Gemini, 5–20 с) сразу на экран, Opus (30–60 с у посредника)
+  // дописывает в фоне и тихо заменяет. Какой ответ лежит в кэше — в `${key}:by`
+  const status = h("p", { class: "coach-upgrade small muted", role: "status" });
+  const upgrade = async () => {
+    safeLocal.set(`${key}:up`, String(Date.now()));
+    status.textContent = "Opus дописывает подробный разбор, заменю, когда будет готов…";
+    if (!status.isConnected) box.insertBefore(status, title.nextSibling);
+    try {
+      const data = await postCoach({ ...coachPayload(a), tier: "opus" }, OPUS_WAIT);
+      if (!data.text || !data.opus) throw new Error("не Opus");
+      safeLocal.set(key, data.text);
+      safeLocal.set(`${key}:by`, "opus");
+      if (box.isConnected) { show(data.text, true); status.textContent = "Разбор обновлён: это версия Opus."; box.insertBefore(status, title.nextSibling); }
+    } catch {
+      status.remove();
+    }
+  };
   const cached = safeLocal.get(key);
-  if (cached) { show(cached, false); return box; }
+  if (cached) {
+    show(cached, false);
+    // старый быстрый разбор: раз в полчаса пробуем получить версию Opus
+    if (safeLocal.get(`${key}:by`) === "fast" && Date.now() - Number(safeLocal.get(`${key}:up`) || 0) > OPUS_RETRY) upgrade();
+    return box;
+  }
 
   const ask = h("button", { class: "coach-btn", type: "button" }, "Разобрать с тренером");
   const note = h("p", { class: "coach-note small muted", role: "status" },
@@ -1571,11 +1595,21 @@ function coachBlock(a) {
     box.classList.add("coach-thinking");
     haptic("medium");
     try {
-      const data = await postCoach(coachPayload(a));
+      let data;
+      try {
+        data = await postCoach({ ...coachPayload(a), tier: "fast" });
+        if (!data.text) throw new Error("пусто");
+      } catch {
+        // быстрые модели не справились — ждём Opus, он дольше, но обычно отвечает
+        ask.textContent = "Тренер думает дольше обычного…";
+        data = await postCoach({ ...coachPayload(a), tier: "opus" }, OPUS_WAIT);
+      }
       if (!data.text) throw Object.assign(new Error("Тренер сейчас недоступен."), { fromCoach: true });
       if (!data.cached) spend();
       safeLocal.set(key, data.text);
+      safeLocal.set(`${key}:by`, data.opus ? "opus" : "fast");
       show(data.text, true);
+      if (!data.opus) upgrade();
     } catch (e) {
       ask.disabled = false;
       ask.textContent = "Попробовать ещё раз";

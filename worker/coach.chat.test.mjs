@@ -209,9 +209,9 @@ test("fetch: разбор кэшируется в KV, второй раз без
   const waits = [];
   const ctx = { waitUntil: (p) => waits.push(p) };
   mockFetch({ claude: [sse(good)] });
-  assert.deepEqual(await (await worker.fetch(req(raw, "10.8.0.1"), e, ctx)).json(), { text: normalize(good) });
+  assert.deepEqual(await (await worker.fetch(req(raw, "10.8.0.1"), e, ctx)).json(), { text: normalize(good), opus: true });
   await Promise.all(waits);
-  assert.deepEqual(await (await worker.fetch(req(raw, "10.8.0.1"), e, ctx)).json(), { text: normalize(good), cached: true });
+  assert.deepEqual(await (await worker.fetch(req(raw, "10.8.0.1"), e, ctx)).json(), { text: normalize(good), cached: true, opus: true });
   const usage = [...kv.m.keys()].find((k) => k.startsWith("usage:"));
   assert.deepEqual(JSON.parse(kv.m.get(usage)).claude, { calls: 1, in: 100, out: 50 });
   const stats = await usageStats(e);
@@ -520,4 +520,28 @@ test("ask: запасной готов, Opus думает дольше ASK_PATIE
   assert.equal(meter.by_name, "askGroq");
   assert.ok(Date.now() - t0 < 350, "Opus не ждали до его таймаута");
   assert.ok(meter.log.some((l) => /не дождались/.test(l)));
+});
+
+test("fetch: быстрый заход без Opus, заход Opus только Opus, потом быстрый получает ответ Opus из кэша", async (t) => {
+  t.after(restore);
+  const kv = fakeKV();
+  const e = { ...env, COACH_KV: kv };
+  const waits = [];
+  const ctx = { waitUntil: (p) => waits.push(p) };
+  let calls = mockFetch({ groq: [okChoice(good)] });
+  const fast = await (await worker.fetch(req({ ...raw, tier: "fast" }), e, ctx)).json();
+  assert.equal(fast.text, normalize(good));
+  assert.ok(!fast.opus);
+  assert.deepEqual(calls.map((c) => c.who), ["groq"]);
+  await Promise.all(waits);
+  assert.ok([...kv.m.keys()].some((k) => k.startsWith("coach:fast:")));
+  calls = mockFetch({ claude: [sse(good)] });
+  const opus = await (await worker.fetch(req({ ...raw, tier: "opus" }), e, ctx)).json();
+  assert.equal(opus.opus, true);
+  assert.deepEqual(calls.map((c) => c.who), ["claude"]);
+  await Promise.all(waits);
+  calls = mockFetch({});
+  const again = await (await worker.fetch(req({ ...raw, tier: "fast" }), e, ctx)).json();
+  assert.deepEqual(again, { text: normalize(good), cached: true, opus: true });
+  assert.equal(calls.length, 0);
 });

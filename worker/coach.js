@@ -13,11 +13,16 @@ const GROQ_MODEL = "openai/gpt-oss-120b";
 const PROVIDER_TIMEOUT = 20000; // мс на один запрос к Groq или Gemini: Gemini на длинной сводке не всегда успевал за 12 с
 const CLAUDE_BASE = "https://ai.dreamn-api-market.ru/v1";
 const CLAUDE_MODEL = "claude-opus-5.5";
+const CLAUDE_MAX_TOKENS = 3000;
+const CLAUDE_EXTRA = {};
 const CLAUDE_TIMEOUT = 56000;  // Opus думает дольше быстрых моделей: 22.10 разбор шёл 30–55 с
 const CLAUDE_FIRST_BYTE = 50000; // посредник копит ответ и отдаёт его разом, поэтому первый байт приходит вместе с ответом
 const CLAUDE_HANG_RETRIES = 1;   // повтор зависшего запроса; больше нельзя: посредник ставит новые в очередь за брошенными
 const FALLBACK_RESERVE = 20000;  // повтор зависшего Opus — только если после него запасным (Groq, Gemini) останется столько
 const ASK_BUDGET = 64000;      // на весь перебор провайдеров: приложение ждёт 75 с
+const FAST_BUDGET = 40000;     // быстрый заход: Groq и Gemini
+const OPUS_TIMEOUT = 95000;    // заход Opus: посредник думает 30–70 с, иногда дольше
+const OPUS_BUDGET = 98000;     // приложение ждёт его 110 с, ответ показывает тихой заменой
 const ASK_PATIENCE = 40000;    // разбор: запасной ответ готов — Opus ждём не дольше стольких мс от начала
 const CHAT_PATIENCE = 20000;   // чат: то же, ответы короче
 const MAX_CHAT_BODY = 40000;   // сводка + разбор тренера + переписка (или две сводки для сравнения)
@@ -267,14 +272,21 @@ async function readStream(name, url, key, body, meter, ctrl, onStart) {
   return text.trim();
 }
 
+// Добавки к запросу Opus (например, отключить размышление) — JSON в переменной CLAUDE_EXTRA
+function claudeExtra(env) {
+  if (!env.CLAUDE_EXTRA) return CLAUDE_EXTRA;
+  try { return JSON.parse(env.CLAUDE_EXTRA); } catch { return CLAUDE_EXTRA; }
+}
+
 // Claude (Opus) через посредника с OpenAI-совместимым API: адрес в CLAUDE_BASE_URL, ключ в секрете CLAUDE_API_KEY
 async function askClaude(env, messages, system = SYSTEM, timeout = Number(env.CLAUDE_TIMEOUT) || CLAUDE_TIMEOUT) {
   const base = String(env.CLAUDE_BASE_URL || CLAUDE_BASE).replace(/\/+$/, "");
   return openaiStream("claude", `${base}/chat/completions`, env.CLAUDE_API_KEY, {
     model: env.CLAUDE_MODEL || CLAUDE_MODEL,
     messages: [{ role: "system", content: system }, ...messages],
-    max_tokens: 3000,
+    max_tokens: Number(env.CLAUDE_MAX_TOKENS) || CLAUDE_MAX_TOKENS,
     temperature: 0.3,
+    ...claudeExtra(env),
   }, timeout, env.meter, Number(env.CLAUDE_FIRST_BYTE) || CLAUDE_FIRST_BYTE);
 }
 
@@ -375,7 +387,8 @@ export function problemsOf(text, prompt) {
   if (/\.\.\.|…/.test(text)) bad.push("многоточия и пропущенные слова");
   const mixed = text.match(/\S*(?:[а-яё][a-z]|[a-z][а-яё])\S*/i);
   if (mixed) bad.push(`в слове смешаны русские и латинские буквы: ${mixed[0]}`);
-  const words = (s) => s.toLowerCase().match(/[a-z][a-z'’-]{2,}/g) || [];
+  // «Necrophos'» и «Axe’s» — тот же герой: апостроф на конце слова отрезаем
+  const words = (s) => (s.toLowerCase().match(/[a-z][a-z'’-]{2,}/g) || []).map((w) => w.replace(/['’]s?$/, ""));
   const have = new Set(words(aliases(prompt)));
   const foreign = words(text).filter((w) => !have.has(w));
   if (foreign.length) bad.push(`латиница не из сводки: ${[...new Set(foreign)].join(", ")}`);
@@ -445,10 +458,15 @@ export async function ask(env, prompt, budget = ASK_BUDGET) {
       if (left < 3000 || (attempt > 0 && left < took)) break;
       const t = Date.now();
       try {
+        // токены ответа именно этой модели: запасные пишут в тот же счётчик параллельно
+        const key = { askClaude: "claude", askGroq: "groq", askGemini: "gemini" }[fn.name];
+        const outOf = () => (env.meter && env.meter.by[key] ? env.meter.by[key].out : 0);
+        const outBefore = outOf();
         const text = normalize(await callProvider(fn, env, [{ role: "user", content: user }], SYSTEM, deadline));
         took = Date.now() - t;
         const bad = problemsOf(text, prompt);
-        log.push(`${fn.name} ${sec()}: ${bad.join("; ") || "ok"}`);
+        const outTok = outOf() - outBefore;
+        log.push(`${fn.name} ${sec()}${outTok ? `, ${outTok} ток.` : ""}: ${bad.join("; ") || "ok"}`);
         if (!bad.length) return { text, by: fn.name };
         if (!soft && bad.length === 1 && SOFT.includes(bad[0])) soft = text;
         user = `${prompt}
@@ -869,6 +887,33 @@ async function handlePost(request, env, ctx, origin) {
     return reply(200, { url: `${new URL(request.url).origin}/card/${id}.${ext}` }, origin);
   }
 
+  // Отладка посредника: короткий запрос к Opus и замер первого байта и всего ответа (только с COACH_DEBUG)
+  if (mode === "probe" && env.COACH_DEBUG && env.CLAUDE_API_KEY) {
+    const base = String(env.CLAUDE_BASE_URL || CLAUDE_BASE).replace(/\/+$/, "");
+    const t0 = Date.now();
+    let first = null;
+    try {
+      const res = await fetch(`${base}/chat/completions`, {
+        method: "POST", signal: AbortSignal.timeout(60000),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.CLAUDE_API_KEY}` },
+        body: JSON.stringify({ model: raw.model || env.CLAUDE_MODEL || CLAUDE_MODEL, messages: [{ role: "user", content: raw.q || "Ответь одним словом: да" }], max_tokens: Number(raw.max) || 50, stream: raw.stream !== false, stream_options: { include_usage: true }, ...(raw.extra || {}) }),
+      });
+      const reader = res.body.getReader();
+      let bytes = 0, chunks = 0, all = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (first == null) first = Date.now() - t0;
+        bytes += value.length; chunks++;
+        all += new TextDecoder().decode(value);
+      }
+      const usage = (all.match(/"usage":\{[^}]*\}/g) || []).pop() || "";
+      return reply(200, { status: res.status, first_ms: first, total_ms: Date.now() - t0, bytes, chunks, usage, sample: all.slice(0, 300) }, origin);
+    } catch (e) {
+      return reply(200, { error: String(e), first_ms: first, total_ms: Date.now() - t0 }, origin);
+    }
+  }
+
   if (mode === "sync") {
     if (!env.COACH_KV || !env.BOT_TOKEN) return reply(500, { error: "Синхронизация не настроена." }, origin);
     if (body.length > MAX_SYNC_BODY) return reply(413, { error: "Слишком много данных." }, origin);
@@ -940,15 +985,29 @@ async function handlePost(request, env, ctx, origin) {
   if (!raw.hero) return reply(400, { error: "Не понял сводку." }, origin);
   const prompt = buildPrompt(raw);
   // Тот же матч с той же сводкой второй раз через нейросеть не гоняем, даже с другого телефона
-  const cacheKey = env.COACH_KV ? `coach:${await sha256(`${PROMPT_VERSION}\n${prompt}`)}` : null;
-  const hit = cacheKey && await env.COACH_KV.get(cacheKey);
+  // Два захода от приложения: tier "fast" — Groq и Gemini за 5–20 с, сразу на экран; tier "opus" — только Opus
+  // (у посредника 30–60 с), приложение тихо заменяет им быстрый ответ. Без tier — всё сразу, как раньше
+  const tier = raw.tier === "fast" || raw.tier === "opus" ? raw.tier : "";
+  const hash = env.COACH_KV ? await sha256(`${PROMPT_VERSION}\n${prompt}`) : null;
+  const cacheKey = hash && (tier === "fast" ? `coach:fast:${hash}` : `coach:${hash}`);
+  // готовый ответ Opus (без tier и tier "opus" пишут в общий ключ) отдаём и быстрому заходу
+  const best = hash && await env.COACH_KV.get(`coach:${hash}`);
+  if (best) return reply(200, { text: best, cached: true, opus: true }, origin);
+  const hit = tier === "fast" && await env.COACH_KV.get(cacheKey);
   if (hit) return reply(200, { text: hit, cached: true }, origin);
-  const limited = throttle(ip, Date.now(), Number(env.COACH_IP_LIMIT) || PER_IP_PER_HOUR);
+  const limited = throttle(ip, Date.now(), Number(env.COACH_IP_LIMIT) || PER_IP_PER_HOUR, tier === "opus" ? "opus" : "coach");
   if (limited) return reply(429, { error: limited }, origin);
+  const setup = tier === "fast" ? { ...run, CLAUDE_API_KEY: "" }
+    : tier === "opus" ? { ...run, GROQ_API_KEY: "", GEMINI_API_KEY: "", CLAUDE_TIMEOUT: String(OPUS_TIMEOUT), CLAUDE_FIRST_BYTE: String(OPUS_TIMEOUT) }
+      : run;
+  const budget = tier === "fast" ? FAST_BUDGET : tier === "opus" ? OPUS_BUDGET : ASK_BUDGET;
   try {
-    const text = await ask(run, prompt);
-    if (cacheKey) later(env.COACH_KV.put(cacheKey, text, { expirationTtl: COACH_CACHE_TTL }));
-    return reply(200, env.COACH_DEBUG ? { text, log: meter.log } : { text }, origin, meter.by_name);
+    const text = await ask(setup, prompt, budget);
+    // в общий ключ — только ответ Opus: его потом получают и быстрые заходы
+    const opus = meter.by_name === "askClaude";
+    if (hash) later(env.COACH_KV.put(opus || !tier ? `coach:${hash}` : cacheKey, text, { expirationTtl: COACH_CACHE_TTL }));
+    const out = { text, ...(opus ? { opus: true } : {}) };
+    return reply(200, env.COACH_DEBUG ? { ...out, log: meter.log } : out, origin, meter.by_name);
   } catch (e) {
     return reply(502, debug(e), origin);
   } finally { later(addUsage(env, meter)); }

@@ -162,7 +162,12 @@ for (const t of TABS) {
   if (t === "overview" && process.env.COACH) {
     await page.locator(".coach-btn").first().click();
     await page.waitForFunction(() => document.querySelector(".coach-steps, .coach .loss-text, .coach [role=alert], .coach .error") || /недоступ|ошиб|устал|часто/i.test(document.querySelector(".coach")?.innerText || ""), null, { timeout: 130000 }).catch(() => {});
-    console.log("блок тренера:", (await page.locator(".coach").first().innerText()).replace(/\s+/g, " ").slice(0, 400));
+    console.log("блок тренера:", (await page.locator(".coach").first().innerText()).replace(/\s+/g, " ").slice(0, 200));
+    // второй заход: Opus в фоне заменяет быстрый разбор
+    if (await page.locator(".coach-upgrade").count()) {
+      await page.waitForFunction(() => { const s = document.querySelector(".coach-upgrade"); return !s || /обновлён/.test(s.textContent); }, null, { timeout: 110000 }).catch(() => {});
+      console.log("после Opus:", (await page.locator(".coach-upgrade").count()) ? await page.locator(".coach-upgrade").innerText() : "замены нет");
+    }
   }
   if (t === "charts") {
     // подсказки: тап в 10-ю минуту и в самый конец каждого графика

@@ -405,6 +405,7 @@ button.ghost:active { transform: scale(.98); filter: none; }
 .coach-thinking .coach-btn { animation: breathe 1.6s ease-in-out infinite; }
 @keyframes breathe { 50% { filter: brightness(1.15); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 12px 34px -6px rgba(232, 194, 122, 0.8); } }
 .coach-note { margin: 0; color: var(--muted); }
+.coach-upgrade { margin: -4px 0 12px; }
 .coach-label { margin-top: 6px; font-size: 13px; font-weight: 700; color: var(--muted); }
 .coach-label + .coach-main, .coach-label + .coach-steps { margin-top: -6px; }
 .coach-main { margin: 0; font: 700 20px/1.35 var(--sans); letter-spacing: -.015em; text-wrap: pretty; }
