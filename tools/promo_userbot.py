@@ -86,7 +86,7 @@ async def setup_channel(client, target):
         try:
             await coro
         except RPCError as e:  # «ничего не изменилось» (название, описание, фото те же) — не ошибка
-            if "NOT_MODIFIED" not in str(getattr(e, "message", "")).upper():
+            if "NotModified" not in type(e).__name__ and "NOT_MODIFIED" not in str(e).upper():
                 raise
 
     if config.get("title"):
