@@ -54,7 +54,8 @@ function mockFetch(queues) {
     calls.push({ who, url: u, body: init && init.body ? JSON.parse(init.body) : null, headers: init ? init.headers : {} });
     const next = queues[who]?.shift();
     if (!next) throw new Error(`лишний вызов ${who}`);
-    return next;
+    // функция — ответ, который зависит от запроса (например, висит до отмены по сигналу)
+    return typeof next === "function" ? next(init) : next;
   };
   return calls;
 }
@@ -94,11 +95,35 @@ test("ask: Claude первый, адрес посредника, ключ и м�
   assert.equal(calls[0].body.messages[1].content, prompt);
 });
 
-test("ask: Claude дважды плох — дальше groq одной попыткой", async (t) => {
+test("ask: Claude дважды плох — отдаём ответ groq, который шёл параллельно", async (t) => {
   t.after(restore);
   const calls = mockFetch({ claude: [sse(garbage), sse(garbage)], groq: [okChoice(good)] });
-  assert.equal(await ask(env, prompt), normalize(good));
-  assert.deepEqual(calls.map((c) => c.who), ["claude", "claude", "groq"]);
+  const meter = { calls: 0, by: {} };
+  assert.equal(await ask({ ...env, meter }, prompt), normalize(good));
+  assert.deepEqual(calls.map((c) => c.who).sort(), ["claude", "claude", "groq"]);
+  assert.equal(calls[0].who, "claude");
+  assert.equal(meter.by_name, "askGroq");
+});
+
+test("ask: запасной готов раньше, но Opus ответил правильно — берём Opus", async (t) => {
+  t.after(restore);
+  const slow = new Promise((res) => setTimeout(() => res(sse(good)), 60));
+  const calls = mockFetch({ claude: [slow], groq: [okChoice(good)] });
+  const meter = { calls: 0, by: {} };
+  assert.equal(await ask({ ...env, meter }, prompt), normalize(good));
+  assert.equal(meter.by_name, "askClaude");
+  // groq стартовал сразу, не дожидаясь Opus
+  assert.deepEqual(calls.map((c) => c.who), ["claude", "groq"]);
+});
+
+test("ask: Opus молчит дольше бюджета — ответ запасного, а не 502", async (t) => {
+  t.after(restore);
+  // посредник висит и отвечает только на отмену запроса, как настоящий fetch
+  const hang = (init) => new Promise((_, rej) => init.signal.addEventListener("abort", () => rej(Object.assign(new Error("aborted"), { name: "AbortError" }))));
+  mockFetch({ claude: [hang], groq: [okChoice(good)] });
+  const meter = { calls: 0, by: {} };
+  assert.equal(await ask({ ...env, meter, CLAUDE_TIMEOUT: "200", CLAUDE_FIRST_BYTE: "200" }, prompt, 4000), normalize(good));
+  assert.equal(meter.by_name, "askGroq");
 });
 
 test("ask: Claude упал — сразу groq", async (t) => {
@@ -471,4 +496,28 @@ test("реплеи: с GH_TOKEN заявка сразу запускает workf
   assert.equal(calls.filter((c) => c.who === "actions").length, 1);
   // без токена ничего не запускается
   assert.equal(await kickReplays({ COACH_KV: fakeKV() }), false);
+});
+
+test("chat: запасной ответил, Opus молчит — ждём Opus не дольше CHAT_PATIENCE", async (t) => {
+  t.after(restore);
+  const hang = (init) => new Promise((_, rej) => init.signal.addEventListener("abort", () => rej(Object.assign(new Error("aborted"), { name: "AbortError" }))));
+  mockFetch({ claude: [hang], groq: [okChoice("Ставь обс на входе в лес перед Рошаном.")] });
+  const meter = { calls: 0, by: {} };
+  const t0 = Date.now();
+  const out = await chat({ ...env, meter, CHAT_PATIENCE: "80", CLAUDE_TIMEOUT: "300", CLAUDE_FIRST_BYTE: "300" }, raw, { question: "Где ставить обсы?" });
+  assert.match(out.text, /обс/);
+  assert.equal(meter.by_name, "askGroq");
+  assert.ok(Date.now() - t0 < 5000);
+});
+
+test("ask: запасной готов, Opus думает дольше ASK_PATIENCE — отдаём запасной, не ждём минуту", async (t) => {
+  t.after(restore);
+  const hang = (init) => new Promise((_, rej) => init.signal.addEventListener("abort", () => rej(Object.assign(new Error("aborted"), { name: "AbortError" }))));
+  mockFetch({ claude: [hang], groq: [okChoice(good)] });
+  const meter = { calls: 0, by: {} };
+  const t0 = Date.now();
+  assert.equal(await ask({ ...env, meter, ASK_PATIENCE: "80", CLAUDE_TIMEOUT: "400", CLAUDE_FIRST_BYTE: "400" }, prompt), normalize(good));
+  assert.equal(meter.by_name, "askGroq");
+  assert.ok(Date.now() - t0 < 350, "Opus не ждали до его таймаута");
+  assert.ok(meter.log.some((l) => /не дождались/.test(l)));
 });

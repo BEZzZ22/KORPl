@@ -292,15 +292,15 @@ test("ask: при формате в подсказке объяснение фо
   assert.match(calls[1].body.messages[1].content, /не тот формат или слишком длинно/);
 });
 
-test("ask: groq трижды плох, запасной gemini", async (t) => {
+test("ask: groq пять раз плох, запасной gemini", async (t) => {
   t.after(restore);
-  const calls = mockFetch({ groq: [groqOk(garbage), groqOk(garbage), groqOk(garbage)], gemini: [geminiOk(good)] });
+  const calls = mockFetch({ groq: Array.from({ length: 5 }, () => groqOk(garbage)), gemini: [geminiOk(good)] });
   assert.equal(await ask(both, prompt), normalize(good));
-  assert.deepEqual(calls.map((c) => c.who), ["groq", "groq", "groq", "gemini"]);
+  assert.deepEqual(calls.map((c) => c.who), ["groq", "groq", "groq", "groq", "groq", "gemini"]);
   // gemini получает чистую сводку, без жалоб на groq
-  assert.equal(calls[3].body.contents[0].parts[0].text, prompt);
-  assert.equal(calls[3].headers["x-goog-api-key"], "m");
-  assert.deepEqual(calls[3].body.generationConfig.thinkingConfig, { thinkingBudget: 0 });
+  assert.equal(calls[5].body.contents[0].parts[0].text, prompt);
+  assert.equal(calls[5].headers["x-goog-api-key"], "m");
+  assert.deepEqual(calls[5].body.generationConfig.thinkingConfig, { thinkingBudget: 0 });
 });
 
 test("ask: ошибка groq сразу переходит на gemini без повтора", async (t) => {
@@ -313,7 +313,7 @@ test("ask: ошибка groq сразу переходит на gemini без п
 test("ask: groq обрезан по длине считается ошибкой", async (t) => {
   t.after(restore);
   mockFetch({ groq: [groqOk(good, "length")], gemini: [new Response("x", { status: 500 })] });
-  await assert.rejects(ask(both, prompt), (e) => e.status === 500 && e.log[0] === "askGroq: groq cut");
+  await assert.rejects(ask(both, prompt), (e) => e.status === 500 && /^askGroq \d+ с: groq cut$/.test(e.log[0]));
 });
 
 test("ask: COACH_PRIMARY=gemini меняет порядок", async (t) => {
@@ -350,8 +350,8 @@ test("ask: мягкий ответ отдаётся, если лучшего н�
 test("ask: жёсткая ошибка не годится в запасной ответ", async (t) => {
   t.after(restore);
   const hard = good.replace("на линии,", "на линии…");
-  mockFetch({ groq: [groqOk(hard), groqOk(hard), groqOk(hard)], gemini: [geminiOk(hard)] });
-  await assert.rejects(ask(both, prompt), (e) => e.message === "no answer" && e.log.length === 4);
+  mockFetch({ groq: Array.from({ length: 5 }, () => groqOk(hard)), gemini: [geminiOk(hard), geminiOk(hard)] });
+  await assert.rejects(ask(both, prompt), (e) => e.message === "no answer" && e.log.length === 7);
 });
 
 test("ask: все упали — ошибка со статусом и логом", async (t) => {
@@ -361,8 +361,8 @@ test("ask: все упали — ошибка со статусом и лого�
     assert.equal(e.message, "no answer");
     assert.equal(e.status, 503);
     assert.equal(e.log.length, 2);
-    assert.match(e.log[0], /^askGroq: groq 500/);
-    assert.match(e.log[1], /^askGemini: gemini 503: busy/);
+    assert.match(e.log[0], /^askGroq \d+ с: groq 500/);
+    assert.match(e.log[1], /^askGemini \d+ с: gemini 503: busy/);
     return true;
   });
 });
@@ -594,4 +594,25 @@ test("problemsOf: в выигранной катке «Главное» не н�
   assert.ok(!problemsOf(good, won).some((r) => /проигранной/.test(r)));
   // в проигранной то же самое можно
   assert.ok(!problemsOf(lost("Игру тебе стоили 62 крипа к 20:00."), prompt).some((r) => /проигранной/.test(r)));
+});
+
+test("проверка: свой герой в моменте и предмет из главных проблем — не чужие факты", () => {
+  const p = buildPrompt({
+    hero: "Lifestealer", role: "керри", won: false, kda: "9/8/14", duration: 2040,
+    problems: [{ title: "Не было Black King Bar", fact: "Black King Bar так и не собрал", action: "Собирай Black King Bar" }],
+    episodes: [
+      { clock: "16:44", kind: "death", facts: ["тебя убил Necrophos", "в командной драке"] },
+      { clock: "33:27", kind: "death", facts: ["тебя убил Axe", "один"] },
+    ],
+  });
+  const text = `Главное: в драках тебя ловили первым, и без Black King Bar ты не успевал ничего нажать.
+Моменты:
+— 16:44 Ошибка: Lifestealer зашёл в драку первым. Надо было: заходить вторым после инициации.
+— 33:27 Ошибка: пошёл один против Axe. Надо было: собрать Black King Bar и ходить с командой.
+План на следующую игру:
+— Заходи в драку вторым, когда враги потратили контроль.
+— Не ходи один на чужую половину без вижна.
+— Смотри на миникарту перед тем, как идти фармить.`;
+  const bad = problemsOf(text, p).filter((b) => /то, чего нет в его фактах/.test(b));
+  assert.deepEqual(bad, []);
 });

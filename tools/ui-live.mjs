@@ -62,9 +62,12 @@ await context.route("**/*", async (route) => {
     if (process.env.COACH && req.method() === "POST") {
       const t0 = Date.now();
       try {
+        if (process.env.COACH_SAVE) writeFileSync(process.env.COACH_SAVE, req.postData() || "");
         const r = await fetch(req.url(), { method: "POST", headers: { "Content-Type": "application/json", Origin: "https://bezzz22.github.io" }, body: req.postData(), signal: AbortSignal.timeout(120000) });
         const body = await r.text();
-        console.log(`тренер: ${r.status} за ${((Date.now() - t0) / 1000).toFixed(1)} с, ответил ${r.headers.get("x-coach-by") || "—"}`);
+        let log = "";
+        try { log = (JSON.parse(body).log || []).join(" | "); } catch { /* не JSON */ }
+        console.log(`тренер: ${r.status} за ${((Date.now() - t0) / 1000).toFixed(1)} с, ответил ${r.headers.get("x-coach-by") || "—"}${r.ok ? "" : `: ${body.slice(0, 300)}`}${log ? ` [${log}]` : ""}`);
         return route.fulfill({ status: r.status, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body });
       } catch (e) {
         console.log(`тренер: нет ответа за ${((Date.now() - t0) / 1000).toFixed(1)} с (${e.message})`);

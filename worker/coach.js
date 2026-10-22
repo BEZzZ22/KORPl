@@ -10,14 +10,16 @@ import LORE from "./lore.json" with { type: "json" };
 const ALLOWED_ORIGINS = ["https://bezzz22.github.io"];
 const GEMINI_MODEL = "gemini-flash-lite-latest";
 const GROQ_MODEL = "openai/gpt-oss-120b";
-const PROVIDER_TIMEOUT = 12000; // мс на один запрос к нейросети, чтобы не висеть минуту
+const PROVIDER_TIMEOUT = 20000; // мс на один запрос к Groq или Gemini: Gemini на длинной сводке не всегда успевал за 12 с
 const CLAUDE_BASE = "https://ai.dreamn-api-market.ru/v1";
 const CLAUDE_MODEL = "claude-opus-5.5";
-const CLAUDE_TIMEOUT = 40000;  // Opus думает дольше быстрых моделей
-const CLAUDE_FIRST_BYTE = 28000; // посредник копит ответ и отдаёт его разом: обычно 5–15 с, дольше — завис
+const CLAUDE_TIMEOUT = 56000;  // Opus думает дольше быстрых моделей: 22.10 разбор шёл 30–55 с
+const CLAUDE_FIRST_BYTE = 50000; // посредник копит ответ и отдаёт его разом, поэтому первый байт приходит вместе с ответом
 const CLAUDE_HANG_RETRIES = 1;   // повтор зависшего запроса; больше нельзя: посредник ставит новые в очередь за брошенными
 const FALLBACK_RESERVE = 20000;  // повтор зависшего Opus — только если после него запасным (Groq, Gemini) останется столько
-const ASK_BUDGET = 60000;      // на весь перебор провайдеров: приложение ждёт 75 с
+const ASK_BUDGET = 64000;      // на весь перебор провайдеров: приложение ждёт 75 с
+const ASK_PATIENCE = 40000;    // разбор: запасной ответ готов — Opus ждём не дольше стольких мс от начала
+const CHAT_PATIENCE = 20000;   // чат: то же, ответы короче
 const MAX_CHAT_BODY = 40000;   // сводка + разбор тренера + переписка (или две сводки для сравнения)
 const CHAT_HISTORY = 10;       // сообщений переписки, которые видит модель
 const CHAT_PER_IP_PER_HOUR = 30;
@@ -349,10 +351,14 @@ export function problemsOf(text, prompt) {
     // Исключение: предметы из блока сборки можно советовать в «Надо было»
     const lines = new Map(episodes.split("\n").map((l) => [(/^- (\d{1,2}:\d{2})/.exec(l) || [])[1], l]));
     const build = ((prompt.match(/Сборка под эту катку:\n((?:- [^\n]*\n?)+)/) || [])[1] || "").toLowerCase();
+    // свой герой («Lifestealer мог…») в моменте не чужой факт
+    const own = ((prompt.match(/^Герой: ([^.\n]+)/m) || [])[1] || "").toLowerCase();
+    // предмет из главных проблем («Не было Black King Bar») тоже можно назвать в «Надо было»; числа оттуда — нет
+    const named = ((prompt.match(/Главные проблемы[^\n]*:\n((?:- [^\n]*\n?)+)/) || [])[1] || "").toLowerCase();
     for (const b of moments) {
       const [, time, body] = /^— (\d{1,2}:\d{2})\s*(.*)$/.exec(b) || [];
       const line = (lines.get(time) || "").toLowerCase() + " " + aliases(build);
-      const alien = [...(body || "").toLowerCase().matchAll(/[a-z][a-z'’-]{2,}/g)].map((m) => m[0]).filter((w) => !line.includes(w));
+      const alien = [...(body || "").toLowerCase().matchAll(/[a-z][a-z'’-]{2,}/g)].map((m) => m[0]).filter((w) => !line.includes(w) && !aliases(named).includes(w) && !own.includes(w));
       const alienNums = ((body || "").match(/\d+/g) || []).filter((n) => !new RegExp(`(^|\\D)${n}(\\D|$)`).test(line));
       if (alien.length || alienNums.length) { bad.push(`в моменте ${time} то, чего нет в его фактах: ${[...alien, ...alienNums].join(", ")}`); break; }
       // утверждение проверяем только в «Ошибке»: в «Надо было» «не ходи один» — это совет, а не факт
@@ -421,34 +427,79 @@ async function callProvider(fn, env, messages, system, deadline) {
 // Эти причины не делают совет неверным, ответ с ними можно отдать, если лучшего нет
 const SOFT = ["в «Главном» нет цифры из первой проблемы", "в «Главном» нет цифры или времени из сводки", "ни один пункт не про смерти и драки"];
 
-// Первый провайдер получает несколько попыток (Claude две, быстрые три), остальные по одной.
-// Плохой ответ отдаём назад модели с перечнем ошибок. Весь перебор укладывается в budget мс
+// Первый провайдер получает несколько попыток (Claude две, быстрый пять), остальные по две.
+// Плохой ответ отдаём назад модели с перечнем ошибок. Весь перебор укладывается в budget мс.
+// Opus через посредника отвечает за 30–55 с, поэтому запасные (Groq, Gemini) стартуют сразу вместе с ним
+// и держат готовый ответ: Opus ответил правильно — берём его, нет — без ожидания отдаём запасной
 export async function ask(env, prompt, budget = ASK_BUDGET) {
-  let lastStatus = 0, fallback = "";
+  let lastStatus = 0, done = false;
   const log = [];
-  const deadline = Date.now() + budget;
-  for (const [n, fn] of providersOf(env).entries()) {
-    let user = prompt;
-    for (let attempt = 0; attempt < (n === 0 ? (fn === askClaude ? 2 : 3) : 1); attempt++) {
+  const t0 = Date.now(), deadline = t0 + budget;
+  const sec = () => `${Math.round((Date.now() - t0) / 1000)} с`;
+  // попытки одного провайдера: { text } — годный ответ, { soft } — с мелкими замечаниями, null — ничего
+  const run = async (fn, attempts) => {
+    let user = prompt, soft = "", took = 0;
+    for (let attempt = 0; attempt < attempts && !done; attempt++) {
       const left = deadline - Date.now();
-      if (left < 3000) break;
+      // повтор, который не успеет (Opus думает столько же, сколько в первый раз), только держит ответ
+      if (left < 3000 || (attempt > 0 && left < took)) break;
+      const t = Date.now();
       try {
         const text = normalize(await callProvider(fn, env, [{ role: "user", content: user }], SYSTEM, deadline));
+        took = Date.now() - t;
         const bad = problemsOf(text, prompt);
-        log.push(`${fn.name}: ${bad.join("; ") || "ok"}`);
-        if (!bad.length) { if (env.meter) env.meter.by_name = fn.name; return text; }
-        if (!fallback && bad.length === 1 && SOFT.includes(bad[0])) fallback = text;
+        log.push(`${fn.name} ${sec()}: ${bad.join("; ") || "ok"}`);
+        if (!bad.length) return { text, by: fn.name };
+        if (!soft && bad.length === 1 && SOFT.includes(bad[0])) soft = text;
         user = `${prompt}
 
 Прошлый ответ не подошёл: ${bad.includes("формат") ? "не тот формат или слишком длинно (нужно «Главное:», при моментах в сводке «Моменты:» с пунктами от их времени, и «План на следующую игру:» с тремя пунктами)" : bad.join("; ")}. Перепиши по правилам.`;
       } catch (e) {
         lastStatus = e.status || lastStatus;
-        log.push(`${fn.name}: ${e.message || e.name}`);
+        log.push(`${fn.name} ${sec()}: ${e.message || e.name}`);
         break;
       }
     }
+    return soft ? { soft, by: fn.name } : null;
+  };
+  // попыток: Opus две (дольше не успеть), первый быстрый пять (по 1–5 с, с разбором ошибок), остальные две
+  const tries = (fn, n) => (fn === askClaude ? 2 : n === 0 ? 5 : 2);
+  const chain = async (fns) => {
+    let soft = null;
+    for (const [n, fn] of fns.entries()) {
+      if (done) break;
+      const r = await run(fn, tries(fn, n));
+      if (r && r.text) return r;
+      soft = soft || r;
+    }
+    return soft;
+  };
+  const win = (r) => { done = true; if (env.meter) env.meter.by_name = r.by; return r.text || r.soft; };
+  if (env.meter) env.meter.log = log;
+  const providers = providersOf(env);
+  if (providers[0] === askClaude && providers.length > 1) {
+    const main = run(askClaude, 2), backup = chain(providers.slice(1));
+    const first = await Promise.race([main.then((m) => ({ m })), backup.then((b) => ({ b }))]);
+    let m = first.m, b = first.b;
+    if ("b" in first && b && b.text) {
+      // запасной ответ готов: Opus ждём до ASK_PATIENCE от начала, дальше отдаём запасной
+      let timer;
+      const wait = new Promise((res) => { timer = setTimeout(() => res(undefined), Math.max(0, t0 + (Number(env.ASK_PATIENCE) || ASK_PATIENCE) - Date.now())); });
+      m = await Promise.race([main, wait]);
+      clearTimeout(timer);
+      if (m && m.text) return win(m);
+      log.push(`askClaude ${sec()}: не дождались, отдан запасной`);
+      return win(b);
+    }
+    if ("m" in first && m && m.text) return win(m);
+    if ("m" in first) b = await backup; else m = await main;
+    if (m && m.text) return win(m);
+    if (b && b.text) return win(b);
+    if (m || b) return win(m || b);
+  } else {
+    const r = await chain(providers);
+    if (r) return win(r);
   }
-  if (fallback) return fallback;
   throw Object.assign(new Error("no answer"), { status: lastStatus, log });
 }
 
@@ -518,25 +569,46 @@ export async function chat(env, raw, { question, history, coach } = {}, budget =
   return firstAnswer(env, messages, chatSystem(raw, coach, loreFor(q, raw && raw.hero)), budget, cleanChat);
 }
 
-// Без попыток с подсказками: ответ первого провайдера, который ответил
+// Без попыток с подсказками: ответ первого провайдера, который ответил. Запасные идут параллельно с Opus;
+// если их ответ уже готов, Opus ждём не дольше CHAT_PATIENCE от начала
 async function firstAnswer(env, messages, system, budget, clean) {
-  const deadline = Date.now() + budget;
+  const t0 = Date.now(), deadline = t0 + budget;
   let lastStatus = 0;
   const log = [];
-  for (const fn of providersOf(env)) {
-    const left = deadline - Date.now();
-    if (left < 3000) break;
+  const one = async (fn) => {
+    if (deadline - Date.now() < 3000) return null;
     try {
       const out = clean(await callProvider(fn, env, messages, system, deadline));
       log.push(`${fn.name}: ok`);
-      if (env.meter) env.meter.by_name = fn.name;
-      return out;
+      return { out, by: fn.name };
     } catch (e) {
       lastStatus = e.status || lastStatus;
       log.push(`${fn.name}: ${e.message || e.name}`);
+      return null;
     }
+  };
+  const chain = async (fns) => { for (const fn of fns) { const r = await one(fn); if (r) return r; } return null; };
+  const providers = providersOf(env);
+  let r;
+  if (providers[0] === askClaude && providers.length > 1) {
+    const main = one(askClaude), backup = chain(providers.slice(1));
+    const first = await Promise.race([main.then((m) => ({ m })), backup.then((b) => ({ b }))]);
+    if (first.m) r = first.m;
+    else if ("m" in first) r = await backup; // Opus упал — ждём запасных
+    else if (!first.b) r = await main; // запасные упали — ждём Opus
+    else {
+      const patience = Number(env.CHAT_PATIENCE) || CHAT_PATIENCE;
+      let timer;
+      const wait = new Promise((res) => { timer = setTimeout(() => res(null), Math.max(0, t0 + patience - Date.now())); });
+      r = (await Promise.race([main, wait])) || first.b;
+      clearTimeout(timer);
+    }
+  } else {
+    r = await chain(providers);
   }
-  throw Object.assign(new Error("no answer"), { status: lastStatus, log });
+  if (!r) throw Object.assign(new Error("no answer"), { status: lastStatus, log });
+  if (env.meter) env.meter.by_name = r.by;
+  return r.out;
 }
 
 // ---------- сравнение двух каток ----------
@@ -876,7 +948,7 @@ async function handlePost(request, env, ctx, origin) {
   try {
     const text = await ask(run, prompt);
     if (cacheKey) later(env.COACH_KV.put(cacheKey, text, { expirationTtl: COACH_CACHE_TTL }));
-    return reply(200, { text }, origin, meter.by_name);
+    return reply(200, env.COACH_DEBUG ? { text, log: meter.log } : { text }, origin, meter.by_name);
   } catch (e) {
     return reply(502, debug(e), origin);
   } finally { later(addUsage(env, meter)); }
