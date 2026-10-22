@@ -647,6 +647,7 @@ class MatchAnalyzer {
       build_plan: this.buildPlan(),
       item_plan: this.itemPlan(),
       skill_plan: skillPlan(this.builds, this.p.hero_id, this.pos, this.p.ability_upgrades_arr),
+      death_summary: this.deathSummary(),
     };
   }
 
@@ -931,6 +932,64 @@ class MatchAnalyzer {
       owned: owned.has(k),
       time: k in purchases ? purchases[k] : null,
     }));
+  }
+
+  // Сводка смертей: каждая смерть с типом (линия, драка, один, размен, стычка), фазой и пометками,
+  // сверху — повторяющиеся паттерны с временами (один вне драк, сразу после возрождения, первым в драке, без кнопок...)
+  deathSummary() {
+    const p = this.p, deaths = p.deaths_log || [];
+    if (!deaths.length) return null;
+    const idByKey = new Map(this.match.players.map((x) => [this.od.heroKey(x.hero_id), x.hero_id]));
+    const rows = [];
+    let back = null;
+    for (const d of deaths) {
+      const t = d.time;
+      const traded = (p.kills_log || []).some((k) => k.key.startsWith("npc_dota_hero_") && Math.abs(k.time - t) <= 20);
+      const kind = t < LANING_END && !this.inFight(t) ? "lane" : this.inFight(t) ? "fight" : traded ? "trade" : this.isSoloDeath(t) ? "solo" : "skirmish";
+      // сразу после возрождения: от возрождения (или выкупа) до новой смерти меньше минуты
+      const fresh = back != null && t - back >= 0 && t - back <= 60;
+      back = t + (d.time_dead || 0);
+      for (const b of p.buyback_log || []) if (b.time > t && b.time < back) back = b.time;
+      const note = this.deathNotes ? this.deathNotes.get(t) || null : null;
+      const lead = this.teamAdv.length ? atMinute(this.teamAdv, Math.floor(t / 60)) : null;
+      rows.push({ t, clock: mmss(t), kind, killer: this.od.heroNameByKey(d.key), killer_id: idByKey.get(d.key) || null, fresh, note, lead, dead: d.time_dead || 0 });
+    }
+    const count = (f) => rows.filter(f);
+    const times = (list) => list.slice(0, 4).map((r) => r.clock).join(", ") + (list.length > 4 ? "…" : "");
+    const w = (n) => `${n} ${deathsWord(n)}`;
+    const patterns = [];
+    const push = (list, min, text, tip) => { if (list.length >= min) patterns.push({ n: list.length, text: `${text}: ${times(list)}`, tip }); };
+    push(count((r) => r.kind === "solo"), 2, `${w(count((r) => r.kind === "solo").length)} вне драк, своих рядом не было`,
+      "Перед тем как идти на дальнюю линию или в чужой лес, посчитай врагов на карте: троих не видно — иди туда, где свои");
+    push(count((r) => r.fresh), 2, `${w(count((r) => r.fresh).length)} меньше чем через минуту после возрождения`,
+      "После возрождения не беги сразу в драку: дождись своих или телепортируйся туда, где стоит команда");
+    const firsts = count((r) => r.note === "умер первым в драке").length;
+    push(count((r) => r.note === "умер первым в драке"), 2, `${firsts} ${plural(firsts, "раз", "раза", "раз")} умер в драке первым`,
+      "Заходи в драку вторым: пусть инициатор примет на себя контроль, а ты подключайся следом");
+    push(count((r) => r.note && /не нажат|не прожато/.test(r.note)), 2, `${w(count((r) => r.note && /не нажат|не прожато/.test(r.note)).length)} без прожатых кнопок`,
+      "Когда тебя ловят, жми всё сразу: сейв, скиллы, предметы. Умереть с полными кнопками — самая дорогая смерть");
+    push(count((r) => r.lead != null && r.lead >= 8000), 2, `${w(count((r) => r.lead != null && r.lead >= 8000).length)} при перевесе команды 8 000+`,
+      "С перевесом не ходи один и не лезь без видимости: давите вышки толпой, враги сами придут под удар");
+    push(count((r) => r.kind === "lane"), 3, `${w(count((r) => r.kind === "lane").length)} на линии до 10:00`,
+      "На линии держись за своими крипами и смотри на миникарту, когда враги пропадают");
+    const byKiller = new Map();
+    for (const r of rows) if (r.killer_id) byKiller.set(r.killer, [...(byKiller.get(r.killer) || []), r]);
+    const [topName, topList] = [...byKiller].sort((a, b) => b[1].length - a[1].length)[0] || [];
+    if (topList && topList.length >= 3 && topList.length >= rows.length * 0.4) {
+      patterns.push({ n: topList.length, text: `${topList.length} из ${rows.length} смертей от ${topName}: ${times(topList)}`, tip: `Против ${topName} держи сейв под рукой и не стой там, где он достаёт тебя один на один` });
+    }
+    const counts = {};
+    for (const r of rows) counts[r.kind] = (counts[r.kind] || 0) + 1;
+    // смерти по пятиминуткам: видно, в какой части игры сыпался
+    const buckets = Array.from({ length: Math.max(1, Math.ceil(this.duration / 300)) }, () => 0);
+    for (const r of rows) buckets[Math.min(buckets.length - 1, Math.floor(r.t / 300))]++;
+    const r = this.rank && this.rank.dead_share;
+    return {
+      total: rows.length, rows, counts, buckets,
+      patterns: patterns.sort((a, b) => b.n - a.n).slice(0, 4),
+      dead_time: p.life_state_dead || sum(rows.map((x) => x.dead)), dead_share: (p.life_state_dead || sum(rows.map((x) => x.dead))) / Math.max(1, this.duration),
+      dead_norm: r ? r.median : null,
+    };
   }
 
   // Самая дорогая ошибка сборки под этот пик — в общий список проблем со своей ценой:
@@ -1621,7 +1680,8 @@ class MatchAnalyzer {
       ["crimson_guard", this.pos === 3 ? 1 : 0, t.auto * 4.5,
         () => `${pct(t.auto)}% урона автоатаками: Crimson Guard блокирует их всей команде`],
       ["force_staff", core ? 0.4 : 1, n("blink_init") * 1.2 + n("hook") * 1.5 + t.auto * 2,
-        () => n("hook") ? `${who("hook")} притягивает: Force Staff выталкивает тебя или союзника` : n("blink_init") ? `${who("blink_init")} прыгает в драку: Force Staff выводит из-под инициации` : "выводит тебя или союзника из-под удара"],
+        () => n("hook") ? `${who("hook")} притягивает: Force Staff выталкивает тебя или союзника` : n("blink_init") ? `${who("blink_init")} прыгает в драку: Force Staff выводит из-под инициации`
+          : `${pct(t.auto)}% урона автоатаками: Force Staff выводит тебя из-под удара`],
       ["monkey_king_bar", core ? 1 : 0, n("evasion") * 3.2,
         () => `${who("evasion")} уклоняется: MKB даёт точность и бьёт сквозь уклонение`],
       ["bloodthorn", core ? 0.8 : 0, n("evasion") * 2.6,

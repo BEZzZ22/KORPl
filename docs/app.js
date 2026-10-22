@@ -2,7 +2,7 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan, skillPlan,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
-} from "./engine.js?v=31";
+} from "./engine.js?v=32";
 import { aegisBadge, openShowcase } from "./aegis.js?v=1";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
@@ -2355,9 +2355,39 @@ function pubTimings(a, root) {
   })().catch(() => {});
 }
 
+const DEATH_KIND = { lane: "на линии", fight: "в драке", solo: "один", trade: "размен", skirmish: "стычка" };
+
+// Сводка смертей: сколько и где, по пятиминуткам, что повторялось, и все смерти списком
+function deathSummaryCard(a) {
+  const d = a.death_summary;
+  if (!d) return null;
+  const role = a.summary && a.summary.rank ? ` у ${POS_GEN_PLURAL[a.facts.position] || "игроков"} на ранге ${a.summary.rank}` : "";
+  const max = Math.max(1, ...d.buckets);
+  const kinds = ["lane", "fight", "solo", "trade", "skirmish"].filter((k) => d.counts[k]);
+  return h("div", { class: "card deaths-sum" },
+    h("div", { class: "ds-head" },
+      h("b", {}, `${d.total} ${plural(d.total, "смерть", "смерти", "смертей")}`),
+      h("span", { class: "small muted" }, `мёртвым ${mmss(d.dead_time)} — ${Math.round(d.dead_share * 100)}% игры` +
+        (d.dead_norm != null ? `, обычно${role} ${Math.round(d.dead_norm * 100)}%` : ""))),
+    h("div", { class: "ds-kinds" }, ...kinds.map((k) => h("span", { class: `ds-kind ${k}` }, `${DEATH_KIND[k]} `, h("b", {}, String(d.counts[k]))))),
+    h("div", { class: "ds-bars", role: "img", "aria-label": "Смерти по пятиминуткам" },
+      ...d.buckets.map((n, i) => h("div", { class: "ds-bar" }, h("i", { "data-h": Math.round((n / max) * 100) }), h("small", {}, i % 2 === 0 ? String(i * 5) : "")))),
+    d.patterns.length > 0 && h("div", { class: "ip-label" }, "Что повторялось"),
+    ...d.patterns.map((p) => h("div", { class: "ds-pattern" }, h("div", {}, p.text), h("div", { class: "small muted" }, p.tip))),
+    h("details", { class: "ds-all" }, h("summary", {}, "Все смерти"),
+      ...d.rows.map((r) => h("div", { class: "ds-row" },
+        h("time", {}, r.clock),
+        r.killer_id ? heroImg(r.killer_id, "mini-hero") : h("span", { class: "mini-hero" }),
+        h("div", { class: "grow" },
+          h("span", { class: `ds-kind ${r.kind}` }, DEATH_KIND[r.kind]),
+          r.fresh && h("span", { class: "ds-kind fresh" }, "сразу после возрождения"),
+          r.note && h("div", { class: "small muted" }, r.note))))));
+}
+
 function killersTab(a) {
-  if (!a.killers.length) return h("p", { class: "muted" }, "Никто не убил тебя больше одного раза.");
-  return h("div", {}, ...a.killers.map((k) => {
+  const sum = deathSummaryCard(a);
+  if (!a.killers.length) return h("div", {}, sum, h("p", { class: "muted" }, "Никто не убил тебя больше одного раза."));
+  return h("div", {}, sum, a.killers.length > 0 && h("h2", {}, "Кто убивал"), ...a.killers.map((k) => {
     const total = Object.values(k.damage_by_type).reduce((x, y) => x + y, 0) || 1;
     return h("div", { class: "card" },
       h("div", { class: "killer-head" },
@@ -2393,6 +2423,7 @@ function itemChip(key, cls = "chip") {
 
 const POS_SHORT = { 1: "керри", 2: "мидер", 3: "офлейнер", 4: "саппорт-четвёрка", 5: "хард-саппорт" };
 const POS_GEN = { 1: "керри", 2: "мидера", 3: "офлейнера", 4: "четвёрки", 5: "пятёрки" };
+const POS_GEN_PLURAL = { 1: "керри", 2: "мидеров", 3: "офлейнеров", 4: "четвёрок", 5: "пятёрок" };
 
 // Откуда сборка: про-матчи патча, ближайшая позиция героя или гайд
 function planSource(p) {
@@ -2811,6 +2842,7 @@ function applyDynamicStyles(root) {
   });
   root.querySelectorAll("[data-color]").forEach((el) => { el.style.background = el.dataset.color; });
   root.querySelectorAll("[data-left]").forEach((el) => { el.style.left = `${Number(el.dataset.left)}%`; });
+  root.querySelectorAll("[data-h]").forEach((el) => { el.style.height = `${Number(el.dataset.h)}%`; });
 }
 new MutationObserver(() => applyDynamicStyles(app)).observe(app, { childList: true, subtree: true });
 

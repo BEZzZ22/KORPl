@@ -898,3 +898,26 @@ body { background: transparent; }
 .ip-step.have img, .ip-order.mine .ip-step img { opacity: 1; filter: none; }
 .ip-step.off img { box-shadow: 0 0 0 1.5px #f0a54a; }
 .ip-step small { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* сводка смертей */
+.deaths-sum .ds-head { display: flex; flex-direction: column; gap: 2px; }
+.deaths-sum .ds-head b { font: 800 22px/1.1 var(--display); }
+.ds-kinds { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 8px; }
+.ds-kind { display: inline-block; padding: 4px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; background: rgba(255, 255, 255, 0.06); color: var(--muted); margin-right: 6px; }
+.ds-kind b { color: var(--text); }
+.ds-kind.solo { background: rgba(242, 85, 90, 0.15); color: #f7a2a5; }
+.ds-kind.fight { background: rgba(157, 140, 255, 0.14); color: #c4b9ff; }
+.ds-kind.lane { background: rgba(232, 194, 122, 0.12); color: var(--aegis); }
+.ds-kind.trade { background: rgba(79, 209, 165, 0.12); color: var(--radiant); }
+.ds-kind.fresh { background: rgba(240, 165, 74, 0.15); color: #f0a54a; }
+.ds-bars { display: flex; align-items: flex-end; gap: 4px; height: 64px; margin: 6px 0 14px; }
+.ds-bar { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; position: relative; }
+.ds-bar i { display: block; width: 100%; min-height: 2px; border-radius: 3px 3px 0 0; background: linear-gradient(180deg, #f2555a, rgba(242, 85, 90, 0.45)); }
+.ds-bar small { position: absolute; bottom: -14px; font-size: 10px; color: var(--muted); }
+.ds-pattern { padding: 9px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.ds-pattern .small { margin-top: 3px; }
+.ds-all { margin-top: 10px; }
+.ds-all summary { cursor: pointer; font-weight: 700; padding: 8px 0; color: var(--aegis); }
+.ds-row { display: grid; grid-template-columns: 44px 36px 1fr; gap: 10px; align-items: center; padding: 7px 0; border-top: 1px solid var(--line); }
+.ds-row time { font: 700 13px/1 var(--display); font-variant-numeric: tabular-nums; }
+.ds-row .mini-hero { width: 36px; height: 20px; border-radius: 4px; object-fit: cover; }

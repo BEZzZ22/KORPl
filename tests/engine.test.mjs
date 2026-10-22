@@ -582,3 +582,22 @@ test("командные ауры: Pipe, если магии по команде
   const b2 = analyze(m2, p2, od, kb, tx, pro, bench, {}, [], null, { builds });
   assert.ok(!(b2.item_plan.counters.find((c) => c.key === "pipe") || { whys: [] }).whys.some((w) => /по вашей команде/.test(w)));
 });
+
+test("сводка смертей: типы, «сразу после возрождения», пятиминутки и паттерны", () => {
+  const m = copy();
+  const p = m.players.find((x) => od.heroName(x.hero_id) === "Tusk");
+  const a = analyze(m, p, od, kb, tx, pro, bench, {}, []);
+  const d = a.death_summary;
+  assert.equal(d.total, p.deaths_log.length);
+  assert.equal(Object.values(d.counts).reduce((x, y) => x + y, 0), d.total);
+  assert.equal(d.buckets.reduce((x, y) => x + y, 0), d.total);
+  assert.equal(d.buckets.length, Math.ceil(m.duration / 300));
+  // «сразу после возрождения» — по времени возрождения прошлой смерти
+  for (let i = 1; i < d.rows.length; i++) {
+    const prev = p.deaths_log[i - 1], gap = d.rows[i].t - (prev.time + (prev.time_dead || 0));
+    if (!(p.buyback_log || []).some((b) => b.time > prev.time && b.time < prev.time + (prev.time_dead || 0))) assert.equal(d.rows[i].fresh, gap >= 0 && gap <= 60, d.rows[i].clock);
+  }
+  assert.ok(d.patterns.every((x) => x.n >= 2 && x.text && x.tip));
+  // «5 раз», а не «5 раза»
+  for (const x of d.patterns) { const m2 = /(\d+) раза умер/.exec(x.text); if (m2) assert.ok([2, 3, 4].includes(Number(m2[1]) % 10)); }
+});
