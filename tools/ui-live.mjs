@@ -2,7 +2,8 @@
 // Тренер подменён заглушкой, Телеграма нет. Скриншоты в tests/ui/live/.
 // Запуск: node tools/ui-live.mjs <match_id> [вкладки через запятую: overview,phases,deaths,map,build,charts]
 // или node tools/ui-live.mjs 0 home,profile,hero — главная, профиль и страница героя
-// ACCOUNT=801280038 по умолчанию, UI_WIDTH=390, LIVE_CACHE=папка кэша ответов OpenDota, OPEN=1 раскрывает <details>
+// ACCOUNT=801280038 по умолчанию, UI_WIDTH=390, LIVE_CACHE=папка кэша ответов OpenDota, OPEN=1 раскрывает <details>,
+// COACH=1 — на «Обзоре» нажать «Разобрать с тренером» и сходить в настоящий воркер
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
 import { join, extname } from "node:path";
@@ -57,6 +58,19 @@ await context.route("**/*", async (route) => {
   if (url.origin === BASE) return route.continue();
   if (url.hostname.endsWith("workers.dev")) {
     if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*", "Access-Control-Allow-Methods": "POST" } });
+    // COACH=1 — настоящий тренер: запрос уходит в воркер через Node, в консоль — кто ответил и за сколько
+    if (process.env.COACH && req.method() === "POST") {
+      const t0 = Date.now();
+      try {
+        const r = await fetch(req.url(), { method: "POST", headers: { "Content-Type": "application/json", Origin: "https://bezzz22.github.io" }, body: req.postData(), signal: AbortSignal.timeout(120000) });
+        const body = await r.text();
+        console.log(`тренер: ${r.status} за ${((Date.now() - t0) / 1000).toFixed(1)} с, ответил ${r.headers.get("x-coach-by") || "—"}`);
+        return route.fulfill({ status: r.status, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body });
+      } catch (e) {
+        console.log(`тренер: нет ответа за ${((Date.now() - t0) / 1000).toFixed(1)} с (${e.message})`);
+        return route.abort();
+      }
+    }
     return route.fulfill({ status: 503, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify({ error: "Тренер в живом прогоне выключен." }) });
   }
   if (url.hostname === "telegram.org") return route.fulfill({ status: 200, contentType: "text/javascript", body: "" });
@@ -142,6 +156,11 @@ for (const t of TABS) {
   if (i < 0) { errors.push(`нет вкладки ${t}`); continue; }
   await page.locator(".tabs .tab").nth(i).click();
   await page.waitForTimeout(600);
+  if (t === "overview" && process.env.COACH) {
+    await page.locator(".coach-btn").first().click();
+    await page.waitForFunction(() => document.querySelector(".coach-steps, .coach .loss-text, .coach [role=alert], .coach .error") || /недоступ|ошиб|устал|часто/i.test(document.querySelector(".coach")?.innerText || ""), null, { timeout: 130000 }).catch(() => {});
+    console.log("блок тренера:", (await page.locator(".coach").first().innerText()).replace(/\s+/g, " ").slice(0, 400));
+  }
   if (t === "charts") {
     // подсказки: тап в 10-ю минуту и в самый конец каждого графика
     const charts = page.locator("svg.chart");
