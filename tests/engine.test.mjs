@@ -552,3 +552,33 @@ test("уровни предмета: Dagon 5 — один предмет, «пр
   // первый предмет основы — Dagon вовремя, значит «первый предмет поздно» не пишем, хотя Blink опоздал
   assert.ok(!plan.verdict.some((t) => /Первый предмет основы/.test(t)));
 });
+
+test("командные ауры: Pipe, если магии по команде много и Pipe ни у кого, и только тому, кому он подходит", () => {
+  const m = copy();
+  const p = m.players.find((x) => od.heroName(x.hero_id) === "Tusk");
+  const allies = m.players.filter((x) => x.isRadiant === p.isRadiant);
+  for (const a of allies) {
+    a.damage_inflictor_received = { tiny_avalanche: 9000, null: 3000 }; // магия ≈ 75%
+    a.purchase_log = (a.purchase_log || []).filter((x) => !["pipe", "hood_of_defiance"].includes(x.key));
+  }
+  const pos = (x) => ({ g: 100, wr: 50, start: [], early: [], core: [], sit: x });
+  const heroes = {};
+  for (const a of allies) heroes[a.hero_id] = { 1: pos([]), 2: pos([]), 3: pos([]), 4: pos([]), 5: pos([]) };
+  heroes[p.hero_id] = { 1: pos([["pipe", 20, 1500, 50]]), 2: pos([["pipe", 20, 1500, 50]]), 3: pos([["pipe", 20, 1500, 50]]), 4: pos([["pipe", 20, 1500, 50]]), 5: pos([["pipe", 20, 1500, 50]]) };
+  const builds = { patch: "7.41", heroes, vs: { core: {}, support: {} } };
+  const a = analyze(m, p, od, kb, tx, pro, bench, {}, [], null, { builds });
+  const pipe = a.item_plan.counters.find((c) => c.key === "pipe");
+  assert.ok(pipe, JSON.stringify(a.item_plan.counters.map((c) => c.key)));
+  assert.ok(pipe.whys.some((w) => /магией по вашей команде \d+% урона, а Pipe не собрал никто/.test(w)));
+  // если у союзника Pipe в сборке заметно чаще — совет ему, а не нам
+  const other = allies.find((x) => x !== p);
+  heroes[other.hero_id] = { 1: pos([["pipe", 60, 1500, 50]]), 2: pos([["pipe", 60, 1500, 50]]), 3: pos([["pipe", 60, 1500, 50]]), 4: pos([["pipe", 60, 1500, 50]]), 5: pos([["pipe", 60, 1500, 50]]) };
+  const m2 = copy();
+  const p2 = m2.players.find((x) => od.heroName(x.hero_id) === "Tusk");
+  for (const x of m2.players.filter((y) => y.isRadiant === p2.isRadiant)) {
+    x.damage_inflictor_received = { tiny_avalanche: 9000, null: 3000 };
+    x.purchase_log = (x.purchase_log || []).filter((y) => !["pipe", "hood_of_defiance"].includes(y.key));
+  }
+  const b2 = analyze(m2, p2, od, kb, tx, pro, bench, {}, [], null, { builds });
+  assert.ok(!(b2.item_plan.counters.find((c) => c.key === "pipe") || { whys: [] }).whys.some((w) => /по вашей команде/.test(w)));
+});

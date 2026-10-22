@@ -83,6 +83,7 @@ const COUNTER_GROUPS = [
   ["ghost", "heavens_halberd", "assault", "shivas_guard", "solar_crest", "butterfly", "blade_mail", "crimson_guard"],
   ["monkey_king_bar", "bloodthorn"],
   ["spirit_vessel", "skadi"],
+  ["mekansm", "guardian_greaves", "holy_locket", "boots_of_bearing"],
 ];
 export function counterGroups(key) {
   const out = COUNTER_GROUPS.map((g, i) => (g.includes(key) ? `g${i}` : null)).filter(Boolean);
@@ -1732,12 +1733,62 @@ class MatchAnalyzer {
     const threat = this.minutes >= 15 && t.total >= 3000 ? this.rankCounters(t) : [];
     this._plan = itemPlan({
       builds: this.builds, guides: this.guides, od: this.od, knowledge: this.k, heroId: this.p.hero_id, pos: this.pos,
-      enemies: this.enemies.map((e) => e.hero_id), tags: this.enemyMechanics(), threat, owned, bought, minutes: this.minutes,
+      enemies: this.enemies.map((e) => e.hero_id), tags: this.enemyMechanics(), threat, team: this.minutes >= 20 ? this.teamAuraGaps() : [],
+      owned, bought, minutes: this.minutes,
       upgrade: (k) => this.upgradeOf(k), turbo: this.match.game_mode === TURBO_MODE,
       duration: this.duration, finished: this.finishedItems(),
     });
     if (this._plan) this._plan.facts = this.threatFacts(t);
     return this._plan;
+  }
+
+  // Командные ауры: урон по всем союзникам по типам и кто что собрал. Pipe при магии, Crimson при автоатаках,
+  // Mekansm/Greaves при частых драках — если этого не было ни у кого в команде
+  teamAuraGaps() {
+    const byType = { Magical: 0, Physical: 0, Pure: 0 };
+    let auto = 0, total = 0;
+    for (const a of this.allies) {
+      for (const [src, dmg] of Object.entries(a.damage_inflictor_received || {})) {
+        const t = this.od.sourceType(src);
+        if (!t) continue;
+        byType[t] = (byType[t] || 0) + dmg;
+        if (src === "null" || src === "") auto += dmg;
+        total += dmg;
+      }
+    }
+    if (total < 20000) return [];
+    const has = (keys) => this.allies.some((a) => (a.purchase_log || []).some((x) => keys.includes(x.key)));
+    const pct = (x) => Math.round((x / total) * 100);
+    // ауру советуем тому союзнику, у кого она чаще в сборке про на его позиции (Pipe — офлейнеру, а не миду)
+    const shareFor = (a, key) => {
+      const b = heroBuild(this.builds, null, a.hero_id, this.od.heroKey(a.hero_id), this.roleOf.get(a) || position(a));
+      const r = b && [...b.early, ...b.core, ...b.sit].find((x) => x[0] === key);
+      return r ? r[1] || 0 : 0;
+    };
+    // keys — предметы одной задачи (лечение: Greaves или Mekansm); задача достаётся одному союзнику
+    const mine = (keys) => {
+      const best = (a) => Math.max(...[].concat(keys).map((k) => shareFor(a, k)));
+      const me = best(this.p);
+      return me >= 8 && this.allies.every((a) => a === this.p || best(a) <= me + 5);
+    };
+    const out = [];
+    const magic = byType.Magical / total, autoShare = auto / total;
+    if (magic >= 0.45 && !has(["pipe", "hood_of_defiance"]) && mine("pipe")) {
+      out.push({ key: "pipe", score: 1.6 + (magic - 0.45) * 6, strong: magic >= 0.55, why: `магией по вашей команде ${pct(byType.Magical)}% урона, а Pipe не собрал никто` });
+    }
+    if (autoShare >= 0.4 && !has(["crimson_guard"]) && mine("crimson_guard")) {
+      out.push({ key: "crimson_guard", score: 1.4 + (autoShare - 0.4) * 6, strong: autoShare >= 0.5, why: `автоатаками по вашей команде ${pct(auto)}% урона, а Crimson Guard не собрал никто` });
+    }
+    const fights = (this.match.teamfights || []).length;
+    if (fights >= 6 && !has(["mekansm", "guardian_greaves", "holy_locket", "boots_of_bearing"])) {
+      const w = 1.3 + Math.min(fights - 6, 6) * 0.1;
+      const why = `${fights} ${plural(fights, "драка", "драки", "драк")}, а лечения на команду (Mekansm, Greaves) не было ни у кого`;
+      if (mine(["guardian_greaves", "mekansm"])) {
+        const key = shareFor(this.p, "guardian_greaves") >= shareFor(this.p, "mekansm") ? "guardian_greaves" : "mekansm";
+        out.push({ key, score: w, strong: fights >= 9, why });
+      }
+    }
+    return out;
   }
 
   threatFacts(t) {
@@ -3195,7 +3246,7 @@ export function enemyTags(knowledge, od, enemies) {
 
 // Сборка под пик. enemies — id вражеских героев; tags — механики врагов {invis: [имена]};
 // threat — предметы против того, чем реально били (после игры, из rankCounters); owned/bought — что купил игрок
-export function itemPlan({ builds, guides, od, knowledge, heroId, pos, enemies = [], tags = null, threat = [], owned = null, bought = null, minutes = null, upgrade = null, turbo = false, duration = null, finished = null }) {
+export function itemPlan({ builds, guides, od, knowledge, heroId, pos, enemies = [], tags = null, threat = [], team = [], owned = null, bought = null, minutes = null, upgrade = null, turbo = false, duration = null, finished = null }) {
   // без сборки героя (нет справочника или героя в нём) остаются только предметы против этого пика
   const base = heroBuild(builds, guides, heroId, od.heroKey(heroId), pos)
     || { source: "none", pos, start: [], early: [], core: [], sit: [] };
@@ -3214,7 +3265,12 @@ export function itemPlan({ builds, guides, od, knowledge, heroId, pos, enemies =
     c.score += score;
     c.strong = c.strong || strong;
     if (strong && !c.strongWhy) c.strongWhy = why;
-    if (why && !c.whys.includes(why)) c.whys.push(why);
+    // сильные причины вперёд: в карточке видны первые две
+    if (why && !c.whys.includes(why)) {
+      if (strong) c.whys.splice(c.whys.filter((w) => c.strongSet && c.strongSet.has(w)).length, 0, why);
+      else c.whys.push(why);
+      if (strong) (c.strongSet = c.strongSet || new Set()).add(why);
+    }
     for (const v of [].concat(vs || [])) c.vs.add(v);
     cand.set(key, c);
   };
@@ -3238,6 +3294,8 @@ export function itemPlan({ builds, guides, od, knowledge, heroId, pos, enemies =
   }
   // 3. После игры: чем тебя реально били (урон по типам, контроль)
   for (const r of threat || []) add(r.key, r.score / 3, r.why, r.vs ? r.vs.split(", ") : [], r.score >= 6);
+  // 4. После игры: командные ауры, которых не было ни у кого, хотя урон по всей команде их просил
+  for (const r of team || []) add(r.key, r.score, r.why, [], r.strong);
 
   const inCore = new Set([...base.early, ...base.core].map((r) => r[0]));
   const status = (key) => ({
@@ -3387,7 +3445,9 @@ function reviewPurchases({ od, base, core, early, counters, finished, turbo }) {
   const firstCore = core.filter((r) => r.key !== "aghanims_shard" && r.owned && r.time != null && r.med).sort((a, b) => a.time - b.time)[0];
   if (!turbo && firstCore && firstCore.late) v.push({ w: 60 + min(firstCore.time - firstCore.med), text: `Первый предмет основы ${firstCore.item} на ${mmss(firstCore.time)}, у про к ${mmss(firstCore.med)}: на ${min(firstCore.time - firstCore.med)} мин позже` });
   // из контр-предметов в главное — один, и только с сильной причиной
-  const strongCounter = counters.find((x) => x.owned === false && x.strong);
+  // и не с той же причиной, что уже сказана выше (Glimmer и Eul's против одного прокаста — одна мысль)
+  const said = (why) => v.some((x) => x.text.toLowerCase().includes(String(why || "").toLowerCase()));
+  const strongCounter = counters.find((x) => x.owned === false && x.strong && !said(x.strong_why || x.why));
   if (strongCounter) v.push({ w: 55, text: `Не было ${strongCounter.item}${strongCounter.vs ? ` (против ${strongCounter.vs})` : ""}. ${cap(strongCounter.strong_why || strongCounter.why)}` });
   const skipped = missing.filter((r) => r.share >= 40).map((r) => r.item);
   if (skipped.length >= 2) v.push({ w: 50, text: `Из основы не было ${skipped.slice(0, 3).join(", ")}: у про они в ${skipped.length > 2 ? "большинстве" : "половине и больше"} игр` });
