@@ -2,7 +2,7 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan, skillPlan,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
-} from "./engine.js?v=30";
+} from "./engine.js?v=31";
 import { aegisBadge, openShowcase } from "./aegis.js?v=1";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
@@ -925,8 +925,9 @@ function draftPlanPanel(heroId, enemies, role) {
     box.replaceChildren(
       h("div", { class: "pos-row", role: "tablist", "aria-label": "Позиция" }, ...[1, 2, 3, 4, 5].map((p) => h("button", {
         type: "button", class: `pos-chip ${byPos[p] ? "" : "rare"}`, "aria-pressed": String(p === pos),
+        title: byPos[p] ? `${byPos[p].g} игр про` : "у про почти не бывает",
         onclick: () => { if (p !== pos) { pos = p; hapticTick(); draw(); } },
-      }, `поз. ${p}`))),
+      }, `поз. ${p}`, h("small", {}, byPos[p] ? `${byPos[p].g} игр` : "редко")))),
       plan ? itemPlanCard(plan) : h("p", { class: "muted small" }, "По этому герою пока нет сборок."),
       skillCard(skillPlan(builds, heroId, pos)));
   };
@@ -2410,14 +2411,14 @@ function planStatus(r) {
   return h("span", { class: `ip-st ${r.late ? "late" : "have"}` }, r.time != null && r.time > 0 ? mmss(r.time) : "было", r.late && h("small", {}, "поздно"));
 }
 
-function planRow(r) {
+function planRow(r, after = true) {
   const meta = [r.share != null && `у про ${r.share}% игр`, r.med != null && r.med > 0 && `к ${mmss(r.med)}`].filter(Boolean).join(" · ");
   return h("div", { class: `ip-row ${r.owned === false && !r.pending ? "miss" : ""}`, "data-key": r.key },
     img(dictionary.itemImage(r.key), null, ""),
     h("div", { class: "grow" },
       h("div", { class: "ip-name" }, r.item),
       meta && h("div", { class: "small muted" }, meta),
-      r.important && h("div", { class: "small ip-why" }, `в этой катке важнее обычного: ${r.important}`)),
+      r.important && h("div", { class: "small ip-why" }, `${after ? "в этой катке" : "против этого пика"} важнее обычного: ${r.important}`)),
     planStatus(r));
 }
 
@@ -2464,15 +2465,17 @@ function itemPlanCard(p, { after = false, facts = [] } = {}) {
     h("div", { class: "small muted" }, planSource(p)),
     after && (p.verdict || []).length > 0 && h("div", { class: "ip-verdict" }, h("div", { class: "ip-label" }, "Главное по сборке"),
       ...p.verdict.map((t) => h("p", {}, t))),
+    !after && (p.brief || []).length > 0 && h("div", { class: "ip-verdict" }, h("div", { class: "ip-label" }, "Главное под этот пик"),
+      ...p.brief.map((t) => h("p", {}, t))),
     ...facts.map((t) => h("div", { class: "plan-fact" }, t)),
     after && p.core_total > 0 && h("div", { class: "ip-score" }, h("b", {}, `${p.core_have} из ${p.core_total}`), " основных предметов собрал"),
     after && planOrder(p),
     p.start.length > 0 && h("div", { class: "ip-label" }, "Старт"),
     p.start.length > 0 && planChips(p.start),
     p.early.length > 0 && h("div", { class: "ip-label" }, "Ранняя игра"),
-    ...p.early.map(planRow),
+    ...p.early.map((r) => planRow(r, after)),
     p.core.length > 0 && h("div", { class: "ip-label" }, "Основа"),
-    ...p.core.map(planRow),
+    ...p.core.map((r) => planRow(r, after)),
     ...p.notes.map((t) => h("p", { class: "small plan-extra" }, t)),
     h("div", { class: "ip-label" }, "Против этого пика"),
     counters.length ? h("div", {}, ...counters)

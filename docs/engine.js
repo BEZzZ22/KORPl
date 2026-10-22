@@ -3355,6 +3355,13 @@ export function itemPlan({ builds, guides, od, knowledge, heroId, pos, enemies =
     sit: base.sit.filter((r) => !counters.some((c) => c.key === r[0])).slice(0, 8).map(row),
     core_have: owned ? coreKeys.filter((r) => r.owned).length : null, core_total: coreKeys.length, turbo,
     extra: after.extra, inversion: after.inversion, verdict: after.verdict,
+    // до игры: главное под этот пик одной выжимкой — что важнее обычного, что раньше, какие контры
+    brief: [
+      // про BKB, который нужен раньше, уже скажет заметка — вторая строка о том же не нужна
+      ...core.filter((r) => r.important && !notes.some((n) => n.startsWith(r.item))).map((r) => `${r.item} важнее обычного: ${r.important}`),
+      ...notes,
+      ...counters.slice(0, 2).map((c) => `${c.item}: ${c.why}`),
+    ].slice(0, 4),
     // порядок покупок игрока (готовые предметы) — рядом с порядком основы у про
     bought_order: finished ? finished.filter((x) => x.time > 0).map(({ key, item, time }) => ({ key, item, time })) : null,
   };
