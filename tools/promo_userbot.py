@@ -80,13 +80,14 @@ async def setup_channel(client, target):
     state = json.loads(CHANNEL_STATE.read_text(encoding="utf-8")) if CHANNEL_STATE.exists() else {}
     if state.get("hash") == digest:
         return
-    from telethon.errors import ChatNotModifiedError
+    from telethon.errors import RPCError
 
     async def apply(coro):
         try:
             await coro
-        except ChatNotModifiedError:
-            pass
+        except RPCError as e:  # «ничего не изменилось» (название, описание, фото те же) — не ошибка
+            if "NOT_MODIFIED" not in str(getattr(e, "message", "")).upper():
+                raise
 
     if config.get("title"):
         await apply(client(EditTitleRequest(target, config["title"])))
