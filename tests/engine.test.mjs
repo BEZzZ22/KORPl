@@ -614,3 +614,12 @@ test("линия 1 на 2: расклад в дуэли и фраза перед
   assert.equal(mid.lane.setup.theirs, 1);
   assert.ok(!/против/.test(mid.phases[0].text.split(".")[0]) || !/^Ты/.test(mid.phases[0].text));
 });
+
+test("смерть до горна: в фактах эпизода нет NaN", () => {
+  const m = copy();
+  const p = m.players.find((x) => od.heroName(x.hero_id) === "Invoker");
+  p.deaths_log = [{ time: -3, key: p.deaths_log[0].key, time_dead: 9 }, ...p.deaths_log];
+  p.deaths = p.deaths_log.length;
+  const a = analyze(m, p, od, kb, tx, pro, bench, {}, []);
+  assert.ok(!JSON.stringify(a).includes("NaN"));
+});

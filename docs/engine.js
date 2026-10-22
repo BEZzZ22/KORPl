@@ -316,6 +316,8 @@ export function assignRoles(team) {
 
 function atMinute(series, minute) {
   if (!series || !series.length) return null;
+  // смерть до горна (time -3) даёт минуту -1: берём нулевую, иначе NaN в тексте
+  if (minute < 0) return series[0];
   return minute < series.length ? series[minute] : series[series.length - 1];
 }
 
