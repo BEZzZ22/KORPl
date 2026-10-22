@@ -16,6 +16,7 @@ const CLAUDE_MODEL = "claude-opus-5.5";
 const CLAUDE_TIMEOUT = 40000;  // Opus думает дольше быстрых моделей
 const CLAUDE_FIRST_BYTE = 28000; // посредник копит ответ и отдаёт его разом: обычно 5–15 с, дольше — завис
 const CLAUDE_HANG_RETRIES = 1;   // повтор зависшего запроса; больше нельзя: посредник ставит новые в очередь за брошенными
+const FALLBACK_RESERVE = 20000;  // повтор зависшего Opus — только если после него запасным (Groq, Gemini) останется столько
 const ASK_BUDGET = 60000;      // на весь перебор провайдеров: приложение ждёт 75 с
 const MAX_CHAT_BODY = 40000;   // сводка + разбор тренера + переписка (или две сводки для сравнения)
 const CHAT_HISTORY = 10;       // сообщений переписки, которые видит модель
@@ -410,6 +411,9 @@ async function callProvider(fn, env, messages, system, deadline) {
       return await fn(env, messages, system, Math.min(timeoutOf(fn, env), left));
     } catch (e) {
       if (!e.hang || i >= CLAUDE_HANG_RETRIES) throw e;
+      // 22.10 Opus висел оба раза по 28 с, и Groq оставалось 4 с: лучше сразу отдать время запасным
+      const reserve = providersOf(env).length > 1 ? FALLBACK_RESERVE : 0;
+      if (deadline - Date.now() < (Number(env.CLAUDE_FIRST_BYTE) || CLAUDE_FIRST_BYTE) + reserve) throw e;
     }
   }
 }

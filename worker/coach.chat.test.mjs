@@ -334,6 +334,21 @@ test("Claude: зависший без единого байта запрос п�
   assert.ok(Date.now() - t0 < 5000);
 });
 
+test("Claude: зависший запрос не повторяется, если запасным тогда не хватит времени", async (t) => {
+  t.after(restore);
+  const who = [];
+  globalThis.fetch = async (url, init) => {
+    const u = String(url);
+    who.push(u.includes("groq") ? "groq" : "claude");
+    if (!u.includes("groq")) return new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" }))));
+    return okChoice("Ответ от Groq.");
+  };
+  // бюджет 15 с: после первого зависания на повтор (0,3 с) + запас запасным (20 с) времени нет — сразу Groq
+  const out = await chat({ CLAUDE_API_KEY: "c", GROQ_API_KEY: "g", CLAUDE_FIRST_BYTE: "300" }, raw, { question: "как фармить?" }, 15000);
+  assert.equal(out.text, "Ответ от Groq.");
+  assert.deepEqual(who, ["claude", "groq"]);
+});
+
 test("normalize: хвост «Self-check: …» от Opus срезается", () => {
   assert.equal(normalize(`${good}\n\nSelf-check: формат выдержан, числа из сводки.`), normalize(good));
 });
