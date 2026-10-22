@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "search (искать наборы по словам) или pack (показать эмодзи набора по short_name)"
+        description: "search (искать наборы по словам), pack (эмодзи набора по short_name) или chat (эмодзи и наборы из чата, по части названия)"
         default: search
         required: true
       names:
