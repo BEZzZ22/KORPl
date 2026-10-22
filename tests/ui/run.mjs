@@ -187,7 +187,7 @@ await step("home", async () => {
   if (process.env.UI_AEGIS) {
     // щит застывает на угле: анфас, вбок, ребром, сзади и наискосок (поворот по двум осям)
     await page.waitForSelector(".app-top .aegis.ready", { timeout: 10000 });
-    for (const angle of [0, 40, 90, 180, 300, [35, 30], [-50, -40], [0, 80]]) {
+    for (const angle of [0, 40, 90, 180, 300, [35, 30], [-50, -40], [0, 80], 270, [90, 15]]) {
       await page.evaluate((a) => document.querySelector(".app-top .aegis").aegisPose(a), angle);
       await page.waitForTimeout(120);
       await page.locator(".app-top .aegis").screenshot({ path: join(OUT, `aegis-${[].concat(angle).join("_")}.png`) });

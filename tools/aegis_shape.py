@@ -2,18 +2,31 @@
 
 Берёт анфас docs/img/aegis_still.webp и кадр «сзади» (24-й из 48) из раскадровки docs/img/aegis_spin.webp
 (их снимают tools/capture_aegis.mjs и tools/pack_aegis.py с модели Sketchfab «Aegis of champions», msta2219, CC BY).
-Пишет docs/img/aegis_back.webp и docs/aegis_shape.js — внешний контур силуэта: из центра щита по лучам до края.
+Пишет docs/img/aegis_back.webp, карты нормалей рельефа aegis_front_n.webp и aegis_back_n.webp
+и docs/aegis_shape.js — внешний контур силуэта: из центра щита по лучам до края.
 Запуск: python tools/aegis_shape.py
 """
 import math
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 
 DOCS = Path(__file__).resolve().parent.parent / "docs"
 FRAME, COLS, BACK = 360, 8, 24
 RAYS = 160
+
+
+def normal_map(img, out, strength=3.2):
+    """Карта нормалей рельефа из яркости: светлое (серебро, бронза) выше тёмного фона. x вправо, y вверх."""
+    rgba = img.convert("RGBA")
+    lum = rgba.convert("L").filter(ImageFilter.GaussianBlur(0.8))
+    h = np.asarray(lum, dtype=np.float32) / 255 * (np.asarray(rgba.getchannel("A"), dtype=np.float32) / 255)
+    gy, gx = np.gradient(h)
+    nx, ny, nz = -gx * strength, gy * strength, np.ones_like(h)
+    n = np.sqrt(nx * nx + ny * ny + nz * nz)
+    rgb = np.stack([nx / n, ny / n, nz / n], -1) * 0.5 + 0.5
+    Image.fromarray((rgb * 255 + 0.5).astype(np.uint8), "RGB").save(out, quality=90, method=6)
 
 
 def main():
@@ -55,6 +68,8 @@ def main():
         t = 2 * math.pi * k / RAYS
         x, y = cx + math.cos(t) * r, cy - math.sin(t) * r
         out += [round((x - FRAME / 2) / (FRAME / 2), 3), round(-(y - FRAME / 2) / (FRAME / 2), 3)]
+    normal_map(still, DOCS / "img" / "aegis_front_n.webp")
+    normal_map(fitted, DOCS / "img" / "aegis_back_n.webp")
     (DOCS / "aegis_shape.js").write_text(
         "// Внешний контур Аегиса (x, y в долях полукадра, против часовой): tools/aegis_shape.py\n"
         f"export const OUTLINE = [{','.join(str(v) for v in out)}];\n", encoding="utf-8")
