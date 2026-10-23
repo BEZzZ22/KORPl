@@ -59,8 +59,11 @@ def test_queue_is_valid_and_human_paced():
         if p.get("photo"):
             assert (root / p["photo"]).exists(), p["id"]
         datetime.fromisoformat(p["at"])
-    days = sorted({datetime.fromisoformat(p["at"]).date() for p in queue if p["id"] != "launch"})
-    gaps = {(b - a).days for a, b in zip(days, days[1:])}
-    assert {1, 2} <= gaps and max(gaps) <= 3                    # то день подряд, то пропуск, но не пропадаем надолго
-    minutes = {datetime.fromisoformat(p["at"]).minute for p in queue if p["id"] != "launch"}
-    assert len(minutes) >= 12                                   # не «ровно в час»
+    posts = sorted((datetime.fromisoformat(p["at"]) for p in queue if p["id"] != "launch"))
+    per_day = {}
+    for d in posts:
+        per_day[d.date()] = per_day.get(d.date(), 0) + 1
+    assert set(per_day.values()) == {3}                         # три поста в день
+    assert all((b - a).total_seconds() >= 2 * 3600 for a, b in zip(posts, posts[1:]))   # не пачкой
+    assert len({d.minute for d in posts}) >= 25                 # время каждый день разное, не «ровно в час»
+    assert len({d.hour * 60 + d.minute for d in posts}) >= 50  # время суток почти не повторяется
