@@ -53,12 +53,17 @@ def update_profile():
 def delete_all_reels():
     """Удаляет все рилсы аккаунта (аккаунт выделенный, рилсов там только наши) и очищает ig_posted.json."""
     cl = login()
-    clips = cl.user_clips(cl.user_id, amount=0)
-    for m in clips:
-        cl.media_delete(m.id)
-        print(f"Удалён рилс {m.code}")
-    POSTED.write_text("{}", encoding="utf-8")
-    print(f"Удалено рилсов: {len(clips)}")
+    posted = json.loads(POSTED.read_text(encoding="utf-8")) if POSTED.exists() else {}
+    left = {}
+    for key, v in posted.items():
+        try:
+            cl.media_delete(cl.media_id(cl.media_pk_from_code(v["code"])))   # по коду публикации, без запроса списка рилсов
+            print(f"Удалён рилс {key} ({v['code']})")
+        except Exception as e:  # не роняем остальные удаления
+            print(f"Не удалось удалить {key} ({v['code']}): {type(e).__name__}: {e}")
+            left[key] = v
+    POSTED.write_text(json.dumps(left, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"Удалено: {len(posted) - len(left)}, осталось: {len(left)}")
 
 
 def main():
