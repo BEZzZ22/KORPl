@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 QUEUE, POSTED = ROOT / "promo" / "ig_queue.json", ROOT / "promo" / "ig_posted.json"
-MIN_GAP = timedelta(hours=20)  # не чаще одного рилса за 20 часов, как живой человек
+MIN_GAP = timedelta(hours=5)  # около двух рилсов в день, но не пачкой: между ними минимум 5 часов
 
 
 def due(queue, posted, now=None):

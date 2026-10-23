@@ -17,8 +17,8 @@ def at(s):
 def test_due_one_at_a_time_with_gap():
     assert [p["id"] for p in due(Q, {}, at("2026-10-26T00:00:00+00:00"))] == ["a"]
     posted = {"a": {"code": "x", "at": "2026-10-26T00:00:00+00:00"}}
-    assert due(Q, posted, at("2026-10-26T10:00:00+00:00")) == []          # прошло меньше 20 часов
-    assert [p["id"] for p in due(Q, posted, at("2026-10-26T21:00:00+00:00"))] == ["b"]
+    assert due(Q, posted, at("2026-10-26T04:00:00+00:00")) == []          # прошло меньше 5 часов
+    assert [p["id"] for p in due(Q, posted, at("2026-10-26T06:00:00+00:00"))] == ["b"]
 
 
 def test_ig_queue_files_and_captions():
@@ -29,4 +29,9 @@ def test_ig_queue_files_and_captions():
         assert len(p["caption"]) <= 2200 and p["caption"].count("#") <= 30, p["id"]
         datetime.fromisoformat(p["at"])
     ats = [datetime.fromisoformat(p["at"]) for p in queue]
-    assert all(b - a >= timedelta(hours=20) for a, b in zip(ats, ats[1:]))
+    assert all(b - a >= timedelta(hours=5) for a, b in zip(ats, ats[1:]))
+    per_day = {}
+    for a in ats:
+        per_day[a.date()] = per_day.get(a.date(), 0) + 1
+    assert set(per_day.values()) == {2}                                    # по два рилса в день
+    assert len({a.minute for a in ats}) >= 12                              # время неровное
