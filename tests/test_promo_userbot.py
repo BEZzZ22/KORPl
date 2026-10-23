@@ -46,11 +46,21 @@ def test_render_uses_premium_emoji_only_when_id_known():
     assert plain("{e:fire} <b>x</b> {e:shield}", emoji) == "F x S"
 
 
-def test_queue_posts_fit_caption_and_have_photos():
+def test_queue_is_valid_and_human_paced():
     import json
-    queue = json.loads((Path(__file__).resolve().parent.parent / "promo" / "queue.json").read_text(encoding="utf-8"))
-    emoji = json.loads((Path(__file__).resolve().parent.parent / "promo" / "emoji.json").read_text(encoding="utf-8"))
+    root = Path(__file__).resolve().parent.parent
+    queue = json.loads((root / "promo" / "queue.json").read_text(encoding="utf-8"))
+    emoji = json.loads((root / "promo" / "emoji.json").read_text(encoding="utf-8"))
+    assert len({p["id"] for p in queue}) == len(queue)
     for p in queue:
-        assert len(plain(body(p), emoji)) <= 1024, p["id"]
-        assert (Path(__file__).resolve().parent.parent / p["photo"]).exists(), p["id"]
-        assert "{e:" not in plain(body(p), emoji), p["id"]
+        text = plain(body(p), emoji)
+        assert "{e:" not in text, p["id"]                      # все ключи эмодзи известны
+        assert len(text) <= (1024 if p.get("photo") else 4096), p["id"]
+        if p.get("photo"):
+            assert (root / p["photo"]).exists(), p["id"]
+        datetime.fromisoformat(p["at"])
+    days = sorted({datetime.fromisoformat(p["at"]).date() for p in queue if p["id"] != "launch"})
+    gaps = {(b - a).days for a, b in zip(days, days[1:])}
+    assert {1, 2} <= gaps and max(gaps) <= 3                    # то день подряд, то пропуск, но не пропадаем надолго
+    minutes = {datetime.fromisoformat(p["at"]).minute for p in queue if p["id"] != "launch"}
+    assert len(minutes) >= 12                                   # не «ровно в час»
