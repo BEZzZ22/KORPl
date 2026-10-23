@@ -2,7 +2,8 @@
 Секреты: YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN (токен получают один раз скриптом tools/yt_token.py).
 Не больше одного ролика за прогон и не чаще раза в 5 часов. Состояние: promo/yt_posted.json (id -> id видео и время).
 Важно: пока проект Google не прошёл аудит YouTube API, загруженные видео остаются приватными, их открывают вручную в YouTube Studio.
-Запуск: python tools/promo_yt.py [--dry]"""
+Каждый прогон сначала обменивает refresh-токен у Google: если токен умер, прогон красный сразу, а не в день загрузки.
+Запуск: python tools/promo_yt.py [--dry | --check]  (--check: только проверить токен, ничего не загружать)"""
 import json
 import os
 import sys
@@ -31,6 +32,16 @@ def main():
     if not dry and not all(env.values()):
         print("Нет YT_CLIENT_ID, YT_CLIENT_SECRET или YT_REFRESH_TOKEN: загружать некуда, пропускаю.")
         return
+    if not dry:
+        from google.auth.transport.requests import Request
+        from google.oauth2.credentials import Credentials
+
+        creds = Credentials(None, refresh_token=env["YT_REFRESH_TOKEN"], client_id=env["YT_CLIENT_ID"], client_secret=env["YT_CLIENT_SECRET"],
+                            token_uri="https://oauth2.googleapis.com/token", scopes=["https://www.googleapis.com/auth/youtube.upload"])
+        creds.refresh(Request())
+        print("Токен YouTube живой.")
+        if "--check" in sys.argv:
+            return
     queue = json.loads(QUEUE.read_text(encoding="utf-8"))
     posted = json.loads(POSTED.read_text(encoding="utf-8")) if POSTED.exists() else {}
     posts = due(queue, posted)
@@ -41,12 +52,9 @@ def main():
     if dry:
         print(f"[dry] {post['id']}: {post['title']}")
         return
-    from google.oauth2.credentials import Credentials
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
 
-    creds = Credentials(None, refresh_token=env["YT_REFRESH_TOKEN"], client_id=env["YT_CLIENT_ID"], client_secret=env["YT_CLIENT_SECRET"],
-                        token_uri="https://oauth2.googleapis.com/token")
     yt = build("youtube", "v3", credentials=creds, cache_discovery=False)
     body = {
         "snippet": {"title": post["title"], "description": post["description"], "tags": post.get("tags", []), "categoryId": "20"},
