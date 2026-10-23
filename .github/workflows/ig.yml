@@ -1,0 +1,39 @@
+# Рилсы в Инстаграм по расписанию из promo/ig_queue.json (неофициальный вход по cookie sessionid, риск бана принимает владелец).
+# Секрет репозитория IG_SESSIONID: cookie sessionid из браузера, где ты вошёл в Инстаграм. Без него прогон ничего не делает.
+name: Инстаграм рилсы
+
+on:
+  schedule:
+    - cron: "37 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ig
+  cancel-in-progress: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Публикуем то, что пора
+        env:
+          IG_SESSIONID: ${{ secrets.IG_SESSIONID }}
+        run: |
+          if [ -n "$IG_SESSIONID" ]; then pip install -q instagrapi moviepy pillow; fi
+          python tools/promo_ig.py
+      - name: Сохранить, что вышло
+        run: |
+          git config user.name "promo-bot"
+          git config user.email "promo-bot@users.noreply.github.com"
+          git add -A promo/ig_posted.json
+          git diff --cached --quiet && { echo "без изменений"; exit 0; }
+          git commit -q -m "Инстаграм: что вышло"
+          git push -q
