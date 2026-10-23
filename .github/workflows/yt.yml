@@ -30,7 +30,7 @@ jobs:
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
         run: |
-          if [ -n "$YT_REFRESH_TOKEN" ]; then pip install -q google-api-python-client google-auth; fi
+          if [ -n "$YT_REFRESH_TOKEN" ]; then pip install -q google-api-python-client google-auth requests; fi
           python tools/promo_yt.py
       - name: Сохранить, что вышло
         run: |
