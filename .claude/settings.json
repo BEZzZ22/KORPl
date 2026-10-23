@@ -3,9 +3,12 @@
     "allow": [
       "Bash(python tools/tg_send_one.py:*)",
       "Bash(python tools/tg_read_chat.py:*)",
+      "Bash(python tools/promo_ig.py:*)",
+      "Bash(pip install instagrapi:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git push:*)"
     ]
   }
 }
+
