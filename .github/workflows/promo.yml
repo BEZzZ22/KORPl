@@ -1,4 +1,4 @@
-# Автопостинг в Телеграм-канал: раз в час берёт из promo/queue.json посты, чьё время пришло, и шлёт их ботом.
+# Автопостинг в Телеграм-канал: по крону (и ожиданием внутри прогона) берёт из promo/queue.json посты, чьё время пришло, и шлёт их ботом.
 # Секреты репозитория: PROMO_CHAT (@канал или id) и либо BOT_TOKEN (бот — админ канала), либо TG_API_ID + TG_API_HASH + TG_SESSION
 # (отдельный аккаунт проекта: сессию получают один раз скриптом tools/tg-session.py на своём устройстве).
 # Без них прогон ничего не делает. Что уже ушло, записывается в promo/posted.json; оформление канала (promo/channel.json: название, описание, аватарка) применяется само при каждой правке.
@@ -19,17 +19,21 @@ concurrency:
 jobs:
   post:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Крон GitHub на деле срабатывает раз в 4-5 часов, поэтому прогон сам ждёт ближайших постов до ~5,7 часа (лимит задачи 6 ч)
+    timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # Есть TG_SESSION — постит отдельный аккаунт проекта (Telethon), иначе бот из BOT_TOKEN
-      - name: Постим то, что пора
+      # Есть TG_SESSION — постит отдельный аккаунт проекта (Telethon), иначе бот из BOT_TOKEN.
+      # Перед каждым заходом подтягиваем ветку (свежие очередь и posted.json), после поста сразу сохраняем, что вышло.
+      - name: Постим то, что пора, и ждём следующие
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           PROMO_CHAT: ${{ secrets.PROMO_CHAT }}
@@ -37,17 +41,33 @@ jobs:
           TG_API_HASH: ${{ secrets.TG_API_HASH }}
           TG_SESSION: ${{ secrets.TG_SESSION }}
         run: |
-          if [ -n "$TG_SESSION" ]; then
-            pip install -q telethon
-            python tools/promo_userbot.py
-          else
-            node tools/promo-post.mjs
-          fi
-      - name: Сохранить, что вышло
-        run: |
           git config user.name "promo-bot"
           git config user.email "promo-bot@users.noreply.github.com"
-          git add -A promo
-          git diff --cached --quiet && { echo "без изменений"; exit 0; }
-          git commit -q -m "Автопостинг: что вышло"
-          git push -q
+          branch="$GITHUB_REF_NAME"
+          deadline=$(( $(date +%s) + 340 * 60 ))
+          [ -n "$TG_SESSION" ] && pip install -q telethon
+          save() {
+            git add -A promo
+            git diff --cached --quiet && return 0
+            git commit -q -m "Автопостинг: что вышло"
+            for i in 1 2 3 4 5; do
+              git pull -q --rebase origin "$branch" && git push -q origin "HEAD:$branch" && return 0
+              sleep $(( i * 5 ))
+            done
+            echo "::error::Не смог сохранить posted.json: следующий прогон может повторить пост"
+            return 1
+          }
+          while :; do
+            git pull -q --rebase origin "$branch"
+            before=$(git rev-parse HEAD)
+            if [ -n "$TG_SESSION" ]; then python tools/promo_userbot.py; else node tools/promo-post.mjs; fi
+            save
+            [ -n "$PROMO_CHAT" ] && { [ -n "$TG_SESSION" ] || [ -n "$BOT_TOKEN" ]; } || break
+            next=$(node tools/promo-post.mjs --next)
+            now=$(date +%s)
+            [ -n "$next" ] && [ "$next" -le "$deadline" ] || break
+            # просроченные посты (больше двух за раз) — следующим заходом, но только если этот что-то выпустил, иначе не крутимся
+            if [ "$next" -le "$now" ]; then [ "$(git rev-parse HEAD)" != "$before" ] && continue || break; fi
+            echo "Жду следующий пост: $(date -u -d "@$next" '+%d.%m %H:%M UTC')"
+            sleep $(( next - now + 5 ))
+          done

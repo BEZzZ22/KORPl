@@ -1,7 +1,7 @@
 // Автопостинг в Телеграм-канал через бота: берёт посты из promo/queue.json, которые пора выпускать, и отправляет.
 // Что уже вышло, лежит в promo/posted.json (id -> message_id), повторно не шлётся.
 // Нужны переменные: BOT_TOKEN (токен бота) и PROMO_CHAT (@канал или числовой id; бот должен быть админом канала).
-// Запуск: node tools/promo-post.mjs [--dry]. Без токена или канала ничего не делает.
+// Запуск: node tools/promo-post.mjs [--dry]; --next печатает время следующего поста. Без токена или канала ничего не делает.
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 
@@ -57,6 +57,12 @@ export function due(queue, posted, now = Date.now(), max = 2) {
     .slice(0, max);
 }
 
+// Когда следующий невышедший пост (unix-секунды) или null: по нему прогон ждёт внутри себя, потому что крон GitHub запаздывает на часы
+export function nextAt(queue, posted) {
+  const times = queue.filter((p) => p && p.id && p.text && !(p.id in posted)).map((p) => Date.parse(p.at)).filter((t) => !Number.isNaN(t));
+  return times.length ? Math.floor(Math.min(...times) / 1000) : null;
+}
+
 async function send(token, chat, post0) {
   const emoji = existsSync(EMOJI) ? JSON.parse(readFileSync(EMOJI, "utf8")) : {};
   const post = { ...post0, text: plain(post0.text, emoji) };
@@ -82,6 +88,11 @@ async function send(token, chat, post0) {
 }
 
 async function main() {
+  if (process.argv.includes("--next")) {
+    const posted = existsSync(POSTED) ? JSON.parse(readFileSync(POSTED, "utf8")) : {};
+    console.log(nextAt(JSON.parse(readFileSync(QUEUE, "utf8")), posted) ?? "");
+    return;
+  }
   const dry = process.argv.includes("--dry");
   const token = process.env.BOT_TOKEN, chat = process.env.PROMO_CHAT;
   if (!dry && (!token || !chat)) { console.log("Нет BOT_TOKEN или PROMO_CHAT: постить некуда, пропускаю."); return; }
