@@ -1,0 +1,21 @@
+# Ручная проверка: отвечает ли OpenDota с серверов GitHub (если тут всё 200, а у игроков ошибка — блок по региону)
+name: Проверка OpenDota
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Запросы
+        run: |
+          for p in constants/heroes constants/item_ids players/801280038 "players/801280038/matches?limit=1" health; do
+            printf '%-40s ' "$p"
+            curl -s -o /tmp/out -m 30 -w '%{http_code} %{time_total}s\n' "https://api.opendota.com/api/$p" || echo "сеть: ошибка"
+            head -c 200 /tmp/out; echo
+          done

@@ -315,6 +315,25 @@ async function api(path, { method = "GET", timeout = 20000 } = {}) {
   }
 }
 
+// Справочники OpenDota — это сборка dotaconstants. Если OpenDota лежит или режет запросы,
+// берём те же файлы с GitHub, чтобы приложение хотя бы запускалось
+const CONSTANTS_MIRROR = "https://raw.githubusercontent.com/odota/dotaconstants/master/build";
+async function constants(name, timeout = 20000) {
+  try {
+    const data = await api(`/constants/${name}`, { timeout: timeout / 2 });
+    if (data && typeof data === "object") return data;
+  } catch {}
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeout);
+  try {
+    const res = await fetch(`${CONSTANTS_MIRROR}/${name}.json`, { signal: ctrl.signal });
+    if (!res.ok) throw new Error(`Справочник ${name}: ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function proItems(heroId) {
   if (!proCache.has(heroId)) {
     try {
@@ -2960,8 +2979,8 @@ async function boot() {
   loading("Разжигаю огонь...");
   try {
     const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
-      api("/constants/heroes"), api("/constants/items"), api("/constants/abilities", { timeout: 40000 }),
-      api("/constants/item_ids"),
+      constants("heroes"), constants("items"), constants("abilities", 40000),
+      constants("item_ids"),
       fetch("knowledge.json?v=12").then((r) => r.json()), fetch("texts.json?v=18").then((r) => r.json()),
     ]);
     dictionary = createDictionary({ heroes, items, abilities });

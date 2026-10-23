@@ -117,7 +117,7 @@ const errors = [];
 const cardSizes = [];
 // запросы из service worker тоже идут через подмену, иначе офлайн-проверка зависит от живой OpenDota
 process.env.PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS = "1";
-const browser = await chromium.launch({ headless: !process.env.UI_HEADED });
+const browser = await chromium.launch({ headless: !process.env.UI_HEADED, ...(process.env.PW_EXEC ? { executablePath: process.env.PW_EXEC } : {}) });
 const context = await browser.newContext({
   // UI_WIDTH=320 — проверить узкий телефон
   viewport: { width: Number(process.env.UI_WIDTH) || 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true, locale: "ru-RU", serviceWorkers: "block",
@@ -138,6 +138,8 @@ async function handleRoute(route) {
   const url = new URL(route.request().url());
   if (url.origin === BASE) return route.continue();
   if (url.hostname === "api.opendota.com") {
+    // UI_CONSTANTS_DOWN=1: справочники OpenDota отдают 503, приложение должно взять их с зеркала
+    if (process.env.UI_CONSTANTS_DOWN && url.pathname.startsWith("/api/constants/")) return route.fulfill({ status: 503, body: "" });
     const data = opendota(url);
     return data === null ? route.fulfill({ status: 404, body: "{}" }) : route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(data) });
   }
@@ -146,6 +148,8 @@ async function handleRoute(route) {
     return route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(coach(route.request().postData())) });
   }
   if (url.hostname === "raw.githubusercontent.com") {
+    const mirror = url.pathname.match(/^\/odota\/dotaconstants\/master\/build\/(\w+)\.json$/);
+    if (mirror) return route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(opendota(new URL(`https://api.opendota.com/api/constants/${mirror[1]}`))) });
     return url.pathname.endsWith(`/r/${match.match_id}.json`) ? route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(REPLAY) }) : route.fulfill({ status: 404, body: "" });
   }
   if (url.hostname === "telegram.org") return route.fulfill({ status: 200, contentType: "text/javascript", body: "" });
