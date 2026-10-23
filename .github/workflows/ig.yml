@@ -1,11 +1,18 @@
 # Рилсы в Инстаграм по расписанию из promo/ig_queue.json (неофициальный вход по cookie sessionid, риск бана принимает владелец).
 # Секрет репозитория IG_SESSIONID: cookie sessionid из браузера, где ты вошёл в Инстаграм. Без него прогон ничего не делает.
+# Вручную (Run workflow): action = post (по умолчанию), profile (обновить название, описание, аватарку из promo/ig_profile.json)
+# или delete (удалить все рилсы аккаунта и очистить promo/ig_posted.json).
 name: Инстаграм рилсы
 
 on:
   schedule:
     - cron: "37 * * * *"
   workflow_dispatch:
+    inputs:
+      action:
+        description: "post, profile или delete"
+        default: post
+        required: true
 
 permissions:
   contents: write
@@ -23,12 +30,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Публикуем то, что пора
+      - name: Выполняем
         env:
           IG_SESSIONID: ${{ secrets.IG_SESSIONID }}
+          ACTION: ${{ inputs.action }}
         run: |
           if [ -n "$IG_SESSIONID" ]; then pip install -q instagrapi moviepy pillow; fi
-          python tools/promo_ig.py
+          case "$ACTION" in
+            profile) python tools/promo_ig.py --profile ;;
+            delete) python tools/promo_ig.py --delete ;;
+            *) python tools/promo_ig.py ;;
+          esac
       - name: Сохранить, что вышло
         run: |
           git config user.name "promo-bot"

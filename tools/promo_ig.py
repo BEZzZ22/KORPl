@@ -24,12 +24,53 @@ def due(queue, posted, now=None):
     return ready[:1]
 
 
+def login():
+    from instagrapi import Client
+
+    cl = Client()
+    cl.delay_range = [2, 6]
+    cl.set_locale("ru_RU")
+    cl.set_timezone_offset(3 * 3600)
+    cl.login_by_sessionid(os.environ["IG_SESSIONID"])
+    return cl
+
+
+def update_profile():
+    """Название, описание, ссылка и аватарка аккаунта из promo/ig_profile.json."""
+    from PIL import Image
+
+    cfg = json.loads((ROOT / "promo" / "ig_profile.json").read_text(encoding="utf-8"))
+    cl = login()
+    cl.account_edit(full_name=cfg["full_name"], biography=cfg["biography"], external_url=cfg["external_url"])
+    pic = ROOT / cfg["picture"]
+    jpg = pic.with_suffix(".jpg")
+    Image.open(pic).convert("RGB").resize((720, 720)).save(jpg, quality=92)   # Инстаграм принимает только jpg
+    cl.account_change_picture(jpg)
+    jpg.unlink(missing_ok=True)
+    print("Профиль обновлён")
+
+
+def delete_all_reels():
+    """Удаляет все рилсы аккаунта (аккаунт выделенный, рилсов там только наши) и очищает ig_posted.json."""
+    cl = login()
+    clips = cl.user_clips(cl.user_id, amount=0)
+    for m in clips:
+        cl.media_delete(m.id)
+        print(f"Удалён рилс {m.code}")
+    POSTED.write_text("{}", encoding="utf-8")
+    print(f"Удалено рилсов: {len(clips)}")
+
+
 def main():
     dry = "--dry" in sys.argv
     sessionid = os.environ.get("IG_SESSIONID", "")
     if not dry and not sessionid:
         print("Нет IG_SESSIONID: публиковать некуда, пропускаю.")
         return
+    if "--profile" in sys.argv:
+        return update_profile()
+    if "--delete" in sys.argv:
+        return delete_all_reels()
     queue = json.loads(QUEUE.read_text(encoding="utf-8"))
     posted = json.loads(POSTED.read_text(encoding="utf-8")) if POSTED.exists() else {}
     posts = due(queue, posted)
