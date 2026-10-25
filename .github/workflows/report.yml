@@ -28,12 +28,14 @@ jobs:
         env:
           DAY: ${{ inputs.day }}
         run: |
+          start=$(date -u +%Y-%m-%dT%H:%M:%S)
           npx --yes wrangler@4 kv key put report_now "${DAY:--}" --namespace-id ffcbcc863d684737becec7a78f57412f --remote
-          # крон воркера раз в 3 минуты: ждём, пока заявку снимут, и печатаем итог
+          # крон воркера раз в 3 минуты: ждём свежий итог в report_last и печатаем его
           for i in $(seq 1 30); do
             sleep 15
-            left=$(npx --yes wrangler@4 kv key get report_now --namespace-id ffcbcc863d684737becec7a78f57412f --remote 2>/dev/null || true)
-            if [ -z "$left" ] || echo "$left" | grep -qi "not found"; then break; fi
+            last=$(npx --yes wrangler@4 kv key get report_last --namespace-id ffcbcc863d684737becec7a78f57412f --remote 2>/dev/null || true)
+            t=$(printf '%s' "$last" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("t",""))' 2>/dev/null || true)
+            if [ -n "$t" ] && [[ "$t" > "$start" ]]; then break; fi
           done
           echo "Итог:"
-          npx --yes wrangler@4 kv key get report_last --namespace-id ffcbcc863d684737becec7a78f57412f --remote
+          printf '%s\n' "$last" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("text","")); print("отправлено:", d.get("sent"), d.get("errors") or "")'
