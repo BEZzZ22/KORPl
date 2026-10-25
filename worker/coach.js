@@ -912,6 +912,140 @@ export async function checkReplays(env, now = Date.now()) {
   return sent;
 }
 
+// ---------- аналитика: что делают пользователи, отчёт владельцу в Телеграм ----------
+
+// seen:<tg id> — первый заход (метаданные: t, имя, ник, откуда пришёл), пишется один раз.
+// act:<день МСК>:<tg id> — счётчики за день в метаданных, чтобы отчёт собирался одним list на день
+const ACT_TTL = 120 * 86400;
+const ACT_EVENTS = 24;          // разных событий за день на человека: метаданные KV — не больше 1 КБ
+const REPORT_CRON = "0 6 * * *"; // 09:00 по Москве
+const EVENT_RE = /^[a-z_]{1,24}$/;
+const isOwner = (env, id) => String(env.OWNER_TG_IDS || "").split(",").map((x) => x.trim()).includes(String(id));
+
+// Сливает пачку событий из приложения в дневную запись: o — открытий, s — секунд в приложении, e — события
+export function mergeAct(cur, batch) {
+  const out = { o: Number(cur && cur.o) || 0, s: Number(cur && cur.s) || 0, e: { ...((cur && cur.e) || {}) } };
+  const b = batch || {};
+  if (b.open) out.o += 1;
+  out.s += Math.min(Math.max(Math.round(Number(b.secs) || 0), 0), 3 * 3600);
+  for (const [k, v] of Object.entries(b.events || {})) {
+    const n = Math.min(Math.max(Math.round(Number(v) || 0), 0), 500);
+    if (!n || !EVENT_RE.test(k) || (!(k in out.e) && Object.keys(out.e).length >= ACT_EVENTS)) continue;
+    out.e[k] = (out.e[k] || 0) + n;
+  }
+  return out;
+}
+
+export async function trackUser(env, user, batch, now = Date.now()) {
+  const id = String(user.id);
+  const seenKey = `seen:${id}`;
+  if (!(await env.COACH_KV.get(seenKey))) {
+    const meta = { t: now, n: clip([user.first_name, user.last_name].filter(Boolean).join(" "), 40), u: clip(user.username, 32), src: clip(batch && batch.src, 40) };
+    await env.COACH_KV.put(seenKey, "1", { metadata: meta });
+  }
+  const key = `act:${mskDay(now)}:${id}`;
+  const got = await env.COACH_KV.getWithMetadata(key);
+  const next = mergeAct(got && got.metadata, batch);
+  await env.COACH_KV.put(key, "1", { metadata: next, expirationTtl: ACT_TTL });
+  return next;
+}
+
+async function listAll(env, prefix) {
+  const out = [];
+  let cursor;
+  for (let i = 0; i < 50; i++) {
+    const page = await env.COACH_KV.list({ prefix, cursor });
+    out.push(...page.keys);
+    if (page.list_complete || !page.cursor) break;
+    cursor = page.cursor;
+  }
+  return out;
+}
+
+const EVENT_LABELS = {
+  analysis: "разборов", coach: "с тренером", chat: "вопросов тренеру", compare: "сравнений", replay: "реплеев",
+  share: "поделились", link: "привязали аккаунт", profile: "профиль", hero_stats: "статы героя", draft: "драфт",
+};
+const shortDay = (d) => `${d.slice(8, 10)}.${d.slice(5, 7)}`;
+const mins = (s) => (s >= 60 ? `${Math.round(s / 60)} мин` : `${s} с`);
+const who = (m, id) => [m.n || `id${id}`, m.u ? `@${m.u}` : ""].filter(Boolean).join(" ");
+const eventsLine = (e) => Object.entries(e).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${EVENT_LABELS[k] || k} ${v}`).join(", ");
+
+// Отчёт за вчерашний день по Москве (или за день day). Владелец из подсчётов исключён
+export async function buildReport(env, now = Date.now(), day = mskDay(now - 86400000)) {
+  const dayMs = Date.parse(`${day}T00:00:00+03:00`);
+  const days = Array.from({ length: 14 }, (_, i) => mskDay(dayMs - i * 86400000)); // days[0] = day
+  const seen = new Map();
+  for (const k of await listAll(env, "seen:")) {
+    const id = k.name.slice(5);
+    if (!isOwner(env, id)) seen.set(id, k.metadata || {});
+  }
+  const act = new Map(); // день -> Map(id -> счётчики)
+  for (const d of days) {
+    const m = new Map();
+    for (const k of await listAll(env, `act:${d}:`)) {
+      const id = k.name.slice(d.length + 5);
+      if (!isOwner(env, id) && k.metadata) m.set(id, k.metadata);
+    }
+    act.set(d, m);
+  }
+  const newOn = (d) => [...seen].filter(([, m]) => m.t && mskDay(m.t) === d).map(([id]) => id);
+  const today = act.get(day);
+  const fresh = newOn(day);
+  const total = [...seen.values()].filter((m) => !m.t || mskDay(m.t) <= day).length;
+  const lines = [`Отчёт за ${shortDay(day)} (МСК)`, ""];
+  lines.push(`Всего юзеров: ${total}, новых за день: ${fresh.length}`);
+  lines.push(`Приток по дням: ${days.slice(0, 7).reverse().map((d) => `${shortDay(d)} ${newOn(d).length}`).join(" · ")}`);
+  const week = new Set(days.slice(0, 7).flatMap((d) => [...act.get(d).keys()]));
+  const back = [...today.keys()].filter((id) => !fresh.includes(id));
+  lines.push(`Активных за день: ${today.size} (новых ${today.size - back.length}, вернулись ${back.length}), за 7 дней: ${week.size}`);
+
+  // Удержание: из пришедших в день D сколько заходили потом (на следующий день и в любой из 7 следующих)
+  const ret = [];
+  for (let i = 7; i >= 1; i--) {
+    const d = days[i], ids = newOn(d);
+    if (!ids.length) continue;
+    const next = act.get(days[i - 1]);
+    const later = new Set(days.slice(Math.max(0, i - 7), i).flatMap((x) => [...act.get(x).keys()]));
+    ret.push(`${shortDay(d)}: ${ids.length} → на след. день ${ids.filter((x) => next.has(x)).length}, за неделю ${ids.filter((x) => later.has(x)).length}`);
+  }
+  if (ret.length) lines.push("", "Возвращаются (пришли → зашли снова):", ...ret);
+
+  const sum = { o: 0, s: 0, e: {} };
+  for (const a of today.values()) {
+    sum.o += a.o || 0; sum.s += a.s || 0;
+    for (const [k, v] of Object.entries(a.e || {})) sum.e[k] = (sum.e[k] || 0) + v;
+  }
+  if (today.size) {
+    lines.push("", `Что делали: открытий ${sum.o}, в среднем ${mins(Math.round(sum.s / today.size))} на человека`);
+    const ev = eventsLine(sum.e);
+    if (ev) lines.push(ev);
+  }
+  if (fresh.length) {
+    lines.push("", "Новые:");
+    for (const id of fresh.slice(0, 15)) {
+      const m = seen.get(id), a = today.get(id) || { o: 0, s: 0, e: {} };
+      const ev = eventsLine(a.e || {});
+      lines.push(`— ${who(m, id)}${m.src ? ` [${m.src}]` : ""}: ${a.o || 0} откр., ${mins(a.s || 0)}${ev ? `, ${ev}` : ""}`);
+    }
+    if (fresh.length > 15) lines.push(`…и ещё ${fresh.length - 15}`);
+    const noLink = fresh.filter((id) => !((today.get(id) || {}).e || {}).analysis).length;
+    if (noLink) lines.push(`Не дошли до разбора: ${noLink} из ${fresh.length}`);
+  }
+  // Профили из синхронизации (были и до счётчиков): сколько людей привязали аккаунт
+  const profiles = (await listAll(env, "user:")).filter((k) => !isOwner(env, k.name.slice(5))).length;
+  lines.push("", `Профилей с привязанным аккаунтом: ${profiles}`);
+  return lines.join("\n");
+}
+
+export async function sendReport(env, now = Date.now(), day) {
+  const text = await buildReport(env, now, day);
+  const ids = String(env.REPORT_CHAT || env.OWNER_TG_IDS || "").split(",").map((x) => x.trim()).filter(Boolean);
+  let sent = 0;
+  for (const chat_id of ids) if (await sendTelegram(env, "sendMessage", { chat_id, text }).catch(() => false)) sent++;
+  return { text, sent };
+}
+
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47];
 const JPEG_MAGIC = [0xff, 0xd8, 0xff];
 
@@ -985,6 +1119,18 @@ async function handlePost(request, env, ctx, origin) {
     const merged = mergeUser(await env.COACH_KV.get(key, "json"), raw.data);
     await env.COACH_KV.put(key, JSON.stringify(merged));
     return reply(200, { data: merged }, origin);
+  }
+
+  // Счётчики из приложения: открытие, время, что нажимал. Только из Телеграма, по подписанной initData
+  if (mode === "track") {
+    if (!env.COACH_KV || !env.BOT_TOKEN) return reply(200, { ok: false }, origin);
+    if (body.length > MAX_BODY) return reply(413, { error: "Слишком много данных." }, origin);
+    const user = await telegramUser(raw.initData, env.BOT_TOKEN);
+    if (!user || !user.id) return reply(403, { error: "Открой приложение из Телеграма." }, origin);
+    const limited = throttle(String(user.id), Date.now(), 120, "track", 50000);
+    if (limited) return reply(429, { error: limited }, origin);
+    await trackUser(env, user, raw);
+    return reply(200, { ok: true }, origin);
   }
 
   if (mode === "replay") {
@@ -1109,13 +1255,25 @@ export default {
         return new Response(JSON.stringify({ matches: ids }), { headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
       }
     }
+    // Отчёт по пользователям вручную (workflow «Отчёт по юзерам»): ключ — токен бота
+    if (request.method === "POST" && new URL(request.url).pathname === "/report") {
+      if (!env.BOT_TOKEN || !env.COACH_KV || request.headers.get("Authorization") !== `Bearer ${env.BOT_TOKEN}`) return new Response("Нельзя.", { status: 403 });
+      const q = new URL(request.url).searchParams;
+      const day = /^\d{4}-\d{2}-\d{2}$/.test(q.get("day") || "") ? q.get("day") : undefined;
+      const out = q.get("dry") ? { text: await buildReport(env, Date.now(), day), sent: 0 } : await sendReport(env, Date.now(), day);
+      return new Response(JSON.stringify(out), { headers: { "Content-Type": "application/json; charset=utf-8" } });
+    }
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(origin) });
     if (request.method !== "POST") return reply(405, { error: "Только POST." }, origin);
     if (!ALLOWED_ORIGINS.includes(origin)) return reply(403, { error: "Нельзя." }, origin);
     return handlePost(request, env, ctx, origin);
   },
 
-  async scheduled(_event, env, ctx) {
+  async scheduled(event, env, ctx) {
+    if (event && event.cron === REPORT_CRON) {
+      if (env.COACH_KV && env.BOT_TOKEN) ctx.waitUntil(sendReport(env));
+      return;
+    }
     ctx.waitUntil(Promise.all([checkWatches(env), checkReplays(env)]));
   },
 };

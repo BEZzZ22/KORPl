@@ -32,7 +32,7 @@ jobs:
           node-version: 22
 
       - name: Тесты воркера
-        run: node --test worker/coach.test.mjs worker/coach.chat.test.mjs
+        run: node --test worker/coach.test.mjs worker/coach.chat.test.mjs worker/stats.test.mjs
 
       - name: Есть ли доступ к Cloudflare
         id: access
