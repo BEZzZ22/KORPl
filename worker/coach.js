@@ -1046,6 +1046,15 @@ export async function sendReport(env, now = Date.now(), day) {
   return { text, sent };
 }
 
+// Внеочередной отчёт: workflow «Отчёт по юзерам» кладёт в KV report_now (день или "-" за вчера), крон раз в 3 минуты отправляет
+export async function reportOnRequest(env, now = Date.now()) {
+  if (!env.COACH_KV || !env.BOT_TOKEN) return null;
+  const want = await env.COACH_KV.get("report_now");
+  if (!want) return null;
+  await env.COACH_KV.delete("report_now");
+  return sendReport(env, now, /^\d{4}-\d{2}-\d{2}$/.test(want) ? want : undefined);
+}
+
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47];
 const JPEG_MAGIC = [0xff, 0xd8, 0xff];
 
@@ -1274,6 +1283,6 @@ export default {
       if (env.COACH_KV && env.BOT_TOKEN) ctx.waitUntil(sendReport(env));
       return;
     }
-    ctx.waitUntil(Promise.all([checkWatches(env), checkReplays(env)]));
+    ctx.waitUntil(Promise.all([checkWatches(env), checkReplays(env), reportOnRequest(env)]));
   },
 };
