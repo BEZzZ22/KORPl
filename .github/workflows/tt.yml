@@ -1,0 +1,47 @@
+# Shorts в TikTok по расписанию из promo/yt_queue.json (официальный Content Posting API), см. tools/promo_tt.py.
+# Секреты: TT_CLIENT_KEY, TT_CLIENT_SECRET, TT_REFRESH_TOKEN, PROMO_TOKEN_KEY. Без них прогон ничего не делает.
+# Переменная репозитория TT_MODE: inbox (черновик во «Входящие», по умолчанию) или direct (после аудита приложения).
+# Refresh-токен одноразовый: свежий шифруется PROMO_TOKEN_KEY и коммитится в promo/tokens/tt.enc даже при красном прогоне.
+name: TikTok
+
+on:
+  schedule:
+    - cron: "37 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tt
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Загружаем то, что пора
+        env:
+          TT_CLIENT_KEY: ${{ secrets.TT_CLIENT_KEY }}
+          TT_CLIENT_SECRET: ${{ secrets.TT_CLIENT_SECRET }}
+          TT_REFRESH_TOKEN: ${{ secrets.TT_REFRESH_TOKEN }}
+          TT_MODE: ${{ vars.TT_MODE || 'inbox' }}
+          PROMO_TOKEN_KEY: ${{ secrets.PROMO_TOKEN_KEY }}
+        run: |
+          if [ -n "$TT_REFRESH_TOKEN" ]; then pip install -q requests cryptography; fi
+          python tools/promo_tt.py
+      - name: Сохранить, что вышло, и свежий токен
+        if: always()
+        run: |
+          git config user.name "promo-bot"
+          git config user.email "promo-bot@users.noreply.github.com"
+          git add -A promo/tt_posted.json promo/tokens/
+          git diff --cached --quiet && { echo "без изменений"; exit 0; }
+          git commit -q -m "TikTok: что загружено"
+          for i in 1 2 3 4; do git pull -q --rebase && git push -q && exit 0; sleep $((i * 5)); done
+          exit 1
