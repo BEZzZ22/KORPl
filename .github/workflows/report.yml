@@ -1,0 +1,31 @@
+# Отчёт по пользователям приложения владельцу в Телеграм прямо сейчас (обычно он приходит сам в 09:00 МСК).
+# day — за какой день (ГГГГ-ММ-ДД), пусто — вчера по Москве. dry — только показать в логе, не отправлять.
+name: Отчёт по юзерам
+
+on:
+  workflow_dispatch:
+    inputs:
+      day:
+        description: "День ГГГГ-ММ-ДД (пусто — вчера)"
+        required: false
+      dry:
+        description: "Не отправлять, только показать"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Отчёт
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          DAY: ${{ inputs.day }}
+          DRY: ${{ inputs.dry && '1' || '' }}
+        run: |
+          curl -sf --max-time 60 -X POST -H "Authorization: Bearer $BOT_TOKEN" \
+            "https://dotacoach.2007rggg.workers.dev/report?day=${DAY}&dry=${DRY}" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["text"]); print("отправлено:", d["sent"])'

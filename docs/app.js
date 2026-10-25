@@ -415,6 +415,7 @@ function go(screen, ...args) {
   if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
   navStack.push([screen, args]);
   if (backSupported()) navStack.length > 1 ? tg.BackButton.show() : tg.BackButton.hide();
+  if (SCREEN_EVENTS[screen.name]) track(SCREEN_EVENTS[screen.name]);
   return screen(...args);
 }
 
@@ -546,6 +547,7 @@ function accountForm() {
       if (stale(seq)) return;
       if (!player || !player.profile) { status.textContent = "OpenDota не знает такой аккаунт."; return; }
       await storage.set("account_id", String(id));
+      track("link");
       if (stale(seq)) return;
       haptic("medium");
       if (section === "profile") navRoot("profile", profileScreen);
@@ -1369,6 +1371,7 @@ async function renderCard(a) {
 // Шторка «Поделиться»: картинка в историю, сохранить картинку или ссылка в чат
 function shareMatch(a) {
   haptic("medium");
+  track("share");
   const canStory = Boolean(tg && tg.shareToStory && tg.isVersionAtLeast && tg.isVersionAtLeast("7.8"));
   const canSave = Boolean(tg && tg.downloadFile && tg.isVersionAtLeast && tg.isVersionAtLeast("8.0"));
   const preview = h("div", { class: "sheet-preview" }, h("div", { class: "spinner" }));
@@ -1464,6 +1467,39 @@ async function postCoach(body, timeout = COACH_TIMEOUT) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ---------- счётчики для владельца: что делают в приложении (воркер копит по дням и шлёт отчёт) ----------
+
+const SCREEN_EVENTS = { analysisScreen: "analysis", profileScreen: "profile", heroStatsScreen: "hero_stats", draftScreen: "draft" };
+const stats = { open: true, events: {}, secs: 0, since: Date.now(), dirty: true };
+
+function track(name) {
+  stats.events[name] = (stats.events[name] || 0) + 1;
+  stats.dirty = true;
+}
+
+// Пачкой: через несколько секунд после запуска, когда приложение сворачивают, и раз в 2 минуты.
+// sendBeacon доходит и при закрытии, text/plain — без лишнего предзапроса CORS
+function flushStats() {
+  if (!COACH_URL || !tg || !tg.initData) return;
+  if (stats.since) { stats.secs += (Date.now() - stats.since) / 1000; stats.since = document.hidden ? 0 : Date.now(); }
+  if (!stats.dirty && stats.secs < 30) return;
+  const start = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) || "";
+  const body = JSON.stringify({ mode: "track", initData: tg.initData, open: stats.open, secs: Math.round(stats.secs), events: stats.events, src: start });
+  const sent = navigator.sendBeacon && navigator.sendBeacon(COACH_URL, new Blob([body], { type: "text/plain" }));
+  if (!sent) fetch(COACH_URL, { method: "POST", headers: { "Content-Type": "text/plain" }, body, keepalive: true }).catch(() => {});
+  stats.open = false; stats.events = {}; stats.secs = 0; stats.dirty = false;
+}
+
+function startStats() {
+  setTimeout(flushStats, 5000);
+  setInterval(flushStats, 120000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) flushStats();
+    else stats.since = Date.now();
+  });
+  addEventListener("pagehide", flushStats);
 }
 
 function coachError(e) {
@@ -1615,6 +1651,7 @@ function coachBlock(a) {
     const [used, spend] = dailyCounter("coach");
     if (used >= COACH_DAILY && !(await isOwner())) { note.textContent = `Сегодня уже ${COACH_DAILY} разборов, это лимит. Завтра снова.`; return; }
     ask.disabled = true;
+    track("coach");
     ask.textContent = "Тренер смотрит катку…";
     box.classList.add("coach-thinking");
     haptic("medium");
@@ -1711,6 +1748,7 @@ function chatBlock(a) {
     grow();
     draw(true);
     haptic("light");
+    track("chat");
     try {
       const data = await postCoach({ mode: "chat", summary: coachPayload(a), coach: safeLocal.get(coachKey(a)) || "", history: before, question: q, initData: (tg && tg.initData) || "" });
       if (!data.text) throw Object.assign(new Error("Тренер сейчас недоступен."), { fromCoach: true });
@@ -2038,6 +2076,7 @@ function compareBlock(a) {
     const [used, spend] = dailyCounter("compare");
     if (used >= CHAT_DAILY && !(await isOwner())) { out.textContent = COMPARE_LIMIT_TEXT; return; }
     btn.disabled = true;
+    track("compare");
     out.replaceChildren(h("div", { class: "chat-msg assistant typing" }, h("i"), h("i"), h("i")));
     try {
       const data = await postCoach({ mode: "compare", a: { ...coachPayload(a), past: [] }, b: other.payload, initData: (tg && tg.initData) || "" });
@@ -2283,6 +2322,7 @@ function replayBlock(a) {
     btn.onclick = async () => {
       btn.disabled = true;
       haptic("medium");
+      track("replay");
       try {
         const data = await postCoach({ mode: "replay", match_id: a.facts.match_id, initData: (tg && tg.initData) || "" });
         status.textContent = data.status === "done"
@@ -2972,6 +3012,7 @@ async function boot() {
     // фон «ночная карта»: свет баз в углах и река
     document.body.prepend(h("div", { class: "backdrop", "aria-hidden": "true" }, h("i", { class: "radiant" }), h("i", { class: "dire" }), h("i", { class: "river" })));
     buildTabbar();
+    startStats();
     // Офлайн-кэш: открытые разборы и справочники работают без сети
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
   }
