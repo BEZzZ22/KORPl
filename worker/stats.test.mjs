@@ -51,6 +51,17 @@ test("отчёт: приток, вернувшиеся, удержание, вл
   assert.match(text, /— Игрок3: 1 откр\., 5 мин, вопросов тренеру 2, разборов 1/);
   assert.match(text, /Профилей с привязанным аккаунтом: 1/);
   assert.doesNotMatch(text, /Игрок99/);
+  assert.match(text, /Вернулись:\n— Игрок1: 1 откр\., 1 мин, с тренером 1/);
+});
+
+test("отчёт называет старые профили по getChat", async () => {
+  const kv = memKV(), env = { COACH_KV: kv, BOT_TOKEN: "x" };
+  await kv.put("user:7", "{}");
+  const real = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ result: { first_name: "Петя", username: "petya" } }) });
+  try {
+    assert.match(await buildReport(env, at("2026-10-25", 9)), /Привязали раньше, с тех пор не заходили: Петя @petya/);
+  } finally { globalThis.fetch = real; }
 });
 
 test("заявка report_now отправляет отчёт один раз", async () => {

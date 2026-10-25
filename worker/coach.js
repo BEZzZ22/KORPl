@@ -1032,10 +1032,33 @@ export async function buildReport(env, now = Date.now(), day = mskDay(now - 8640
     const noLink = fresh.filter((id) => !((today.get(id) || {}).e || {}).analysis).length;
     if (noLink) lines.push(`Не дошли до разбора: ${noLink} из ${fresh.length}`);
   }
-  // Профили из синхронизации (были и до счётчиков): сколько людей привязали аккаунт
-  const profiles = (await listAll(env, "user:")).filter((k) => !isOwner(env, k.name.slice(5))).length;
-  lines.push("", `Профилей с привязанным аккаунтом: ${profiles}`);
+  if (back.length) {
+    lines.push("", "Вернулись:");
+    for (const id of back.slice(0, 15)) {
+      const a = today.get(id), ev = eventsLine(a.e || {});
+      lines.push(`— ${who(seen.get(id) || {}, id)}: ${a.o || 0} откр., ${mins(a.s || 0)}${ev ? `, ${ev}` : ""}`);
+    }
+    if (back.length > 15) lines.push(`…и ещё ${back.length - 15}`);
+  }
+  // Профили из синхронизации (были и до счётчиков): сколько людей привязали аккаунт.
+  // Тех, кого счётчики ещё не видели, называем по getChat у бота
+  const profiles = (await listAll(env, "user:")).map((k) => k.name.slice(5)).filter((id) => !isOwner(env, id));
+  lines.push("", `Профилей с привязанным аккаунтом: ${profiles.length}`);
+  const old = profiles.filter((id) => !seen.has(id));
+  if (old.length && env.BOT_TOKEN) {
+    const names = [];
+    for (const id of old.slice(0, 30)) names.push(who(await chatName(env, id), id));
+    lines.push(`Привязали раньше, с тех пор не заходили: ${names.join(", ")}${old.length > 30 ? ` и ещё ${old.length - 30}` : ""}`);
+  }
   return lines.join("\n");
+}
+
+async function chatName(env, id) {
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/getChat?chat_id=${id}`, { signal: AbortSignal.timeout(5000) });
+    const c = res.ok ? (await res.json()).result || {} : {};
+    return { n: clip([c.first_name, c.last_name].filter(Boolean).join(" "), 40), u: clip(c.username, 32) };
+  } catch { return {}; }
 }
 
 export async function sendReport(env, now = Date.now(), day) {
