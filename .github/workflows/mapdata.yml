@@ -1,0 +1,66 @@
+# Разметка карты по свежим реплеям (кемпы, где ходят герои, объекты): разовый прогон при правке tools/mapdata.py.
+# Берёт 4 последних про-матча OpenDota, разбирает python-manta и кладёт итог в tools/mapdata.out.json той же ветки.
+name: Разметка карты
+
+on:
+  workflow_dispatch:
+  push:
+    paths: ["tools/mapdata.py", ".github/workflows/mapdata.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  mapdata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -q python-manta
+      - name: Реплеи
+        run: |
+          mkdir -p md
+          curl -sf --max-time 60 https://api.opendota.com/api/proMatches -o pro.json
+          ids=$(python -c 'import json;print(" ".join(str(m["match_id"]) for m in json.load(open("pro.json"))[:25]))')
+          n=0
+          for id in $ids; do
+            [ $n -ge 4 ] && break
+            curl -sf --max-time 60 "https://api.opendota.com/api/matches/$id" -o m.json || continue
+            read url patch <<< $(python -c 'import json;m=json.load(open("m.json"));print(m.get("replay_url") or "-", m.get("patch"))')
+            [ "$url" = "-" ] && continue
+            curl -sf --max-time 300 "$url" -o replay.dem || continue
+            for layer in 1 2 3; do
+              magic=$(head -c 4 replay.dem | od -An -tx1 | tr -d " \n")
+              case "$magic" in
+                425a68*) bunzip2 -c replay.dem > replay.tmp && mv replay.tmp replay.dem ;;
+                28b52ffd) zstd -dqf replay.dem -o replay.tmp && mv replay.tmp replay.dem ;;
+                *) break ;;
+              esac
+            done
+            echo "::group::$id (патч $patch)"
+            if python tools/mapdata.py replay.dem > "md/$id.json"; then
+              python -c 'import json,sys;d=json.load(open(sys.argv[1]));print({k:(len(v) if isinstance(v,(list,str)) else v) for k,v in d.items()})' "md/$id.json"
+              n=$((n+1))
+            else rm -f "md/$id.json"; fi
+            echo "::endgroup::"
+            rm -f replay.dem
+          done
+          python - <<'PY'
+          import glob, json
+          out = {}
+          for f in sorted(glob.glob("md/*.json")):
+              out[f.split("/")[-1][:-5]] = json.load(open(f))
+          json.dump(out, open("tools/mapdata.out.json", "w"), ensure_ascii=False, separators=(",", ":"))
+          PY
+          ls -la tools/mapdata.out.json
+      - name: Сохранить
+        run: |
+          git config user.name "replay-bot"
+          git config user.email "replay-bot@users.noreply.github.com"
+          git add tools/mapdata.out.json
+          git diff --cached --quiet && exit 0
+          git commit -q -m "Разметка карты по реплеям"
+          git push -q origin HEAD:${GITHUB_REF_NAME}
