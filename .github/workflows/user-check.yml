@@ -1,0 +1,44 @@
+# Почему юзер застрял: по нику из отчёта смотрит его счётчики в KV воркера и что OpenDota отдаёт по привязанному аккаунту.
+# Репо публичный, логи видны всем: печатаются только числа и флаги, без имён и id.
+name: Проверка юзера
+
+on:
+  workflow_dispatch:
+    inputs:
+      username:
+        description: "Ник в Телеграме без @"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      NS: ffcbcc863d684737becec7a78f57412f
+      WHO: ${{ inputs.username }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Проверка
+        run: |
+          kv() { npx --yes wrangler@4 kv "$@" --namespace-id "$NS" --remote 2>/dev/null; }
+          kv key list --prefix seen: > seen.json
+          id=$(python3 -c 'import json,os; w=os.environ["WHO"].lstrip("@").lower(); print(next((k["name"][5:] for k in json.load(open("seen.json")) if (k.get("metadata") or {}).get("u","").lower()==w), ""))')
+          [ -z "$id" ] && { echo "Ник не найден среди seen:"; exit 0; }
+          echo "Счётчики по дням:"
+          kv key list --prefix act: | python3 -c 'import json,sys; id=sys.argv[1]; [print(" ", k["name"].split(":")[1], json.dumps(k.get("metadata"), ensure_ascii=False)) for k in json.load(sys.stdin) if k["name"].endswith(":"+id)]' "$id"
+          kv key get "user:$id" > user.json || true
+          acc=$(python3 -c 'import json; d=json.load(open("user.json")); print(d.get("account_id") or "")' 2>/dev/null || true)
+          echo "Профиль в KV: $([ -s user.json ] && echo есть || echo нет), аккаунт привязан: $([ -n "$acc" ] && echo да || echo нет)"
+          python3 -c 'import json; d=json.load(open("user.json")); print("  разборов в истории:", len(d.get("progress") or []), "обновлён:", d.get("updated"))' 2>/dev/null || true
+          [ -z "$acc" ] && exit 0
+          echo "OpenDota:"
+          curl -s --max-time 20 "https://api.opendota.com/api/players/$acc" | python3 -c 'import json,sys; d=json.load(sys.stdin); p=d.get("profile") or {}; print("  профиль есть:", bool(p), "| rank_tier:", d.get("rank_tier"), "| плюс:", p.get("plus"), "| последний вход на OpenDota:", p.get("last_login"))'
+          curl -s --max-time 20 "https://api.opendota.com/api/players/$acc/recentMatches" | python3 -c 'import json,sys; m=json.load(sys.stdin); print("  недавних матчей:", len(m) if isinstance(m,list) else m, "| последний:", (m[0].get("start_time") if isinstance(m,list) and m else None))'
+          curl -s --max-time 20 "https://api.opendota.com/api/players/$acc/wl" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("  всего игр в базе OpenDota:", (d.get("win",0)+d.get("lose",0)))'

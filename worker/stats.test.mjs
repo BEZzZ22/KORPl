@@ -24,6 +24,26 @@ test("mergeAct складывает и отсекает мусор", () => {
   assert.deepEqual(a.e, { analysis: 3 });
 });
 
+test("путь, ошибка и платформа: мусор отсекается, путь режется с начала", () => {
+  const a = mergeAct(null, { open: true, path: "home:0,link:40,BAD,home_empty:45", jserr: "x is undefined", ua: "android" });
+  assert.equal(a.p, "home:0,link:40,home_empty:45");
+  assert.equal(a.j, "x is undefined");
+  assert.equal(a.pl, "android");
+  const long = mergeAct(null, { path: Array.from({ length: 30 }, (_, i) => `hero_stats_long_name:${i}`).join(","), events: Object.fromEntries(Array.from({ length: 32 }, (_, i) => [`ev_${"x".repeat(i % 20)}${String.fromCharCode(97 + (i % 26))}`, 99])) });
+  assert.ok(JSON.stringify(long).length <= 1000);
+  assert.ok(long.p.endsWith(":29"));
+});
+
+test("отчёт показывает путь, где закрыли и где застряли", async () => {
+  const kv = memKV(), env = { COACH_KV: kv };
+  await trackUser(env, { id: 5, first_name: "MuMu", username: "mumu" }, { open: true, secs: 240, events: { home: 1, link: 1, home_empty: 1 }, path: "home:0,link:40,home_empty:45", ua: "ios" }, at("2026-10-25"));
+  const text = await buildReport(env, at("2026-10-26", 9));
+  assert.match(text, /— MuMu @mumu \(ios\): 1 откр\., 4 мин, привязали аккаунт 1/);
+  assert.match(text, /путь: главная 0 с → привязал аккаунт 40 с → «матчей не видно» 45 с/);
+  assert.match(text, /Где закрыли приложение: «матчей не видно» 1/);
+  assert.match(text, /Застряли: видели «матчей не видно» \(закрыт профиль в Доте\) — 1/);
+});
+
 test("первый заход пишется один раз, дни — отдельно", async () => {
   const kv = memKV(), env = { COACH_KV: kv };
   await trackUser(env, { id: 1, first_name: "Вася", username: "vasya" }, { open: true, src: "promo" }, at("2026-10-23"));
