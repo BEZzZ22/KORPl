@@ -1,0 +1,46 @@
+# Shorts в VK Клипы сообщества по расписанию из promo/yt_queue.json, см. tools/promo_vk.py.
+# Секреты: VK_CLIENT_ID, VK_REFRESH_TOKEN, VK_DEVICE_ID, VK_GROUP_ID, PROMO_TOKEN_KEY. Без них прогон ничего не делает.
+# Refresh-токен одноразовый: свежий шифруется PROMO_TOKEN_KEY и коммитится в promo/tokens/vk.enc даже при красном прогоне.
+name: VK Клипы
+
+on:
+  schedule:
+    - cron: "47 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vk
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Загружаем то, что пора
+        env:
+          VK_CLIENT_ID: ${{ secrets.VK_CLIENT_ID }}
+          VK_REFRESH_TOKEN: ${{ secrets.VK_REFRESH_TOKEN }}
+          VK_DEVICE_ID: ${{ secrets.VK_DEVICE_ID }}
+          VK_GROUP_ID: ${{ secrets.VK_GROUP_ID }}
+          PROMO_TOKEN_KEY: ${{ secrets.PROMO_TOKEN_KEY }}
+        run: |
+          if [ -n "$VK_REFRESH_TOKEN" ]; then pip install -q requests cryptography; fi
+          python tools/promo_vk.py
+      - name: Сохранить, что вышло, и свежий токен
+        if: always()
+        run: |
+          git config user.name "promo-bot"
+          git config user.email "promo-bot@users.noreply.github.com"
+          git add -A promo/vk_posted.json promo/tokens/
+          git diff --cached --quiet && { echo "без изменений"; exit 0; }
+          git commit -q -m "VK Клипы: что загружено"
+          for i in 1 2 3 4; do git pull -q --rebase && git push -q && exit 0; sleep $((i * 5)); done
+          exit 1
