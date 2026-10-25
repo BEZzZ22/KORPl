@@ -8,6 +8,11 @@ on:
   schedule:
     - cron: "37 * * * *"
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Залить следующий ролик сразу, не ждать 5 часов"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -32,6 +37,7 @@ jobs:
           TT_REFRESH_TOKEN: ${{ secrets.TT_REFRESH_TOKEN }}
           TT_MODE: ${{ vars.TT_MODE || 'inbox' }}
           PROMO_TOKEN_KEY: ${{ secrets.PROMO_TOKEN_KEY }}
+          PROMO_FORCE: ${{ inputs.force && '1' || '' }}
         run: |
           if [ -n "$TT_REFRESH_TOKEN" ]; then pip install -q requests cryptography; fi
           python tools/promo_tt.py

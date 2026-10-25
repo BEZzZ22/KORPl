@@ -79,10 +79,14 @@ def upload(token, post, mode):
             "Content-Type": "video/mp4", "Content-Length": str(end - start), "Content-Range": f"bytes {start}-{end - 1}/{size}"})
         if resp.status_code not in (200, 201, 206):
             sys.exit(f"TikTok оборвал загрузку на куске {i + 1}/{count}: {resp.status_code} {resp.text[:300]}")
+    status = "UPLOADED"
     for _ in range(40):
         time.sleep(15)
-        s = requests.post(f"{API}/post/publish/status/fetch/", headers=head, json={"publish_id": publish_id}, timeout=30).json()
-        status = s.get("data", {}).get("status")
+        try:
+            s = requests.post(f"{API}/post/publish/status/fetch/", headers=head, json={"publish_id": publish_id}, timeout=30).json()
+        except ValueError:
+            continue  # TikTok иногда отвечает пустым телом: ролик уже залит, просто спросим ещё раз
+        status = s.get("data", {}).get("status") or status
         if status in ("PUBLISH_COMPLETE", "SEND_TO_USER_INBOX"):
             return publish_id, status
         if status == "FAILED":

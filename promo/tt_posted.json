@@ -1,1 +1,8 @@
-{}
+{
+ "review": {
+  "publish_id": "unknown",
+  "status": "SEND_TO_USER_INBOX",
+  "mode": "inbox",
+  "at": "2026-10-25T17:58:00+00:00"
+ }
+}
