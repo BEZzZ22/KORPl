@@ -415,7 +415,7 @@ function go(screen, ...args) {
   if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
   navStack.push([screen, args]);
   if (backSupported()) navStack.length > 1 ? tg.BackButton.show() : tg.BackButton.hide();
-  if (SCREEN_EVENTS[screen.name]) track(SCREEN_EVENTS[screen.name]);
+  if (SCREEN_EVENTS[screen.name]) step(SCREEN_EVENTS[screen.name]);
   return screen(...args);
 }
 
@@ -474,6 +474,7 @@ function loading(text) {
 }
 
 function errorScreen(message, retry) {
+  step(ERROR_STEPS.find(([t]) => message.startsWith(t))?.[1] || "err_other");
   render(h("div", { class: "center" },
     h("p", { class: "error" }, message),
     retry && h("button", { onclick: retry }, "Попробовать ещё раз"),
@@ -520,6 +521,7 @@ async function homeScreen() {
   );
   try {
     const matches = (await api(`/players/${account}/recentMatches`)) || [];
+    step(matches.length ? "home_list" : "home_empty");
     if (!matches.length) {
       list.replaceChildren(h("div", { class: "card muted" },
         "Матчей не видно. В Доте включи: Настройки (шестерёнка) → Расширенные настройки → Социальное → «Expose Public Match Data» (публичные данные матчей), " +
@@ -530,6 +532,7 @@ async function homeScreen() {
     const fresh = freshMatchCard(matches[0], account);
     list.replaceChildren(...[fresh, ...matches.slice(fresh ? 1 : 0, 15).map((m) => matchListItem(m, account))].filter(Boolean));
   } catch {
+    step("err_opendota");
     list.replaceChildren(h("p", { class: "error" }, "OpenDota не отвечает. Попробуй позже."));
   }
 }
@@ -539,20 +542,21 @@ function accountForm() {
   const status = h("div", { class: "small muted" }, "Friend ID есть в Доте в профиле под ником.");
   const save = async () => {
     const id = toAccountId(input.value);
-    if (!id) { status.textContent = "Это не похоже на Friend ID."; return; }
+    if (!id) { step("link_bad"); status.textContent = "Это не похоже на Friend ID."; return; }
     status.textContent = "Проверяю...";
     const seq = navSeq;
     try {
       const player = await api(`/players/${id}`);
       if (stale(seq)) return;
-      if (!player || !player.profile) { status.textContent = "OpenDota не знает такой аккаунт."; return; }
+      if (!player || !player.profile) { step("link_unknown"); status.textContent = "OpenDota не знает такой аккаунт."; return; }
       await storage.set("account_id", String(id));
-      track("link");
+      step("link");
       if (stale(seq)) return;
       haptic("medium");
       if (section === "profile") navRoot("profile", profileScreen);
       else navRoot("home", homeScreen);
     } catch {
+      step("err_opendota");
       status.textContent = "OpenDota не отвечает. Попробуй ещё раз.";
     }
   };
@@ -1094,6 +1098,7 @@ async function matchScreen(matchId, slot, accountId, attempt = 0) {
     return;
   }
   if (!isParsed(match)) {
+    if (attempt === 0) step("match_parsing");
     if (attempt === 0) {
       api(`/request/${matchId}`, { method: "POST" }).catch(() => {});
       watchParse(matchId);
@@ -1119,7 +1124,7 @@ async function matchScreen(matchId, slot, accountId, attempt = 0) {
     if (stale(seq)) return;
     if (saved) player = match.players.find((p) => p.account_id === saved);
   }
-  if (!player) { notYourMatch(); return; }
+  if (!player) { step("not_yours"); notYourMatch(); return; }
 
   const [pro, bench, matchups, replay] = await Promise.all([proItems(player.hero_id), heroBench(player.hero_id), heroMatchups(player.hero_id), fetchReplay(matchId)]);
   if (stale(seq)) return;
@@ -1172,6 +1177,7 @@ const TABS = [
 ];
 
 function analysisScreen(a) {
+  step("analysis");
   section = "match";
   lastAnalysis = a;
   const f = a.facts;
@@ -1371,7 +1377,7 @@ async function renderCard(a) {
 // Шторка «Поделиться»: картинка в историю, сохранить картинку или ссылка в чат
 function shareMatch(a) {
   haptic("medium");
-  track("share");
+  step("share");
   const canStory = Boolean(tg && tg.shareToStory && tg.isVersionAtLeast && tg.isVersionAtLeast("7.8"));
   const canSave = Boolean(tg && tg.downloadFile && tg.isVersionAtLeast && tg.isVersionAtLeast("8.0"));
   const preview = h("div", { class: "sheet-preview" }, h("div", { class: "spinner" }));
@@ -1471,13 +1477,28 @@ async function postCoach(body, timeout = COACH_TIMEOUT) {
 
 // ---------- счётчики для владельца: что делают в приложении (воркер копит по дням и шлёт отчёт) ----------
 
-const SCREEN_EVENTS = { analysisScreen: "analysis", profileScreen: "profile", heroStatsScreen: "hero_stats", draftScreen: "draft" };
-const stats = { open: true, events: {}, secs: 0, since: Date.now(), dirty: true };
+// Экраны через go(); разбор открывается из matchScreen напрямую, поэтому отмечается в analysisScreen
+const SCREEN_EVENTS = { homeScreen: "home", matchScreen: "match", profileScreen: "profile", heroStatsScreen: "hero_stats", draftScreen: "draft" };
+const ERROR_STEPS = [["OpenDota не отвечает", "err_opendota"], ["Такого матча нет", "err_no_match"], ["Реплей так и не", "err_replay"],
+  ["Не смог разобрать", "err_parse"], ["Не удалось загрузить", "err_boot"]];
+const stats = { open: true, events: {}, secs: 0, since: Date.now(), dirty: true, start: Date.now(), path: [], jsError: "" };
 
 function track(name) {
   stats.events[name] = (stats.events[name] || 0) + 1;
   stats.dirty = true;
 }
+
+// Шаг пути за этот запуск: «экран:секунда от открытия». По пути в отчёте видно, после чего человек ушёл
+function step(name) {
+  track(name);
+  const last = stats.path[stats.path.length - 1];
+  if (last && last.split(":")[0] === name) return;
+  if (stats.path.length < 30) stats.path.push(`${name}:${Math.round((Date.now() - stats.start) / 1000)}`);
+}
+
+// Ошибки в коде: счётчик плюс текст последней, чтобы найти по нему место
+addEventListener("error", (e) => { stats.jsError = String((e && e.message) || "error").slice(0, 120); track("err_js"); });
+addEventListener("unhandledrejection", (e) => { stats.jsError = String((e && e.reason && e.reason.message) || e.reason || "rejection").slice(0, 120); track("err_js"); });
 
 // Пачкой: через несколько секунд после запуска, когда приложение сворачивают, и раз в 2 минуты.
 // sendBeacon доходит и при закрытии, text/plain — без лишнего предзапроса CORS
@@ -1486,7 +1507,8 @@ function flushStats() {
   if (stats.since) { stats.secs += (Date.now() - stats.since) / 1000; stats.since = document.hidden ? 0 : Date.now(); }
   if (!stats.dirty && stats.secs < 30) return;
   const start = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) || "";
-  const body = JSON.stringify({ mode: "track", initData: tg.initData, open: stats.open, secs: Math.round(stats.secs), events: stats.events, src: start });
+  const body = JSON.stringify({ mode: "track", initData: tg.initData, open: stats.open, secs: Math.round(stats.secs), events: stats.events, src: start,
+    path: stats.path.join(","), jserr: stats.jsError, ua: tg.platform || "" });
   const sent = navigator.sendBeacon && navigator.sendBeacon(COACH_URL, new Blob([body], { type: "text/plain" }));
   if (!sent) fetch(COACH_URL, { method: "POST", headers: { "Content-Type": "text/plain" }, body, keepalive: true }).catch(() => {});
   stats.open = false; stats.events = {}; stats.secs = 0; stats.dirty = false;
@@ -1651,7 +1673,7 @@ function coachBlock(a) {
     const [used, spend] = dailyCounter("coach");
     if (used >= COACH_DAILY && !(await isOwner())) { note.textContent = `Сегодня уже ${COACH_DAILY} разборов, это лимит. Завтра снова.`; return; }
     ask.disabled = true;
-    track("coach");
+    step("coach");
     ask.textContent = "Тренер смотрит катку…";
     box.classList.add("coach-thinking");
     haptic("medium");
@@ -1748,7 +1770,7 @@ function chatBlock(a) {
     grow();
     draw(true);
     haptic("light");
-    track("chat");
+    step("chat");
     try {
       const data = await postCoach({ mode: "chat", summary: coachPayload(a), coach: safeLocal.get(coachKey(a)) || "", history: before, question: q, initData: (tg && tg.initData) || "" });
       if (!data.text) throw Object.assign(new Error("Тренер сейчас недоступен."), { fromCoach: true });
@@ -2076,7 +2098,7 @@ function compareBlock(a) {
     const [used, spend] = dailyCounter("compare");
     if (used >= CHAT_DAILY && !(await isOwner())) { out.textContent = COMPARE_LIMIT_TEXT; return; }
     btn.disabled = true;
-    track("compare");
+    step("compare");
     out.replaceChildren(h("div", { class: "chat-msg assistant typing" }, h("i"), h("i"), h("i")));
     try {
       const data = await postCoach({ mode: "compare", a: { ...coachPayload(a), past: [] }, b: other.payload, initData: (tg && tg.initData) || "" });
@@ -2322,7 +2344,7 @@ function replayBlock(a) {
     btn.onclick = async () => {
       btn.disabled = true;
       haptic("medium");
-      track("replay");
+      step("replay");
       try {
         const data = await postCoach({ mode: "replay", match_id: a.facts.match_id, initData: (tg && tg.initData) || "" });
         status.textContent = data.status === "done"

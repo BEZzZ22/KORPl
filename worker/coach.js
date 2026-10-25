@@ -917,7 +917,8 @@ export async function checkReplays(env, now = Date.now()) {
 // seen:<tg id> — первый заход (метаданные: t, имя, ник, откуда пришёл), пишется один раз.
 // act:<день МСК>:<tg id> — счётчики за день в метаданных, чтобы отчёт собирался одним list на день
 const ACT_TTL = 120 * 86400;
-const ACT_EVENTS = 24;          // разных событий за день на человека: метаданные KV — не больше 1 КБ
+const ACT_EVENTS = 32;          // разных событий за день на человека: метаданные KV — не больше 1 КБ
+const PATH_RE = /^[a-z_]{1,24}:\d{1,6}$/;
 const REPORT_CRON = "0 6 * * *"; // 09:00 по Москве
 const EVENT_RE = /^[a-z_]{1,24}$/;
 const isOwner = (env, id) => String(env.OWNER_TG_IDS || "").split(",").map((x) => x.trim()).includes(String(id));
@@ -933,6 +934,15 @@ export function mergeAct(cur, batch) {
     if (!n || !EVENT_RE.test(k) || (!(k in out.e) && Object.keys(out.e).length >= ACT_EVENTS)) continue;
     out.e[k] = (out.e[k] || 0) + n;
   }
+  // p — путь последнего запуска («экран:секунда»), j — текст последней ошибки в коде, pl — платформа Телеграма
+  const path = String(b.path || "").split(",").filter((x) => PATH_RE.test(x)).join(",");
+  if (path) out.p = path; else if (cur && cur.p) out.p = cur.p;
+  if (cur && cur.j) out.j = cur.j;
+  if (b.jserr) out.j = clip(b.jserr, 120);
+  const pl = clip(b.ua || (cur && cur.pl), 12);
+  if (pl) out.pl = pl;
+  // метаданные KV не больше 1024 байт: режем путь с начала, конец (где ушёл) важнее
+  while (out.p && JSON.stringify(out).length > 1000) out.p = out.p.split(",").slice(1).join(",");
   return out;
 }
 
@@ -966,10 +976,27 @@ const EVENT_LABELS = {
   analysis: "разборов", coach: "с тренером", chat: "вопросов тренеру", compare: "сравнений", replay: "реплеев",
   share: "поделились", link: "привязали аккаунт", profile: "профиль", hero_stats: "статы героя", draft: "драфт",
 };
+const STEP_LABELS = {
+  home: "главная", home_list: "список игр", home_empty: "«матчей не видно»", match: "открыл матч", match_parsing: "ждёт разбор реплея",
+  analysis: "разбор", not_yours: "чужой матч", link: "привязал аккаунт", link_bad: "неверный ID", link_unknown: "OpenDota не знает аккаунт",
+  profile: "профиль", hero_stats: "статы героя", draft: "драфт", coach: "тренер", chat: "вопрос тренеру", compare: "сравнение",
+  replay: "реплей", share: "поделился", err_opendota: "ОШИБКА OpenDota", err_no_match: "ОШИБКА нет матча", err_replay: "ОШИБКА реплей",
+  err_parse: "ОШИБКА разбора", err_boot: "ОШИБКА загрузки", err_other: "ОШИБКА",
+};
+const stepName = (x) => STEP_LABELS[x] || x;
+// «главная 0с → привязал аккаунт 40с → «матчей не видно» 45с → ушёл на 4 мин»
+function pathLine(a) {
+  if (!a.p) return "";
+  const steps = a.p.split(",").map((x) => x.split(":"));
+  return `${steps.map(([n, t]) => `${stepName(n)} ${mins(Number(t))}`).join(" → ")}`;
+}
+const lastStep = (a) => (a.p ? a.p.split(",").pop().split(":")[0] : "");
+
 const shortDay = (d) => `${d.slice(8, 10)}.${d.slice(5, 7)}`;
 const mins = (s) => (s >= 60 ? `${Math.round(s / 60)} мин` : `${s} с`);
 const who = (m, id) => [m.n || `id${id}`, m.u ? `@${m.u}` : ""].filter(Boolean).join(" ");
-const eventsLine = (e) => Object.entries(e).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${EVENT_LABELS[k] || k} ${v}`).join(", ");
+// только действия; шаги пути и ошибки идут отдельными строками
+const eventsLine = (e) => Object.entries(e).filter(([k]) => k in EVENT_LABELS).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${EVENT_LABELS[k] || k} ${v}`).join(", ");
 
 // Отчёт за вчерашний день по Москве (или за день day). Владелец из подсчётов исключён
 export async function buildReport(env, now = Date.now(), day = mskDay(now - 86400000)) {
@@ -1020,13 +1047,25 @@ export async function buildReport(env, now = Date.now(), day = mskDay(now - 8640
     lines.push("", `Что делали: открытий ${sum.o}, в среднем ${mins(Math.round(sum.s / today.size))} на человека`);
     const ev = eventsLine(sum.e);
     if (ev) lines.push(ev);
+    // последний шаг последнего запуска: на чём закрыли приложение
+    const exits = {};
+    for (const a of today.values()) { const l = lastStep(a); if (l) exits[l] = (exits[l] || 0) + 1; }
+    const ex = Object.entries(exits).sort((x, y) => y[1] - x[1]).map(([k, v]) => `${stepName(k)} ${v}`).join(", ");
+    if (ex) lines.push(`Где закрыли приложение: ${ex}`);
+    const errs = Object.entries(sum.e).filter(([k]) => k.startsWith("err_")).map(([k, v]) => `${k === "err_js" ? "в коде" : stepName(k).replace("ОШИБКА ", "")} ${v}`);
+    if (errs.length) lines.push(`Ошибки: ${errs.join(", ")}`);
+    const stuck = [["home_empty", "видели «матчей не видно» (закрыт профиль в Доте)"], ["link_unknown", "OpenDota не нашла аккаунт"], ["not_yours", "открыли чужой матч"]]
+      .map(([k, t]) => [t, [...today.values()].filter((a) => (a.e || {})[k]).length]).filter(([, n]) => n);
+    if (stuck.length) lines.push(`Застряли: ${stuck.map(([t, n]) => `${t} — ${n}`).join(", ")}`);
   }
   if (fresh.length) {
     lines.push("", "Новые:");
     for (const id of fresh.slice(0, 15)) {
       const m = seen.get(id), a = today.get(id) || { o: 0, s: 0, e: {} };
       const ev = eventsLine(a.e || {});
-      lines.push(`— ${who(m, id)}${m.src ? ` [${m.src}]` : ""}: ${a.o || 0} откр., ${mins(a.s || 0)}${ev ? `, ${ev}` : ""}`);
+      lines.push(`— ${who(m, id)}${m.src ? ` [${m.src}]` : ""}${a.pl ? ` (${a.pl})` : ""}: ${a.o || 0} откр., ${mins(a.s || 0)}${ev ? `, ${ev}` : ""}`);
+      if (a.p) lines.push(`  путь: ${pathLine(a)}`);
+      if (a.j) lines.push(`  ошибка в коде: ${a.j}`);
     }
     if (fresh.length > 15) lines.push(`…и ещё ${fresh.length - 15}`);
     const noLink = fresh.filter((id) => !((today.get(id) || {}).e || {}).analysis).length;
@@ -1036,7 +1075,9 @@ export async function buildReport(env, now = Date.now(), day = mskDay(now - 8640
     lines.push("", "Вернулись:");
     for (const id of back.slice(0, 15)) {
       const a = today.get(id), ev = eventsLine(a.e || {});
-      lines.push(`— ${who(seen.get(id) || {}, id)}: ${a.o || 0} откр., ${mins(a.s || 0)}${ev ? `, ${ev}` : ""}`);
+      lines.push(`— ${who(seen.get(id) || {}, id)}${a.pl ? ` (${a.pl})` : ""}: ${a.o || 0} откр., ${mins(a.s || 0)}${ev ? `, ${ev}` : ""}`);
+      if (a.p) lines.push(`  путь: ${pathLine(a)}`);
+      if (a.j) lines.push(`  ошибка в коде: ${a.j}`);
     }
     if (back.length > 15) lines.push(`…и ещё ${back.length - 15}`);
   }
