@@ -1,0 +1,39 @@
+# Чат при канале: создать и оформить (один раз), сделать бота админом в канале и чате, записать ссылки в docs/community.json.
+# Запуск вручную: Actions → «Чат канала» → Run workflow. Повторный запуск безопасен.
+name: Чат канала
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: community
+  cancel-in-progress: false
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Чат, права бота, ссылки
+        env:
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          TG_SESSION: ${{ secrets.TG_SESSION }}
+          PROMO_CHAT: ${{ secrets.PROMO_CHAT }}
+        run: |
+          pip install -q telethon
+          python tools/tg_community.py
+          git config user.name "promo-bot"
+          git config user.email "promo-bot@users.noreply.github.com"
+          git add docs/community.json 2>/dev/null || true
+          git diff --cached --quiet && exit 0
+          git commit -q -m "Чат канала: ссылки"
+          for i in 1 2 3 4 5; do git pull -q --rebase origin "$GITHUB_REF_NAME" && git push -q origin "HEAD:$GITHUB_REF_NAME" && exit 0; sleep $(( i * 5 )); done
+          exit 1
