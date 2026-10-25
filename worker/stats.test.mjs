@@ -58,10 +58,11 @@ test("заявка report_now отправляет отчёт один раз", 
   kv.delete = async (k) => { kv.m.delete(k); };
   const env = { COACH_KV: kv, BOT_TOKEN: "x", OWNER_TG_IDS: "5" };
   const real = globalThis.fetch;
-  globalThis.fetch = async (url, init) => { sent.push(JSON.parse(init.body)); return { ok: true }; };
+  globalThis.fetch = async (url, init) => { sent.push(JSON.parse(init.body)); return { ok: true, text: async () => "{}" }; };
   try {
     await kv.put("report_now", "2026-10-24");
-    assert.ok(await reportOnRequest(env, at("2026-10-25")));
+    assert.equal((await reportOnRequest(env, at("2026-10-25"))).sent, 1);
+    assert.equal(JSON.parse(kv.m.get("report_last").value).sent, 1);
     assert.equal(await reportOnRequest(env, at("2026-10-25")), null);
   } finally { globalThis.fetch = real; }
   assert.equal(sent.length, 1);
