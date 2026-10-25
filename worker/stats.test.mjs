@@ -100,3 +100,13 @@ test("заявка report_now отправляет отчёт один раз", 
   assert.equal(sent[0].chat_id, "5");
   assert.match(sent[0].text, /Отчёт за 24\.10/);
 });
+
+test("«не согласен»: сохраняется и попадает в отчёт за день", async () => {
+  const { saveFeedback } = await import("./coach.js");
+  const kv = memKV(), env = { COACH_KV: kv };
+  await trackUser(env, { id: 7, first_name: "Аксель" }, { open: true, events: { blame: 1, disagree_blame: 1 } }, at("2026-10-25"));
+  await saveFeedback(env, { id: 7, username: "axel" }, { match_id: 9052987576, kind: "blame", text: "Слил, похоже, Beastmaster" }, at("2026-10-25"));
+  const text = await buildReport(env, at("2026-10-26", 9));
+  assert.match(text, /Не согласны с выводом: 1\n— @axel матч 9052987576: «Слил, похоже, Beastmaster»/);
+  assert.match(text, /не согласны с «кто слил» 1/);
+});
