@@ -107,6 +107,8 @@ function coach(body) {
     return { url: "https://coach.example/card/000000000000000000000000.png" };
   }
   if (raw.mode === "watch") return { ok: true };
+  if (raw.mode === "gate") return gateCalls++ === 0 ? { ok: false, channel: true, chat: false } : { ok: true, channel: true, chat: true };
+  if (raw.mode === "feedback") return { ok: true };
   return { text: COACH_TEXT };
 }
 
@@ -116,6 +118,7 @@ const PLACEHOLDER = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAA
 
 const errors = [];
 const cardSizes = [];
+let gateCalls = 0;
 // запросы из service worker тоже идут через подмену, иначе офлайн-проверка зависит от живой OpenDota
 process.env.PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS = "1";
 const browser = await chromium.launch({ headless: !process.env.UI_HEADED, ...(process.env.PW_EXEC ? { executablePath: process.env.PW_EXEC } : {}) });
@@ -410,6 +413,35 @@ if (!only || only.has("hidden")) {
   });
   hideMatches = false;
   await ctx3.close();
+}
+
+// Вход из Телеграма без подписки на чат: экран «Последний шаг», после подписки пускает на главную
+if (!only || only.has("gate")) {
+  const ctx5 = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: "dark", reducedMotion: "reduce" });
+  await ctx5.addInitScript((acc) => {
+    try { localStorage.setItem("account_id", String(acc)); } catch { /* */ }
+    const noop = () => {};
+    window.Telegram = { WebApp: { initData: "query_id=test", initDataUnsafe: {}, platform: "test", ready: noop, expand: noop, isVersionAtLeast: () => false,
+      openTelegramLink: (u) => { window.__opened = u; }, BackButton: { show: noop, hide: noop, onClick: noop }, HapticFeedback: { impactOccurred: noop, notificationOccurred: noop, selectionChanged: noop } } };
+  }, ACCOUNT);
+  await ctx5.route("**/*", handleRoute);
+  const p5 = await ctx5.newPage();
+  p5.on("pageerror", (e) => errors.push(`gate pageerror: ${e.message}`));
+  await step("gate", async () => {
+    gateCalls = 0;
+    await p5.goto(`${BASE}/index.html`);
+    await p5.waitForSelector(".gate .gate-row", { timeout: 15000 });
+    const done = await p5.locator(".gate-row.done").count();
+    if (done !== 1) throw new Error(`отмечено готовых: ${done}, ждали канал`);
+    await p5.locator(".gate-row:not(.done) .gate-btn").click();
+    if (!/dotarazbor_chat/.test(await p5.evaluate(() => window.__opened || ""))) throw new Error("кнопка «Вступить» не открыла чат");
+    const file = join(OUT, `${String(shots.length + 1).padStart(2, "0")}-gate.png`);
+    await p5.screenshot({ path: file });
+    shots.push(file);
+    await p5.locator(".gate-check").click();
+    await p5.waitForSelector(".match-item", { timeout: 15000 });
+  });
+  await ctx5.close();
 }
 
 // Без привязки: пример разбора открывается с главной, сверху плашка «Это пример»

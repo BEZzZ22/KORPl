@@ -2,10 +2,10 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan, skillPlan,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
-} from "./engine.js?v=36";
+} from "./engine.js?v=37";
 import { aegisBadge, openShowcase } from "./aegis.js?v=3";
-import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=1";
-import { matchVerdicts } from "./blame.js?v=1";
+import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=2";
+import { matchVerdicts } from "./blame.js?v=3";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -27,7 +27,7 @@ const PARSE_POLL_MS = 15000;
 const PARSE_POLL_MAX = 20;
 const BG_COLOR = "#08090c";
 const DAMAGE_TYPES = { Physical: "физический", Magical: "магический", Pure: "чистый" };
-const PHASE_LABEL = { good: "выиграна", even: "ровно", bad: "проиграна" };
+const PHASE_LABEL = { good: "в плюс", even: "ровно", bad: "в минус" };
 const TURBO_MODE = 23;
 
 const tg = window.Telegram && window.Telegram.WebApp;
@@ -374,7 +374,7 @@ async function heroBench(heroId) {
 // Friend ID, Steam ID, ссылки на профиль Steam (/profiles/7656...), Dotabuff, OpenDota, Stratz (/players/123)
 function toAccountId(raw) {
   const text = String(raw).trim();
-  const link = /(?:profiles|players)\/(\d{1,20})/.exec(text);
+  const link = /(?:profiles|players)\/(\d{1,20})(?!\d)/.exec(text);
   const digits = link ? link[1] : text;
   if (!/^\d{1,20}$/.test(digits)) return null;
   const n = BigInt(digits);
@@ -491,7 +491,7 @@ async function homeScreen() {
   const seq = navSeq;
   const account = await storage.get("account_id");
   if (stale(seq)) return;
-  const matchInput = h("input", { inputmode: "url", placeholder: "ID матча или ссылка", "aria-label": "ID матча" });
+  const matchInput = h("input", { inputmode: "numeric", placeholder: "ID матча или ссылка", "aria-label": "ID матча" });
   const openMatch = () => {
     const m = /(?<!\d)(\d{7,11})(?!\d)/.exec(matchInput.value);
     if (m) go(matchScreen, Number(m[1]), null);
@@ -556,7 +556,7 @@ function hiddenMatchesCard(account) {
     btn.disabled = true;
     step("empty_retry");
     haptic("light");
-    status.textContent = "Проверяю...";
+    status.textContent = "Проверяю…";
     try {
       await api(`/players/${account}/refresh`, { method: "POST" }).catch(() => {});
       const matches = (await api(`/players/${account}/recentMatches`)) || [];
@@ -583,7 +583,7 @@ function hiddenMatchesCard(account) {
 }
 
 function accountForm() {
-  const input = h("input", { inputmode: "url", placeholder: "Friend ID или ссылка на профиль", "aria-label": "Friend ID" });
+  const input = h("input", { inputmode: "numeric", placeholder: "Friend ID или ссылка на профиль", "aria-label": "Friend ID" });
   const status = h("div", { class: "small muted" }, "Friend ID есть в Доте в профиле под ником. Подойдёт и ссылка на Steam, Dotabuff, OpenDota или Stratz.");
   const save = async () => {
     const id = toAccountId(input.value);
@@ -594,7 +594,7 @@ function accountForm() {
         : "Это не похоже на Friend ID.";
       return;
     }
-    status.textContent = "Проверяю...";
+    status.textContent = "Проверяю…";
     const seq = navSeq;
     try {
       const player = await api(`/players/${id}`);
@@ -650,7 +650,7 @@ async function profileScreen() {
       h("p", { class: "muted" }, "Привяжи аккаунт — покажу ранг, форму и любимых героев."), accountForm());
     return;
   }
-  loading("Открываю профиль...");
+  loading("Открываю профиль…");
   let player, wl, matches, heroes;
   try {
     [player, wl, matches, heroes] = await Promise.all([
@@ -805,7 +805,7 @@ async function heroStatsScreen(heroId) {
   if (stale(seq)) return;
   if (!account) { navRoot("profile", profileScreen); return; }
   const name = dictionary.heroName(heroId);
-  loading(`Считаю игры на ${name}...`);
+  loading(`Считаю игры на ${name}…`);
   let data;
   try {
     data = await heroStatsData(account, heroId);
@@ -923,7 +923,7 @@ async function draftScreen() {
     goBtn.disabled = true;
     haptic("medium");
     result.replaceChildren(h("div", { class: "center" }, h("div", { class: "spinner" }),
-      h("div", { class: "muted small" }, account ? "Смотрю твоих героев против этих врагов..." : "Ищу контрпики...")));
+      h("div", { class: "muted small" }, account ? "Смотрю твоих героев против этих врагов…" : "Ищу контрпики…")));
     try {
       const [counter, mine, last] = await Promise.all([counterpicks(),
         account ? api(`/players/${account}/heroes`) : [], account ? api(`/players/${account}/recentMatches`) : []]);
@@ -1001,9 +1001,9 @@ function draftPlanPanel(heroId, enemies, role) {
     box.replaceChildren(
       h("div", { class: "pos-row", role: "tablist", "aria-label": "Позиция" }, ...[1, 2, 3, 4, 5].map((p) => h("button", {
         type: "button", class: `pos-chip ${byPos[p] ? "" : "rare"}`, "aria-pressed": String(p === pos),
-        title: byPos[p] ? `${byPos[p].g} игр про` : "у про почти не бывает",
+        title: byPos[p] ? `${games(byPos[p].g)} про` : "у про почти не бывает",
         onclick: () => { if (p !== pos) { pos = p; hapticTick(); draw(); } },
-      }, `поз. ${p}`, h("small", {}, byPos[p] ? `${byPos[p].g} игр` : "редко")))),
+      }, `поз. ${p}`, h("small", {}, byPos[p] ? games(byPos[p].g) : "редко")))),
       plan ? itemPlanCard(plan) : h("p", { class: "muted small" }, "По этому герою пока нет сборок."),
       skillCard(skillPlan(builds, heroId, pos)));
   };
@@ -1136,7 +1136,7 @@ function matchListItem(m, account) {
 const DEMO_MATCH = 9052987576, DEMO_ACCOUNT = 163061132;
 
 async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false) {
-  if (attempt === 0) loading("Призываю матч...");
+  if (attempt === 0) loading("Призываю матч…");
   const seq = navSeq;
   let match;
   try {
@@ -1144,7 +1144,7 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false) 
     if (stale(seq)) return;
   } catch {
     if (stale(seq)) return;
-    errorScreen("OpenDota не отвечает.", () => go(matchScreen, matchId, slot, accountId));
+    errorScreen("OpenDota не отвечает.", () => go(matchScreen, matchId, slot, accountId, 0, demo));
     return;
   }
   if (!match || !match.players) {
@@ -1158,7 +1158,7 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false) 
       watchParse(matchId);
     }
     if (attempt >= PARSE_POLL_MAX) {
-      errorScreen("Реплей так и не разобрался. Попробуй позже.", () => go(matchScreen, matchId, slot, accountId));
+      errorScreen("Реплей так и не разобрался. Попробуй позже.", () => go(matchScreen, matchId, slot, accountId, 0, demo));
       return;
     }
     render(h("div", { class: "center" },
@@ -1186,7 +1186,7 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false) 
   try {
     a = analyze(match, player, dictionary, knowledge, texts, pro, bench, norms, matchups, replay, { guides, builds });
   } catch (e) {
-    // иначе на необычном матче вечно крутится «Призываю матч...»
+    // иначе на необычном матче вечно крутится «Призываю матч…»
     console.error(e);
     errorScreen("Не смог разобрать этот матч: у OpenDota в нём необычные данные.", () => navRoot("home", homeScreen));
     return;
@@ -1218,7 +1218,7 @@ async function notYourMatch() {
   render(
     h("h1", {}, saved ? "Это не твоя игра" : "Привяжи аккаунт"),
     h("p", { class: "muted" }, saved
-      ? "Тебя нет в этом матче, а чужие игры я не разбираю. Если игра твоя, в ней мог быть скрыт профиль: включи в Доте Настройки (шестерёнка) → Расширенные настройки → Социальное → «Expose Public Match Data» (публичные данные матчей)."
+      ? "Тебя нет в этом матче, а чужие игры я не разбираю. Если игра твоя, в ней мог быть скрыт профиль: включи в Доте Настройки (шестерёнка) → «Социальное» (в старом меню: «Расширенные настройки» → «Социальное») → «Expose Public Match Data» (публичные данные матчей)."
       : "Я разбираю только твои игры. Укажи Friend ID или Steam ID."),
     saved ? h("button", { onclick: () => navRoot("home", homeScreen) }, "На главную") : accountForm(),
   );
@@ -1323,10 +1323,10 @@ function analysisScreen(a) {
 }
 
 // Шеринг: короткий вердикт + ссылка на бота (растит бота)
-function shareLink(a) {
+function shareLink(a, custom = null) {
   const f = a.facts;
   const link = `https://t.me/${BOT_USERNAME}?startapp`;
-  const text = `${f.hero} · ${f.won ? "Победа" : "Поражение"} · оценка ${a.overall.toFixed(1)}/10\n${a.verdict}`;
+  const text = custom ? custom.text : `${f.hero} · ${f.won ? "Победа" : "Поражение"} · оценка ${a.overall.toFixed(1)}/10\n${a.verdict}`;
   const url = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`;
   if (tg && tg.openTelegramLink) tg.openTelegramLink(url);
   else window.open(url, "_blank");
@@ -1453,7 +1453,7 @@ function shareMatch(a, custom = null) {
   const upload = async () => {
     if (cardUrl) return cardUrl;
     if (!dataUrl) throw Object.assign(new Error("Картинка ещё рисуется, секунду."), { fromCoach: true });
-    status.textContent = "Готовлю картинку...";
+    status.textContent = "Готовлю картинку…";
     const data = await postCoach({ mode: "card", image: dataUrl });
     cardUrl = data.url;
     status.textContent = "";
@@ -1474,9 +1474,9 @@ function shareMatch(a, custom = null) {
       else if (tg && tg.openLink) tg.openLink(url);
       else window.open(url, "_blank");
     }, !canStory),
-    act("Ссылка в чат", async () => shareLink(a)));
+    act("Ссылка в чат", async () => shareLink(a, custom)));
   const sheet = h("div", { class: "sheet-backdrop", onclick: (e) => { if (e.target === sheet) close(); } },
-    h("div", { class: "sheet", role: "dialog", "aria-modal": "true", "aria-label": "Поделиться разбором" },
+    h("div", { class: "sheet", role: "dialog", "aria-modal": "true", "aria-label": custom ? `Поделиться: ${custom.label}` : "Поделиться разбором" },
       h("div", { class: "sheet-grip", "aria-hidden": "true" }),
       preview, actions, status,
       h("button", { type: "button", class: "sheet-close ghost", onclick: close }, "Закрыть")));
@@ -1709,7 +1709,7 @@ function coachBlock(a) {
   const status = h("p", { class: "coach-upgrade small muted", role: "status" });
   const upgrade = async () => {
     safeLocal.set(`${key}:up`, String(Date.now()));
-    status.textContent = "Opus дописывает подробный разбор, заменю, когда будет готов…";
+    status.textContent = "Opus дописывает подробный разбор — заменю, когда будет готов…";
     if (!status.isConnected) box.insertBefore(status, title.nextSibling);
     try {
       const data = await postCoach({ ...coachPayload(a), tier: "opus", cont: true, initData: (tg && tg.initData) || "" }, OPUS_WAIT);
@@ -1995,7 +1995,7 @@ const WEEK_FIELDS = ["hero_id", "kills", "deaths", "assists", "gold_per_min", "d
 
 // Неделя: эта неделя против прошлой по играм OpenDota, лучшая и худшая катка, главная ошибка недели
 function weekBlock(account, list) {
-  const box = h("div", {}, h("h2", {}, "Неделя"), h("div", { class: "card small muted" }, "Собираю игры за две недели..."));
+  const box = h("div", {}, h("h2", {}, "Неделя"), h("div", { class: "card small muted" }, "Собираю игры за две недели…"));
   const seq = navSeq;
   (async () => {
     const rows = ((await api(`/players/${account}/matches?date=14&${WEEK_FIELDS.map((f) => `project=${f}`).join("&")}`)) || [])
@@ -2098,7 +2098,7 @@ function friendsBlock(account) {
     const id = toAccountId(input.value);
     if (!id || String(id) === String(account)) { status.textContent = "Это не похоже на Friend ID друга."; return; }
     if (friends.some((f) => f.account_id === id)) { status.textContent = "Этот игрок уже в списке."; return; }
-    status.textContent = "Ищу...";
+    status.textContent = "Ищу…";
     try {
       const p = await api(`/players/${id}`);
       if (stale(seq)) return;
@@ -2177,7 +2177,7 @@ function compareBlock(a) {
   };
   return h("details", { class: "card timeline-box compare" },
     h("summary", {}, "Сравнить с другой каткой"),
-    h("p", { class: "small muted" }, `Тренер скажет, что ты делал по-другому. В списке катки, которые ты уже открывал. Лимит: ${CHAT_DAILY} сравнений в сутки.`),
+    h("p", { class: "small muted" }, `Тренер скажет, что ты делал по-другому. В списке — катки, которые ты уже открывал. Лимит: ${CHAT_DAILY} сравнений в сутки.`),
     h("div", { class: "compare-list" }, ...others.map((o) => {
       const btn = h("button", { class: `compare-item ${o.won ? "win" : "loss"}`, type: "button" },
         heroImg(o.hero_id, "hero-img small"), h("span", { class: "grow" }, o.hero), h("span", { class: "muted" }, o.kda));
@@ -2279,7 +2279,7 @@ function historyBlock(a) {
   const self = a.hist_self;
   if (!self || !self.account || !(self.duration > 0)) return null;
   const box = h("details", { class: "card timeline-box hist-box" }, h("summary", {}, "Обычно у тебя"),
-    h("div", { class: "small muted" }, "Собираю прошлые игры..."));
+    h("div", { class: "small muted" }, "Собираю прошлые игры…"));
   const seq = navSeq;
   // турбо сравниваем только с турбо: там золото и опыт идут быстрее
   const turbo = a.facts.game_mode === TURBO_MODE;
@@ -2379,8 +2379,9 @@ function blameHeadline(v) {
   if (v.anchor && v.anchor === me) return ["Похоже, слил ты", "Не обижайся: цифры матча так говорят. Ниже — что поправить."];
   const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
   if (v.anchor) return [`Слил, похоже, ${v.anchor.name}`, `${cap(v.anchor.minus || "вклад ниже всех в команде")}. Ниже цифры по всем десяти.`];
-  const lost = v.rows.filter((r) => !r.won);
-  return ["Явного виновника нет", `${lost.length ? "Проиграли всей командой: вклад у проигравших близкий." : ""} Ниже цифры по всем десяти.`];
+  return ["Явного виновника нет", me && !me.won
+    ? "Проиграли всей командой: вклад у вас близкий. Ниже цифры по всем десяти."
+    : "У проигравших вклад близкий: слили всей командой. Ниже цифры по всем десяти."];
 }
 
 // ширина через CSSOM: атрибут style запрещён политикой CSP
@@ -2453,24 +2454,31 @@ function blameTab(a) {
       problems.length > 0 && h("div", { class: "blame-fix" },
         h("span", { class: "eyebrow" }, me.won ? "Что сделать ещё лучше" : "Что было делать, чтобы вытащить"),
         ...problems.map((p) => h("div", { class: "fix-row" }, h("b", {}, p.title), p.action && h("span", { class: "small" }, p.action)))),
-      COACH_URL && h("button", { type: "button", class: "ghost", onclick: () => { haptic(); a._select(0); setTimeout(() => { const c = document.querySelector(".chat-input"); if (c) { c.scrollIntoView({ behavior: "smooth", block: "center" }); c.value = "Что мне было делать, чтобы вытащить эту катку?"; } }, 250); } }, "Спросить тренера")),
+      COACH_URL && h("button", { type: "button", class: "ghost", onclick: () => { haptic(); chatFor(a).ask(me.won ? "Что мне сделать ещё лучше в такой катке?" : "Что мне было делать, чтобы вытащить эту катку?"); } }, "Спросить тренера")),
     side(myRadiant),
     side(!myRadiant),
     v.awards.length > 0 && h("h2", {}, "Награды матча"),
     v.awards.length > 0 && awardsGrid(v),
-    h("p", { class: "small muted" }, "Вклад считаю по цифрам матча: нетворс, урон, драки, варды и смерти без размена (своя команда никого не убила в ±10 секунд). Кор сравнивается с корами, саппорт с саппортами. Это не приговор: не согласен — жми кнопку, поправлю правило."),
+    h("p", { class: "small muted" }, "Вклад считаю по цифрам матча: нетворс, урон, драки, варды и смерти без размена (своя команда никого не убила в ±10 секунд). Кор сравнивается с корами, саппорт — с саппортами. Это не приговор: не согласен — жми кнопку, поправлю правило."),
   );
 }
 
 // «Не согласен»: счётчик в отчёте владельца и текст вывода, чтобы найти кривое правило
 function disagreeBtn(a, kind, text) {
   const btn = h("button", { type: "button", class: "ghost disagree" }, "Не согласен");
-  btn.onclick = () => {
+  btn.onclick = async () => {
     haptic("light");
     step(`disagree_${kind}`);
+    if (!COACH_URL || !tg || !tg.initData) { btn.textContent = "Отправить можно из Телеграма"; btn.disabled = true; return; }
     btn.disabled = true;
-    btn.textContent = "Принял, проверю";
-    if (COACH_URL && tg && tg.initData) postCoach({ mode: "feedback", initData: tg.initData, match_id: a.facts.match_id, kind, text: String(text).slice(0, 300) }).catch(() => {});
+    btn.textContent = "Отправляю…";
+    try {
+      await postCoach({ mode: "feedback", initData: tg.initData, match_id: a.facts.match_id, kind, text: String(text).slice(0, 300) });
+      btn.textContent = "Принял, проверю";
+    } catch {
+      btn.textContent = "Не отправилось, ещё раз";
+      btn.disabled = false;
+    }
   };
   return btn;
 }
@@ -2505,12 +2513,20 @@ async function renderBlameCard(a, v) {
     for (const r of v.rows.filter((x) => x.radiant === radiant).sort((x, z) => z.impact - x.impact)) {
       const rowH = 74;
       if (r.me) { ctx.fillStyle = "rgba(232,194,122,0.10)"; ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(P - 16, y + 6, W - 2 * P + 32, rowH - 8, 18); else ctx.rect(P - 16, y + 6, W - 2 * P + 32, rowH - 8); ctx.fill(); }
-      ctx.fillStyle = C.text; ctx.font = sans(800, 34);
-      ctx.fillText(r.name + (r.me ? " (ты)" : ""), P, y + 52);
-      if (r.tag) {
-        const label = BLAME_TAGS[r.tag].toUpperCase();
+      // имя ужимается, чтобы не залезть на плашку и полосу (Keeper of the Light (ты))
+      const nameText = r.name + (r.me ? " (ты)" : "");
+      const label = r.tag ? BLAME_TAGS[r.tag].toUpperCase() : "";
+      ctx.font = sans(800, 22);
+      const tw = label ? ctx.measureText(label).width + 28 : 0;
+      const nameMax = W - P - 360 - P - (label ? tw + 24 : 16);
+      let fs = 34;
+      ctx.font = sans(800, fs);
+      while (fs > 22 && ctx.measureText(nameText).width > nameMax) ctx.font = sans(800, fs -= 2);
+      ctx.fillStyle = C.text;
+      ctx.fillText(nameText, P, y + 52);
+      if (label) {
+        const tx = P + Math.min(ctx.measureText(nameText).width, nameMax) + 16;
         ctx.font = sans(800, 22);
-        const tx = P + 380, tw = ctx.measureText(label).width + 28;
         ctx.fillStyle = r.tag === "anchor" || r.tag === "passenger" ? C.dire : C.aegis;
         ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(tx, y + 24, tw, 38, 19); else ctx.rect(tx, y + 24, tw, 38); ctx.fill();
         ctx.fillStyle = "#14100a"; ctx.fillText(label, tx + 14, y + 51);
@@ -2552,25 +2568,23 @@ async function fetchReplay(matchId) {
 
 // Кнопка заказа разбора реплея по позициям
 function replayCta(a, intro) {
-  {
-    const status = h("p", { class: "small muted", role: "status" }, intro || "Тренер увидит, где ты стоял и кто был рядом в каждой смерти. Реплей разбирается 10–30 минут.");
-    const btn = h("button", { type: "button", class: "replay-btn" }, "Разобрать реплей по позициям");
-    btn.onclick = async () => {
-      btn.disabled = true;
-      haptic("medium");
-      step("replay");
-      try {
-        const data = await postCoach({ mode: "replay", match_id: a.facts.match_id, initData: (tg && tg.initData) || "" });
-        status.textContent = data.status === "done"
-          ? "Реплей уже разобран: открой матч заново."
-          : tg && tg.initData ? "В очереди. Бот напишет, когда будет готово." : "В очереди. Загляни сюда через полчаса.";
-      } catch (e) {
-        btn.disabled = false;
-        status.textContent = coachError(e);
-      }
-    };
-    return intro ? h("div", { class: "replay-inline" }, status, btn) : h("div", { class: "card replay-card" }, btn, status);
-  }
+  const status = h("p", { class: "small muted", role: "status" }, intro || "Тренер увидит, где ты стоял и кто был рядом в каждой смерти. Реплей разбирается 10–30 минут.");
+  const btn = h("button", { type: "button", class: "replay-btn" }, "Разобрать реплей по позициям");
+  btn.onclick = async () => {
+    btn.disabled = true;
+    haptic("medium");
+    step("replay");
+    try {
+      const data = await postCoach({ mode: "replay", match_id: a.facts.match_id, initData: (tg && tg.initData) || "" });
+      status.textContent = data.status === "done"
+        ? "Реплей уже разобран: открой матч заново."
+        : tg && tg.initData ? "В очереди. Бот напишет, когда будет готово." : "В очереди. Загляни сюда через полчаса.";
+    } catch (e) {
+      btn.disabled = false;
+      status.textContent = coachError(e);
+    }
+  };
+  return intro ? h("div", { class: "replay-inline" }, status, btn) : h("div", { class: "card replay-card" }, btn, status);
 }
 
 function replayBlock(a) {
@@ -2661,7 +2675,7 @@ function mapTab(a) {
     live && h("div", { class: "card map-card live-card" },
       live,
       !a.replay && replayCta(a, "Сейчас видно варды, здания и смерти в драках. Разбери реплей — на карте поедут все 10 героев, а тренер увидит, кто где стоял.")),
-    !live && replayCta(a),
+    !live && !a.replay && replayCta(a),
     (m.wards.length > 0 || sentries.length > 0) && h("div", { class: "card ward-sum" },
       h("div", { class: "ws-row" },
         h("div", {}, h("b", {}, String(m.wards.length)), h("span", {}, "обсов команды")),
@@ -2774,7 +2788,7 @@ function killersTab(a) {
         h("span", {}, c.name, h("em", {}, ` ${c.label}`)),
         h("b", {}, `×${c.count}`),
         h("div", { class: "ctl-tags" },
-          h("i", { class: c.bkb_blocks ? "yes" : "no" }, c.bkb_blocks ? "БКБ блокирует" : "БКБ пробивает"),
+          h("i", { class: c.bkb_blocks ? "yes" : "no" }, c.bkb_blocks ? "BKB блокирует" : "BKB пробивает"),
           h("i", { class: c.dispellable ? "yes" : "no" }, c.dispellable ? "снимается диспелом" : "диспел не снимает")))),
       k.counter_keys.length > 0 && h("div", { class: "sub" }, "Что брать против этого героя"),
       ...k.counter_keys.map((key) => h("div", { class: "why-row" }, itemChip(key, "chip need"),
@@ -2892,7 +2906,7 @@ function skillCard(sp, { after = false } = {}) {
   if (!sp) return null;
   const head = after ? [h("span", {}, ""), h("b", {}, "ты"), h("b", {}, "про")] : [h("span", {}, ""), h("b", {}, "про")];
   return h("div", { class: "card skills" },
-    h("div", { class: "small muted" }, sp.pos === sp.want ? "Очков в способностях к 10 уровню и таланты, по про-матчам на этой позиции."
+    h("div", { class: "small muted" }, sp.pos === sp.want ? "Очков в способностях к 10-му уровню и таланты, по про-матчам на этой позиции."
       : `На позиции ${sp.want} про его почти не играют: прокачка ${POS_GEN[sp.pos]}.`),
     ...sp.notes.map((t) => h("p", { class: "small plan-extra" }, t)),
     h("div", { class: `sk-grid ${after ? "" : "pro-only"}` }, ...head,
@@ -2901,7 +2915,7 @@ function skillCard(sp, { after = false } = {}) {
         after && h("span", { class: `sk-v ${ab.you != null && Math.abs(ab.you - ab.pro) >= 1.5 ? "off" : ""}` }, String(ab.you ?? "—")),
         h("span", { class: "sk-v muted" }, tenth(ab.pro)),
       ].filter(Boolean))),
-    sp.first && h("p", { class: "small muted" }, `На 1 уровне про берут ${sp.first.name} (${sp.first.share}%).`),
+    sp.first && h("p", { class: "small muted" }, `На 1-м уровне про берут ${sp.first.name} (${sp.first.share}%).`),
     sp.talents.length > 0 && h("div", { class: "ip-label" }, "Таланты"),
     ...sp.talents.map((t) => h("div", { class: "sk-talent" }, h("b", {}, String(t.level)),
       ...t.options.map((o) => h("span", { class: `sk-opt ${o.picked ? "picked" : ""} ${o.rate >= 60 ? "pop" : ""}` }, o.name, h("small", {}, ` ${o.rate}%`))))));
@@ -3229,6 +3243,88 @@ function startParams() {
   };
 }
 
+// ---------- вход только с подпиской на канал и чат ----------
+
+const COMMUNITY = { channel_url: "https://t.me/Dota_Razbor", chat_url: "https://t.me/dotarazbor_chat" };
+const GATE_TTL = 12 * 3600_000; // подписку недавно подтвердили — не держим человека на проверке при каждом запуске
+
+async function checkGate() {
+  try {
+    return await postCoach({ mode: "gate", initData: tg.initData }, 8000);
+  } catch {
+    // воркер или сеть легли: не запираем приложение из-за нашего сбоя
+    return { ok: true, unknown: true };
+  }
+}
+
+// Пропускает дальше, когда человек подписан на канал и в чате. Вне Телеграма проверить нельзя — пускаем
+async function passGate() {
+  if (!COACH_URL || !tg || !tg.initData) return;
+  const until = Number(safeLocal.get("gate_ok") || 0);
+  if (until > Date.now()) {
+    // в фоне перепроверяем: отписался — в следующий запуск снова попросим
+    checkGate().then((r) => { if (r.ok && !r.unknown) safeLocal.set("gate_ok", String(Date.now() + GATE_TTL)); else if (!r.ok) safeLocal.set("gate_ok", "0"); });
+    return;
+  }
+  let state = await checkGate();
+  if (state.ok) { if (!state.unknown) safeLocal.set("gate_ok", String(Date.now() + GATE_TTL)); return; }
+  step("gate");
+  // нижняя панель увела бы на главную мимо проверки
+  document.body.classList.add("gated");
+  await new Promise((done) => {
+    const status = h("p", { class: "small muted gate-status", role: "status" });
+    const rowFor = (key, title, sub, url, cta) => {
+      const btn = h("button", { type: "button", class: "gate-btn" }, cta);
+      btn.onclick = () => { haptic(); step(`gate_${key}`); if (tg.openTelegramLink) tg.openTelegramLink(url); else window.open(url, "_blank"); };
+      const row = h("div", { class: "gate-row" },
+        h("span", { class: "gate-ic", "aria-hidden": "true" }, svg("svg", { viewBox: "0 0 24 24" }, svg("path", { d: key === "channel" ? "M4 10v4a1 1 0 0 0 1 1h2l5 4V5L7 9H5a1 1 0 0 0-1 1ZM16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" : "M5 18l-1.5 3.5L8 20a8 8 0 1 0-3-2ZM8.5 10.5h7M8.5 13.5h4.5" }))),
+        h("div", { class: "grow" }, h("b", {}, title), h("span", {}, sub)),
+        btn);
+      return { row, btn };
+    };
+    const ch = rowFor("channel", "Канал DotaRazbor", "Разборы, советы, обновления бота", COMMUNITY.channel_url, "Подписаться");
+    const chat = rowFor("chat", "Чат DotaRazbor", "Кидай разборы, спрашивай, общайся", COMMUNITY.chat_url, "Вступить");
+    const paint = () => {
+      for (const [r, okNow] of [[ch, state.channel], [chat, state.chat]]) {
+        r.row.classList.toggle("done", Boolean(okNow));
+        r.btn.textContent = okNow ? "Готово" : r === ch ? "Подписаться" : "Вступить";
+        r.btn.disabled = Boolean(okNow);
+      }
+    };
+    let busy = false;
+    const recheck = async (manual) => {
+      if (busy) return;
+      busy = true;
+      if (manual) status.textContent = "Проверяю…";
+      state = await checkGate();
+      busy = false;
+      paint();
+      if (state.ok) {
+        haptic("medium");
+        step("gate_pass");
+        if (!state.unknown) safeLocal.set("gate_ok", String(Date.now() + GATE_TTL));
+        document.removeEventListener("visibilitychange", onBack);
+        document.body.classList.remove("gated");
+        done();
+        return;
+      }
+      if (manual) status.textContent = !state.channel && !state.chat ? "Пока не вижу подписки ни на канал, ни на чат." : !state.channel ? "Осталось подписаться на канал." : "Осталось вступить в чат.";
+    };
+    // вернулся из канала или чата — проверяем сами, без лишнего нажатия
+    const onBack = () => { if (!document.hidden) setTimeout(() => recheck(false), 400); };
+    document.addEventListener("visibilitychange", onBack);
+    const check = h("button", { type: "button", class: "gate-check" }, "Я подписался — проверить");
+    check.onclick = () => { haptic(); recheck(true); };
+    paint();
+    render(
+      h("div", { class: "gate" },
+        h("div", { class: "app-top" }, aegis(), h("div", { class: "t" }, h("h1", {}, "Последний шаг"), h("p", {}, "Бот бесплатный — подпишись на канал и вступи в чат, и разбор откроется"))),
+        h("div", { class: "card gate-card" }, ch.row, chat.row),
+        check, status,
+        h("p", { class: "small muted" }, "После подписки вернись сюда: проверю сам за секунду.")));
+  });
+}
+
 // Один раз за запуск: повтор boot после ошибки сети не должен второй раз собирать панель и вешать «Назад»
 let booted = false;
 
@@ -3253,12 +3349,14 @@ async function boot() {
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
   }
   booted = true;
-  loading("Разжигаю огонь...");
+  loading("Разжигаю огонь…");
+  // проверка подписки идёт вместе с загрузкой справочников, экран ждёт только её итога
+  const gate = passGate();
   try {
     const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
       constants("heroes"), constants("items"), constants("abilities", 40000),
       constants("item_ids"),
-      fetch("knowledge.json?v=12").then((r) => r.json()), fetch("texts.json?v=18").then((r) => r.json()),
+      fetch("knowledge.json?v=12").then((r) => r.json()), fetch("texts.json?v=19").then((r) => r.json()),
     ]);
     dictionary = createDictionary({ heroes, items, abilities });
     itemIds = ids;
@@ -3274,6 +3372,7 @@ async function boot() {
     errorScreen("Не удалось загрузить данные OpenDota.", boot);
     return;
   }
+  await gate;
   const { matchId, slot, account } = startParams();
   // ?account= из ссылки нужен только, чтобы найти игрока в матче: в привязку его не пишем.
   // Старый бот вшивал аккаунт в кнопку меню, и каждый запуск возвращал его поверх «Сменить»

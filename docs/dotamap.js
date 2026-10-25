@@ -11,6 +11,12 @@ function el(tag, attrs = {}, ...children) {
 
 export const mapX = (x) => Math.max(2, Math.min(126, x - 64));
 export const mapY = (y) => Math.max(2, Math.min(126, 192 - y));
+function plural(n, one, few, many) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+  return many;
+}
 const mm = (t) => `${t < 0 ? "-" : ""}${Math.floor(Math.abs(t) / 60)}:${String(Math.floor(Math.abs(t) % 60)).padStart(2, "0")}`;
 
 // ---------- геометрия карты ----------
@@ -149,6 +155,7 @@ export function minimap(points, { label, cls = "" } = {}) {
 // ---------- данные повтора из матча OpenDota и файла реплея ----------
 
 const OBS_LIFE = 360, SEN_LIFE = 420;
+const OBS_VISION = 1600 / 128; // обзор обса 1600 единиц, клетка — 128
 
 // Все события и сущности для повтора. heroKey(hero_id) -> "tusk", heroName(hero_id) -> "Tusk"
 export function replayModel(match, replay, me, { heroKey, heroName }) {
@@ -218,7 +225,6 @@ export function replayModel(match, replay, me, { heroKey, heroName }) {
 
   const buildings = [];
   const t4seen = { goodguys: 0, badguys: 0 };
-  const kills4 = {};
   for (const [side, list] of Object.entries(BUILDINGS)) {
     for (const [name, xy] of Object.entries(list)) {
       const spots = name === "tower4" ? xy : [xy];
@@ -233,7 +239,6 @@ export function replayModel(match, replay, me, { heroKey, heroName }) {
       let b;
       if (/_tower4$/.test(o.key)) { b = buildings.find((x) => x.id === `${side}_tower4${t4seen[side]}`); t4seen[side]++; } else b = buildings.find((x) => x.key === o.key);
       if (b && b.died == null) { b.died = o.time; objectives.push({ t: o.time, kind: "building", b }); }
-      kills4[side] = true;
     } else if (o.type === "CHAT_MESSAGE_ROSHAN_KILL") {
       objectives.push({ t: o.time, kind: "roshan", radiant: o.team === 2 });
     }
@@ -268,12 +273,11 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
   const myRadiant = model.meIdx >= 0 ? model.players[model.meIdx].radiant : true;
   const t0 = model.hasPos ? model.start : 0;
   const T = model.duration;
-  let t = model.hasPos ? Math.min(T, 0) : T;
+  let t = 0;
   let playing = false, speed = SPEEDS[1], raf = 0, last = 0, selected = model.meIdx;
 
   const defs = el("defs", {},
-    el("clipPath", { id: "lm-clip", clipPathUnits: "objectBoundingBox" }, el("circle", { cx: 0.5, cy: 0.5, r: 0.5 })),
-    el("filter", { id: "lm-glow", x: "-50%", y: "-50%", width: "200%", height: "200%" }, el("feGaussianBlur", { stdDeviation: 1.1 })));
+    el("clipPath", { id: "lm-clip", clipPathUnits: "objectBoundingBox" }, el("circle", { cx: 0.5, cy: 0.5, r: 0.5 })));
 
   // здания
   const bLayer = el("g", { class: "lm-buildings" });
@@ -293,7 +297,7 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
     const ally = w.radiant === myRadiant;
     const node = el("g", { class: `lm-w ${w.kind} ${ally ? "ally" : "foe"}${model.players[w.owner].me ? " mine" : ""}`, transform: `translate(${mapX(w.x).toFixed(1)} ${mapY(w.y).toFixed(1)})`, display: "none" },
       el("title", {}, `${w.kind === "obs" ? "Обс" : "Сентри"} ${model.players[w.owner].name}, ${mm(w.t)}`),
-      w.kind === "obs" ? [el("circle", { r: 4.2, class: "lm-vis" }), el("circle", { r: 1.25, class: "lm-dot" })] : el("rect", { x: -1, y: -1, width: 2, height: 2, rx: 0.3, class: "lm-dot" }));
+      w.kind === "obs" ? [el("circle", { r: OBS_VISION, class: "lm-vis" }), el("circle", { r: 1.25, class: "lm-dot" })] : el("rect", { x: -1, y: -1, width: 2, height: 2, rx: 0.3, class: "lm-dot" }));
     wLayer.append(node);
     return node;
   });
@@ -405,7 +409,7 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
   // ---------- кадр ----------
   const state = { w: [], d: [], b: [], h: [] };
   const show = (arr, i, node, on) => { if (node && arr[i] !== on) { arr[i] = on; node.setAttribute("display", on ? "inline" : "none"); } };
-  let lastFeedKey = "";
+  let lastFeedKey = "", lastScore = "";
 
   function draw(force = false) {
     model.wards.forEach((w, i) => show(state.w, i, wNodes[i], t >= w.t && t < w.end));
@@ -435,12 +439,17 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
     for (const k of model.kills) { if (k.t > t) break; if (model.players[k.killer].radiant === myRadiant) ours++; else theirs++; }
     const m = Math.max(0, Math.min(adv.length - 1, Math.floor(t / 60)));
     const g = adv.length ? adv[m] + ((adv[Math.min(adv.length - 1, m + 1)] - adv[m]) * Math.max(0, (t / 60) - m)) : 0;
-    clock.textContent = mm(Math.max(t, t0));
-    score.replaceChildren(
+    const clockText = mm(Math.max(t, t0));
+    if (clock.textContent !== clockText) clock.textContent = clockText;
+    const scoreKey = `${ours}:${theirs}:${Math.round(g / 100)}`;
+    if (scoreKey !== lastScore) {
+      lastScore = scoreKey;
+      score.replaceChildren(
       Object.assign(document.createElement("span"), { className: "ours", textContent: String(ours) }),
       Object.assign(document.createElement("i"), { textContent: ":" }),
       Object.assign(document.createElement("span"), { className: "theirs", textContent: String(theirs) }),
       Object.assign(document.createElement("small"), { className: g >= 0 ? "ours" : "theirs", textContent: Math.abs(g) < 500 ? "золото ровно" : `${g > 0 ? "+" : "−"}${(Math.abs(g) / 1000).toFixed(1)}к ${g > 0 ? "у вас" : "у врагов"}` }));
+    }
     range.value = String(Math.round(t));
     const x = tx(t);
     head.setAttribute("x1", x.toFixed(1));
@@ -462,9 +471,10 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
       const p = model.players[selected];
       const k = model.kills.filter((x) => x.t <= t && x.killer === selected).length;
       const d = model.kills.filter((x) => x.t <= t && x.victim === selected).length;
-      info.textContent = `${p.name}${p.me ? " (ты)" : ""} · ${k} убийств, ${d} смертей к ${mm(Math.max(t, 0))}`;
-      info.classList.toggle("foe", p.radiant !== myRadiant);
+      const line = `${p.name}${p.me ? " (ты)" : ""} · ${k} ${plural(k, "убийство", "убийства", "убийств")}, ${d} ${plural(d, "смерть", "смерти", "смертей")} к ${mm(Math.max(t, 0))}`;
+      if (info.textContent !== line) info.textContent = line;
     } else info.textContent = model.hasPos ? "Тапни по герою — покажу его путь." : "";
+    info.classList.toggle("foe", selected >= 0 && model.players[selected].radiant !== myRadiant);
   }
 
   function feedRow(e) {
@@ -491,6 +501,8 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
   }
 
   function frame(now) {
+    // карту убрали со страницы или приложение свернули — не крутим кадры в фоне
+    if (!root.isConnected || document.hidden) { pause(); return; }
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
     t += dt * speed;

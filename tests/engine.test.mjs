@@ -462,8 +462,8 @@ test("прокачка: очки к 10 уровню против про, уль�
   assert.deepEqual(sp.abilities.map((a) => [a.name, a.you]), [["Decay", 1], ["Tombstone", 4], ["Soul Rip", 4], ["Flesh Golem", 0]]);
   assert.ok(sp.notes.some((n) => /Про первым максят Decay/.test(n)), sp.notes.join(" | "));
   assert.ok(sp.notes.some((n) => /Flesh Golem так и не взята/.test(n)));
-  assert.ok(sp.notes.some((n) => /На 1 уровне про почти всегда \(96%\) берут Decay, ты взял Tombstone/.test(n)));
-  assert.ok(sp.notes.some((n) => /На 10 уровне про в 80% берут «\+Decay Damage», ты взял «-Tombstone Cooldown»/.test(n)));
+  assert.ok(sp.notes.some((n) => /На 1-м уровне про почти всегда \(96%\) берут Decay, ты взял Tombstone/.test(n)));
+  assert.ok(sp.notes.some((n) => /На 10-м уровне про в 80% берут «\+Decay Damage», ты взял «-Tombstone Cooldown»/.test(n)));
   assert.equal(sp.talents[0].options.find((o) => o.id === 11).picked, false);
   assert.ok(!sp.notes.some((n) => /На 15 уровне/.test(n))); // 55% — не повод
   // без прокачки игрока (драфт) — только про
@@ -547,8 +547,8 @@ test("уровни предмета: Dagon 5 — один предмет, «пр
   const plan = itemPlan({ builds: b, od: odx, knowledge: kb, heroId: 86, pos: 2, enemies: [], owned: new Set(["dagon", "dagon_5", "blink"]),
     bought: new Map([["dagon", 729], ["dagon_5", 1394], ["blink", 1870]]), duration: 2310, finished });
   assert.equal(plan.extra.length, 1);
-  assert.match(plan.extra[0].note, /до 5 уровня \(4\s600 золота сверху\)/);
-  assert.ok(plan.verdict.some((t) => /^Dagon прокачал до 5 уровня/.test(t)), plan.verdict.join(" | "));
+  assert.match(plan.extra[0].note, /до 5-го уровня \(4\s600 золота сверху\)/);
+  assert.ok(plan.verdict.some((t) => /^Dagon прокачал до 5-го уровня/.test(t)), plan.verdict.join(" | "));
   // первый предмет основы — Dagon вовремя, значит «первый предмет поздно» не пишем, хотя Blink опоздал
   assert.ok(!plan.verdict.some((t) => /Первый предмет основы/.test(t)));
 });

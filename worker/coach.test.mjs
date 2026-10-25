@@ -663,3 +663,19 @@ test("fetch: частота запросов с IP выше лимита — 429
   // GET тоже считается
   assert.equal((await worker.fetch(req({ ip, method: "GET" }), env2)).status, 429);
 });
+
+test("подписка: канал и чат через getChatMember, сбой Телеграма пускает", async () => {
+  const { gateCheck, COMMUNITY } = await import("./coach.js");
+  const reply = (byChat) => async (url, opts) => {
+    const { chat_id } = JSON.parse(opts.body);
+    const r = byChat[chat_id];
+    return { json: async () => (r === "error" ? { ok: false, description: "Bad Request: member list is inaccessible" } : { ok: true, result: { status: r } }) };
+  };
+  const env = { BOT_TOKEN: "t" };
+  assert.deepEqual(await gateCheck(env, 1, reply({ [COMMUNITY.channel]: "member", [COMMUNITY.chat]: "left" })), { ok: false, channel: true, chat: false });
+  assert.deepEqual(await gateCheck(env, 1, reply({ [COMMUNITY.channel]: "administrator", [COMMUNITY.chat]: "member" })), { ok: true, channel: true, chat: true });
+  assert.equal((await gateCheck(env, 1, reply({ [COMMUNITY.channel]: "kicked", [COMMUNITY.chat]: "member" }))).ok, false);
+  const broken = await gateCheck(env, 1, reply({ [COMMUNITY.channel]: "error", [COMMUNITY.chat]: "member" }));
+  assert.equal(broken.ok, true);
+  assert.equal(broken.unknown, true);
+});
