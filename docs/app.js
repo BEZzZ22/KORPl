@@ -4,6 +4,8 @@ import {
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
 } from "./engine.js?v=36";
 import { aegisBadge, openShowcase } from "./aegis.js?v=3";
+import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=1";
+import { matchVerdicts } from "./blame.js?v=1";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -369,8 +371,11 @@ async function heroBench(heroId) {
   return benchCache.get(heroId);
 }
 
+// Friend ID, Steam ID, ссылки на профиль Steam (/profiles/7656...), Dotabuff, OpenDota, Stratz (/players/123)
 function toAccountId(raw) {
-  const digits = String(raw).trim();
+  const text = String(raw).trim();
+  const link = /(?:profiles|players)\/(\d{1,20})/.exec(text);
+  const digits = link ? link[1] : text;
   if (!/^\d{1,20}$/.test(digits)) return null;
   const n = BigInt(digits);
   const id = n > STEAM64_OFFSET ? n - STEAM64_OFFSET : n;
@@ -486,7 +491,7 @@ async function homeScreen() {
   const seq = navSeq;
   const account = await storage.get("account_id");
   if (stale(seq)) return;
-  const matchInput = h("input", { inputmode: "numeric", placeholder: "ID матча или ссылка", "aria-label": "ID матча" });
+  const matchInput = h("input", { inputmode: "url", placeholder: "ID матча или ссылка", "aria-label": "ID матча" });
   const openMatch = () => {
     const m = /(?<!\d)(\d{7,11})(?!\d)/.exec(matchInput.value);
     if (m) go(matchScreen, Number(m[1]), null);
@@ -508,7 +513,7 @@ async function homeScreen() {
       h("div", { class: "grow" }, h("b", {}, "Драфт перед игрой"), h("span", {}, "Кого пикнуть и что собирать"))),
   ];
   if (!account) {
-    render(...nodes, accountForm());
+    render(...nodes, accountForm(), demoEntry());
     return;
   }
   const list = h("div", {}, h("div", { class: "center" }, h("div", { class: "spinner" })));
@@ -533,6 +538,13 @@ async function homeScreen() {
     step("err_opendota");
     list.replaceChildren(h("p", { class: "error" }, "OpenDota не отвечает. Попробуй позже."));
   }
+}
+
+// Кнопка примера: человек видит разбор за секунду, ещё не найдя свой Friend ID
+function demoEntry() {
+  return h("button", { class: "draft-entry demo-entry", type: "button", onclick: () => { haptic(); step("demo"); go(matchScreen, DEMO_MATCH, null, DEMO_ACCOUNT, 0, true); } },
+    h("span", { class: "de-icon", "aria-hidden": "true" }, svg("svg", { viewBox: "0 0 24 24" }, svg("path", { d: "M8 5.5v13l10.5-6.5z" }))),
+    h("div", { class: "grow" }, h("b", {}, "Посмотреть пример"), h("span", {}, "Разбор настоящей катки: кто слил, повтор на карте, тренер")));
 }
 
 // Матчей не видно: почти всегда в Доте закрыты публичные данные матчей. Новые от этого уходили сразу (25.10),
@@ -571,11 +583,17 @@ function hiddenMatchesCard(account) {
 }
 
 function accountForm() {
-  const input = h("input", { inputmode: "numeric", placeholder: "Friend ID или Steam ID", "aria-label": "Friend ID" });
-  const status = h("div", { class: "small muted" }, "Friend ID есть в Доте в профиле под ником.");
+  const input = h("input", { inputmode: "url", placeholder: "Friend ID или ссылка на профиль", "aria-label": "Friend ID" });
+  const status = h("div", { class: "small muted" }, "Friend ID есть в Доте в профиле под ником. Подойдёт и ссылка на Steam, Dotabuff, OpenDota или Stratz.");
   const save = async () => {
     const id = toAccountId(input.value);
-    if (!id) { step("link_bad"); status.textContent = "Это не похоже на Friend ID."; return; }
+    if (!id) {
+      step("link_bad");
+      status.textContent = /steamcommunity\.com\/id\//.test(input.value)
+        ? "Это ссылка с ником: по ней аккаунт не найти. Нужен Friend ID из профиля в Доте или ссылка вида steamcommunity.com/profiles/7656…"
+        : "Это не похоже на Friend ID.";
+      return;
+    }
     status.textContent = "Проверяю...";
     const seq = navSeq;
     try {
@@ -1114,7 +1132,10 @@ function matchListItem(m, account) {
   );
 }
 
-async function matchScreen(matchId, slot, accountId, attempt = 0) {
+// Пример разбора до привязки аккаунта: настоящая катка с разобранным реплеем, смотрим за Tusk
+const DEMO_MATCH = 9052987576, DEMO_ACCOUNT = 163061132;
+
+async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false) {
   if (attempt === 0) loading("Призываю матч...");
   const seq = navSeq;
   let match;
@@ -1146,7 +1167,7 @@ async function matchScreen(matchId, slot, accountId, attempt = 0) {
       h("p", { class: "small muted" }, "Обычно 1–5 минут. Страница обновится сама."),
       watched.has(matchId) && h("p", { class: "small muted" }, "Можешь закрыть приложение: бот напишет в Телеграм, когда разбор будет готов."),
     ));
-    pollTimer = setTimeout(() => matchScreen(matchId, slot, accountId, attempt + 1), PARSE_POLL_MS);
+    pollTimer = setTimeout(() => matchScreen(matchId, slot, accountId, attempt + 1, demo), PARSE_POLL_MS);
     return;
   }
 
@@ -1171,10 +1192,15 @@ async function matchScreen(matchId, slot, accountId, attempt = 0) {
     return;
   }
   // для блока «Обычно у тебя»: сырые цифры этой игры и чей аккаунт
+  rawOf.set(a, { match, replay });
+  a.demo = demo;
   a.hist_self = { account: player.account_id, duration: match.duration, kills: player.kills, deaths: player.deaths,
     assists: player.assists, gold_per_min: player.gold_per_min, xp_per_min: player.xp_per_min, last_hits: player.last_hits };
   analysisScreen(a);
 }
+
+// Сырые данные разбора для карты и «Кто слил»: в сам разбор не кладём, он уходит в память и тренеру
+const rawOf = new WeakMap();
 
 // Подписка на уведомление: воркер проверит подпись Телеграма и напишет в личку, когда реплей разберётся
 const watched = new Set();
@@ -1202,6 +1228,7 @@ async function notYourMatch() {
 
 const TABS = [
   ["Обзор", overviewTab],
+  ["Кто слил", blameTab],
   ["Фазы", phasesTab],
   ["Смерти", killersTab],
   ["Карта", mapTab],
@@ -1233,8 +1260,9 @@ function analysisScreen(a) {
     if (lens && lens.current() !== i) lens.place(i);
   };
   a._select = (i) => { select(i); if (lens) lens.place(i); };
-  if (COACH_URL) rememberForCompare(a);
-  if (a._goalResult === undefined) { a._goalResult = trackProgress(a); if (a.hist_self) syncSoon(a.hist_self.account); }
+  // пример — чужая катка: в задачи, сравнение и облако её не пишем
+  if (COACH_URL && !a.demo) rememberForCompare(a);
+  if (a._goalResult === undefined && !a.demo) { a._goalResult = trackProgress(a); if (a.hist_self) syncSoon(a.hist_self.account); }
   TABS.forEach(([name]) => tabs.append(h("button", { class: "tab", role: "tab" }, name)));
   lens = glassBar(tabs, ".tab", { live: true, onPick: select });
   // Свайп по содержимому листает вкладки; графики со своим жестом не трогаем
@@ -1260,6 +1288,9 @@ function analysisScreen(a) {
   }, { passive: true });
 
   render(
+    a.demo && h("div", { class: "demo-banner" },
+      h("div", { class: "grow" }, h("b", {}, "Это пример разбора"), h("span", {}, "Настоящая катка на Tusk. Привяжи аккаунт — разберу твои.")),
+      h("button", { type: "button", onclick: () => { haptic(); navRoot("home", homeScreen); } }, "Привязать")),
     h("div", { class: "card hero-head" },
       h("div", { class: "hero-banner" },
         img(dictionary.heroImage(f.hero_id), null, f.hero),
@@ -1408,9 +1439,9 @@ async function renderCard(a) {
 }
 
 // Шторка «Поделиться»: картинка в историю, сохранить картинку или ссылка в чат
-function shareMatch(a) {
+function shareMatch(a, custom = null) {
   haptic("medium");
-  step("share");
+  step(custom ? "share_blame" : "share");
   const canStory = Boolean(tg && tg.shareToStory && tg.isVersionAtLeast && tg.isVersionAtLeast("7.8"));
   const canSave = Boolean(tg && tg.downloadFile && tg.isVersionAtLeast && tg.isVersionAtLeast("8.0"));
   const preview = h("div", { class: "sheet-preview" }, h("div", { class: "spinner" }));
@@ -1435,7 +1466,7 @@ function shareMatch(a) {
   } }, label);
   const actions = h("div", { class: "sheet-actions" },
     canStory && act("Выложить в историю", async () => {
-      tg.shareToStory(await upload(), { text: `${a.facts.hero}: ${a.overall.toFixed(1)}/10. Разбор в @${BOT_USERNAME}` });
+      tg.shareToStory(await upload(), { text: custom ? custom.text : `${a.facts.hero}: ${a.overall.toFixed(1)}/10. Разбор в @${BOT_USERNAME}` });
     }, true),
     act(canSave ? "Сохранить картинку" : "Открыть картинку", async () => {
       const url = await upload();
@@ -1451,7 +1482,7 @@ function shareMatch(a) {
       h("button", { type: "button", class: "sheet-close ghost", onclick: close }, "Закрыть")));
   document.body.append(sheet);
   document.addEventListener("keydown", onKey);
-  renderCard(a).then((url) => {
+  (custom ? custom.render() : renderCard(a)).then((url) => {
     dataUrl = url;
     preview.replaceChildren(h("img", { src: url, alt: "Карточка разбора" }));
   }).catch(() => { preview.replaceChildren(h("p", { class: "muted" }, "Картинка не нарисовалась. Можно отправить ссылку.")); });
@@ -1886,6 +1917,7 @@ const goalText = (text) => {
 
 // Задача с прошлой катки (итог) и задача на следующую
 function goalBlock(a) {
+  if (a.demo) return null;
   const r = a._goalResult;
   const next = (a.summary || {}).goal_check && (a.summary || {}).goal;
   if (!r && !next) return null;
@@ -2329,25 +2361,174 @@ function phasesTab(a) {
   );
 }
 
-// ---------- миникарта: смерти в драках и обсы ----------
+// ---------- кто слил, кто тащил: все десять игроков ----------
 
-// Клетки OpenDota 64..192 -> координаты SVG 0..128 (север сверху)
-const mapX = (x) => Math.max(2, Math.min(126, x - 64));
-const mapY = (y) => Math.max(2, Math.min(126, 192 - y));
+const BLAME_TAGS = { mvp: "MVP", anchor: "слил", carry: "тащил", passenger: "пассажир" };
 
-function minimap(points, { label }) {
-  const lane = (d) => svg("path", { d, class: "mm-lane" });
-  return svg("svg", { class: "minimap", viewBox: "0 0 128 128", role: "img", "aria-label": label },
-    svg("defs", {}, svg("radialGradient", { id: "mm-bg", cx: "50%", cy: "50%", r: "70%" },
-      svg("stop", { offset: "0%", "stop-color": "#1b1514" }), svg("stop", { offset: "100%", "stop-color": "#0a0807" }))),
-    svg("rect", { x: 0, y: 0, width: 128, height: 128, rx: 10, fill: "url(#mm-bg)" }),
-    // река идёт с северо-запада на юго-восток через центр
-    svg("path", { d: "M4 10 C 40 40, 52 58, 64 64 S 92 92, 124 118", class: "mm-river" }),
-    lane("M14 116 L14 14 L114 14"), lane("M14 116 L114 116 L114 14"), lane("M16 112 L112 16"),
-    svg("rect", { x: 4, y: 104, width: 20, height: 20, rx: 4, class: "mm-base radiant" }),
-    svg("rect", { x: 104, y: 4, width: 20, height: 20, rx: 4, class: "mm-base dire" }),
-    ...points);
+function verdictsOf(a) {
+  const raw = rawOf.get(a);
+  if (!raw) return null;
+  if (!raw.verdicts) {
+    raw.verdicts = matchVerdicts(raw.match, a.hist_self && a.hist_self.account, { heroName: (id) => dictionary.heroName(id), heroKey: (id) => dictionary.heroKey(id) });
+  }
+  return raw.verdicts;
 }
+
+function blameHeadline(v) {
+  const me = v.meRow;
+  if (v.anchor && v.anchor === me) return ["Похоже, слил ты", "Не обижайся: цифры матча так говорят. Ниже — что поправить."];
+  const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+  if (v.anchor) return [`Слил, похоже, ${v.anchor.name}`, `${cap(v.anchor.minus || "вклад ниже всех в команде")}. Ниже цифры по всем десяти.`];
+  const lost = v.rows.filter((r) => !r.won);
+  return ["Явного виновника нет", `${lost.length ? "Проиграли всей командой: вклад у проигравших близкий." : ""} Ниже цифры по всем десяти.`];
+}
+
+// ширина через CSSOM: атрибут style запрещён политикой CSP
+function barFill(pct) {
+  const i = h("i", {});
+  i.style.width = `${Math.max(4, pct)}%`;
+  return i;
+}
+
+function blameRow(r) {
+  return h("div", { class: `blame-row${r.me ? " me" : ""}${r.tag ? ` tag-${r.tag}` : ""}` },
+    heroImg(r.hero_id, "blame-hero"),
+    h("div", { class: "blame-main" },
+      h("div", { class: "blame-name" },
+        h("b", {}, r.name), r.me && h("span", { class: "you" }, "ты"),
+        h("span", { class: "muted" }, ` · ${r.role} · ${r.kda}`),
+        r.tag && h("span", { class: `blame-tag ${r.tag}` }, BLAME_TAGS[r.tag])),
+      h("div", { class: "blame-bar", role: "img", "aria-label": `Вклад ${r.impact} из 100` },
+        barFill(r.impact), h("b", {}, String(r.impact))),
+      r.plus && h("div", { class: "blame-fact plus" }, r.plus),
+      r.minus && h("div", { class: "blame-fact minus" }, r.minus)));
+}
+
+const AWARD_ICONS = {
+  ctrl: "M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18",
+  heal: "M12 21s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 11c0 5.5-7 10-7 10ZM12 9v5M9.5 11.5h5",
+  eyes: "M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12ZM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z",
+  wall: "M12 3 4 6v6c0 4.5 3.4 7.7 8 9 4.6-1.3 8-4.5 8-9V6l-8-3Z",
+  dmg: "M5 19 19 5M14 5h5v5M5 14l5 5",
+  push: "M6 21V9l6-5 6 5v12M10 21v-5h4v5",
+  feed: "M12 3a7 7 0 0 0-4 12.7V19h8v-3.3A7 7 0 0 0 12 3ZM9.5 11h.01M14.5 11h.01M10 21h4",
+};
+
+function awardsGrid(v) {
+  return h("div", { class: "award-grid" }, ...v.awards.map((x) => h("div", { class: `award${x.anti ? " anti" : ""}${x.row.me ? " me" : ""}` },
+    h("span", { class: "award-ic", "aria-hidden": "true" }, svg("svg", { viewBox: "0 0 24 24" }, svg("path", { d: AWARD_ICONS[x.id] }))),
+    h("div", { class: "award-body" },
+      h("span", { class: "award-title" }, x.title),
+      h("b", {}, x.row.name + (x.row.me ? " (ты)" : "")),
+      h("span", { class: "small muted" }, x.text)))));
+}
+
+function blameTab(a) {
+  const v = verdictsOf(a);
+  if (!v) return h("div", {}, h("p", { class: "muted" }, "Нет данных матча."));
+  step("blame");
+  const [title, sub] = blameHeadline(v);
+  const myRadiant = v.meRow ? v.meRow.radiant : true;
+  const team = (radiant) => v.rows.filter((r) => r.radiant === radiant).sort((x, y) => y.impact - x.impact);
+  const side = (radiant) => {
+    const won = radiant === v.radiantWin;
+    return h("div", { class: `card blame-team ${won ? "won" : "lost"}` },
+      h("div", { class: "blame-team-head" }, h("b", {}, radiant === myRadiant ? "Твоя команда" : "Враги"), h("span", { class: won ? "win-text" : "loss-text" }, won ? "победа" : "поражение")),
+      ...team(radiant).map(blameRow));
+  };
+  const problems = ((a.summary || {}).problems || []).slice(0, 2);
+  const me = v.meRow;
+  return h("div", {},
+    h("div", { class: `card blame-hero-card${v.anchor && v.anchor === me ? " me" : ""}` },
+      h("span", { class: "eyebrow" }, "Кто слил катку"),
+      h("div", { class: "display" }, title),
+      h("p", { class: "small" }, sub),
+      h("div", { class: "blame-mvp" }, h("span", { class: "blame-tag mvp" }, "MVP"), h("b", {}, v.mvp.name + (v.mvp.me ? " (ты)" : "")), h("span", { class: "muted small" }, v.mvp.plus || "")),
+      h("div", { class: "row blame-actions" },
+        h("button", { type: "button", class: "ghost", onclick: () => shareMatch(a, { render: () => renderBlameCard(a, v), label: "Итог матча", text: `${title}. Разбор в @${BOT_USERNAME}` }) }, "Поделиться"),
+        disagreeBtn(a, "blame", title))),
+    me && h("div", { class: "card blame-you" },
+      h("div", { class: "row" }, h("b", { class: "grow" }, "Ты в этой катке"), h("span", { class: "blame-score" }, `${me.impact}`, h("small", {}, "/100"))),
+      h("p", { class: "small muted" }, `Вклад среди ${me.core ? "коров" : "саппортов"} обеих команд: ${me.impact >= 60 ? "выше большинства" : me.impact >= 40 ? "в середине" : "ниже большинства"}.`),
+      problems.length > 0 && h("div", { class: "blame-fix" },
+        h("span", { class: "eyebrow" }, me.won ? "Что сделать ещё лучше" : "Что было делать, чтобы вытащить"),
+        ...problems.map((p) => h("div", { class: "fix-row" }, h("b", {}, p.title), p.action && h("span", { class: "small" }, p.action)))),
+      COACH_URL && h("button", { type: "button", class: "ghost", onclick: () => { haptic(); a._select(0); setTimeout(() => { const c = document.querySelector(".chat-input"); if (c) { c.scrollIntoView({ behavior: "smooth", block: "center" }); c.value = "Что мне было делать, чтобы вытащить эту катку?"; } }, 250); } }, "Спросить тренера")),
+    side(myRadiant),
+    side(!myRadiant),
+    v.awards.length > 0 && h("h2", {}, "Награды матча"),
+    v.awards.length > 0 && awardsGrid(v),
+    h("p", { class: "small muted" }, "Вклад считаю по цифрам матча: нетворс, урон, драки, варды и смерти без размена (своя команда никого не убила в ±10 секунд). Кор сравнивается с корами, саппорт с саппортами. Это не приговор: не согласен — жми кнопку, поправлю правило."),
+  );
+}
+
+// «Не согласен»: счётчик в отчёте владельца и текст вывода, чтобы найти кривое правило
+function disagreeBtn(a, kind, text) {
+  const btn = h("button", { type: "button", class: "ghost disagree" }, "Не согласен");
+  btn.onclick = () => {
+    haptic("light");
+    step(`disagree_${kind}`);
+    btn.disabled = true;
+    btn.textContent = "Принял, проверю";
+    if (COACH_URL && tg && tg.initData) postCoach({ mode: "feedback", initData: tg.initData, match_id: a.facts.match_id, kind, text: String(text).slice(0, 300) }).catch(() => {});
+  };
+  return btn;
+}
+
+// Карточка 1080×1350 «Итог матча»: кто тащил, кто слил, все десять с вкладом
+async function renderBlameCard(a, v) {
+  const W = 1080, H = 1350, P = 72;
+  const C = { ink: "#08090c", text: "#eceae4", muted: "#8a8f9c", aegis: "#e8c27a", radiant: "#4fd1a5", dire: "#f2555a" };
+  const canvas = document.createElement("canvas");
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  try { await Promise.all(["700 80px Unbounded", "800 40px Manrope", "600 30px Manrope"].map((s) => document.fonts.load(s))); } catch { /* системный шрифт */ }
+  const display = (s) => `700 ${s}px Unbounded, Manrope, -apple-system, sans-serif`;
+  const sans = (w, s) => `${w} ${s}px Manrope, -apple-system, "Segoe UI", sans-serif`;
+  const glow = (x, y, r, color) => { const g = ctx.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, color); g.addColorStop(1, "rgba(0,0,0,0)"); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); };
+  ctx.fillStyle = C.ink; ctx.fillRect(0, 0, W, H);
+  glow(W, 0, 800, "rgba(242,85,90,0.22)");
+  glow(0, H, 900, "rgba(79,209,165,0.2)");
+  const [title] = blameHeadline(v);
+  ctx.fillStyle = C.aegis; ctx.font = sans(800, 32); ctx.fillText("КТО СЛИЛ КАТКУ", P, 110);
+  ctx.fillStyle = C.text; ctx.font = display(title.length > 22 ? 52 : 64);
+  const y0 = drawWrapped(ctx, title, P, 190, W - 2 * P, 74, 2);
+  ctx.fillStyle = C.muted; ctx.font = sans(700, 30);
+  ctx.fillText(`MVP: ${v.mvp.name} · ${a.facts.duration}`, P, y0 + 10);
+  const myRadiant = v.meRow ? v.meRow.radiant : true;
+  let y = y0 + 80;
+  for (const radiant of [myRadiant, !myRadiant]) {
+    const won = radiant === v.radiantWin;
+    ctx.fillStyle = won ? C.radiant : C.dire; ctx.font = sans(800, 28);
+    ctx.fillText(`${radiant === myRadiant ? "Команда" : "Враги"} · ${won ? "победа" : "поражение"}`, P, y);
+    y += 26;
+    for (const r of v.rows.filter((x) => x.radiant === radiant).sort((x, z) => z.impact - x.impact)) {
+      const rowH = 74;
+      if (r.me) { ctx.fillStyle = "rgba(232,194,122,0.10)"; ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(P - 16, y + 6, W - 2 * P + 32, rowH - 8, 18); else ctx.rect(P - 16, y + 6, W - 2 * P + 32, rowH - 8); ctx.fill(); }
+      ctx.fillStyle = C.text; ctx.font = sans(800, 34);
+      ctx.fillText(r.name + (r.me ? " (ты)" : ""), P, y + 52);
+      if (r.tag) {
+        const label = BLAME_TAGS[r.tag].toUpperCase();
+        ctx.font = sans(800, 22);
+        const tx = P + 380, tw = ctx.measureText(label).width + 28;
+        ctx.fillStyle = r.tag === "anchor" || r.tag === "passenger" ? C.dire : C.aegis;
+        ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(tx, y + 24, tw, 38, 19); else ctx.rect(tx, y + 24, tw, 38); ctx.fill();
+        ctx.fillStyle = "#14100a"; ctx.fillText(label, tx + 14, y + 51);
+      }
+      const bx = W - P - 360, bw = 300;
+      ctx.fillStyle = "rgba(255,255,255,0.08)"; ctx.fillRect(bx, y + 34, bw, 14);
+      ctx.fillStyle = r.impact >= 60 ? C.radiant : r.impact >= 35 ? C.aegis : C.dire; ctx.fillRect(bx, y + 34, (bw * Math.max(4, r.impact)) / 100, 14);
+      ctx.fillStyle = C.text; ctx.font = display(32); ctx.textAlign = "right"; ctx.fillText(String(r.impact), W - P, y + 54); ctx.textAlign = "left";
+      y += rowH;
+    }
+    y += 34;
+  }
+  ctx.fillStyle = C.text; ctx.font = sans(800, 34); ctx.fillText("Разбери свою катку", P, H - 86);
+  ctx.fillStyle = C.muted; ctx.font = sans(700, 28); ctx.fillText(`@${BOT_USERNAME}`, P, H - 44);
+  return canvas.toDataURL("image/jpeg", 0.9);
+}
+
+// ---------- миникарта: смерти в драках и обсы ----------
 
 // ---------- реплей: позиции героев (GitHub Actions разбирает, файл лежит в ветке replays) ----------
 
@@ -2369,10 +2550,10 @@ async function fetchReplay(matchId) {
   return data;
 }
 
-function replayBlock(a) {
-  const r = a.replay;
-  if (!r) {
-    const status = h("p", { class: "small muted", role: "status" }, "Тренер увидит, где ты стоял и кто был рядом в каждой смерти. Реплей разбирается 10–30 минут.");
+// Кнопка заказа разбора реплея по позициям
+function replayCta(a, intro) {
+  {
+    const status = h("p", { class: "small muted", role: "status" }, intro || "Тренер увидит, где ты стоял и кто был рядом в каждой смерти. Реплей разбирается 10–30 минут.");
     const btn = h("button", { type: "button", class: "replay-btn" }, "Разобрать реплей по позициям");
     btn.onclick = async () => {
       btn.disabled = true;
@@ -2388,8 +2569,12 @@ function replayBlock(a) {
         status.textContent = coachError(e);
       }
     };
-    return h("div", {}, h("h2", {}, "Позиции по реплею"), h("div", { class: "card replay-card" }, btn, status));
+    return intro ? h("div", { class: "replay-inline" }, status, btn) : h("div", { class: "card replay-card" }, btn, status);
   }
+}
+
+function replayBlock(a) {
+  const r = a.replay;
   const dots = r.heat.map((p) => svg("circle", { cx: mapX(p[0]).toFixed(1), cy: mapY(p[1]).toFixed(1), r: 1.6, class: "mm-heat" }));
   const deaths = r.deaths.map((d) => svg("g", {},
     d.path.length > 1 && svg("polyline", { class: "mm-path", points: d.path.map((p) => `${mapX(p[0]).toFixed(1)},${mapY(p[1]).toFixed(1)}`).join(" ") }),
@@ -2453,42 +2638,38 @@ function farmBlock(r) {
 }
 
 function mapTab(a) {
-  const m = a.map || { deaths: [], wards: [] };
-  const deathDots = m.deaths.map((d) => svg("g", { class: "mm-death", transform: `translate(${mapX(d.x).toFixed(1)} ${mapY(d.y).toFixed(1)})` },
-    svg("title", {}, `смерть ${mmss(d.t)}`),
-    svg("path", { d: "M-2.6 -2.6 L2.6 2.6 M-2.6 2.6 L2.6 -2.6" })));
-  const wardDots = m.wards.map((w) => svg("circle", {
-    cx: mapX(w.x).toFixed(1), cy: mapY(w.y).toFixed(1), r: w.mine ? 2.6 : 2,
-    class: `mm-ward${w.mine ? " mine" : ""}${w.dewarded ? " dewarded" : ""}`,
-  }, svg("title", {}, `обс ${mmss(w.t)}${w.mine ? ", твой" : ""}${w.dewarded ? ", снесли" : ""}`)));
-  const sentries = m.sentries || [];
-  const mineSen = sentries.filter((w) => w.mine).length;
-  const sentryDots = sentries.map((w) => svg("rect", {
-    x: (mapX(w.x) - 1.4).toFixed(1), y: (mapY(w.y) - 1.4).toFixed(1), width: 2.8, height: 2.8, rx: 0.6, class: `mm-sentry${w.mine ? " mine" : ""}`,
-  }, svg("title", {}, `сентри ${mmss(w.t)}${w.mine ? ", твоя" : ""}`)));
+  const m = a.map || { deaths: [], wards: [], sentries: [] };
+  const raw = rawOf.get(a);
   const side = m.radiant ? "Твоя база слева внизу (Свет)." : "Твоя база справа вверху (Тьма).";
-  const far = m.deaths.filter((d) => d.enemy_half).length;
-  const mine = m.wards.filter((w) => w.mine);
+  const mine = m.wards.filter((w) => w.mine).length;
   const dewarded = m.wards.filter((w) => w.dewarded).length;
   const deep = m.wards.filter((w) => w.enemy_half).length;
-  // с реплеем все смерти уже есть в «Перед каждой смертью», карта смертей в драках только повторит её
-  const replayDeaths = a.replay && a.replay.deaths.length > 0;
+  const sentries = m.sentries || [];
+  let live = null;
+  if (raw) {
+    try {
+      const model = replayModel(raw.match, raw.replay, raw.match.players.find((p) => p.account_id === a.hist_self.account) || null, {
+        heroKey: (id) => dictionary.heroKey(id).replace("npc_dota_hero_", ""), heroName: (id) => dictionary.heroName(id),
+      });
+      live = liveMap(model, { iconUrl: (id) => `${STEAM_CDN}/apps/dota2/images/dota_react/heroes/icons/${dictionary.heroKey(id).replace("npc_dota_hero_", "")}.png`, haptic });
+    } catch (e) {
+      console.warn(e);
+    }
+  }
   return h("div", {},
-    replayBlock(a),
-    !replayDeaths && h("h2", {}, "Где умирал в драках"),
-    !replayDeaths && h("div", { class: "card map-card" },
-      m.deaths.length ? minimap(deathDots, { label: `Смерти в драках на карте: ${m.deaths.length}` }) : h("p", { class: "muted" }, "В больших драках ты не умирал."),
-      m.deaths.length > 0 && h("p", { class: "small muted" },
-        `${m.deaths.length} ${plural(m.deaths.length, "смерть", "смерти", "смертей")} в драках, из них на вражеской половине: ${far}. ${side} Смерти вне больших драк OpenDota без координат не отдаёт, а реплей покажет все.`)),
-    h("h2", {}, "Варды команды"),
-    h("div", { class: "card map-card" },
-      m.wards.length || sentries.length ? minimap([...sentryDots, ...wardDots], { label: `Варды команды на карте: обсов ${m.wards.length}, сентри ${sentries.length}` }) : h("p", { class: "muted" }, "Вардов за игру не было."),
-      (m.wards.length > 0 || sentries.length > 0) && h("div", { class: "legend" },
-        h("span", {}, h("i", { class: "lg-ward mine" }), `твои обсы: ${mine.length}`),
-        h("span", {}, h("i", { class: "lg-ward" }), `обсы команды: ${m.wards.length - mine.length}`),
-        dewarded > 0 && h("span", {}, h("i", { class: "lg-ward dewarded" }), `снесли раньше времени: ${dewarded}`),
-        sentries.length > 0 && h("span", {}, h("i", { class: "lg-ward sentry" }), `сентри: ${sentries.length}${mineSen ? `, твоих ${mineSen}` : ""}`)),
-      m.wards.length > 0 && h("p", { class: "small muted" }, `Обсов на вражеской половине: ${deep} из ${m.wards.length}. ${side}`)),
+    h("h2", {}, "Повтор матча"),
+    live && h("div", { class: "card map-card live-card" },
+      live,
+      !a.replay && replayCta(a, "Сейчас видно варды, здания и смерти в драках. Разбери реплей — на карте поедут все 10 героев, а тренер увидит, кто где стоял.")),
+    !live && replayCta(a),
+    (m.wards.length > 0 || sentries.length > 0) && h("div", { class: "card ward-sum" },
+      h("div", { class: "ws-row" },
+        h("div", {}, h("b", {}, String(m.wards.length)), h("span", {}, "обсов команды")),
+        h("div", {}, h("b", {}, String(mine)), h("span", {}, "твоих")),
+        h("div", {}, h("b", {}, String(deep)), h("span", {}, "на чужой половине")),
+        h("div", { class: dewarded > m.wards.length / 3 ? "bad" : "" }, h("b", {}, String(dewarded)), h("span", {}, "снесли раньше"))),
+      h("p", { class: "small muted" }, `Сентри: ${sentries.length}${sentries.filter((w) => w.mine).length ? `, твоих ${sentries.filter((w) => w.mine).length}` : ""}. ${side}`)),
+    a.replay && replayBlock(a),
   );
 }
 

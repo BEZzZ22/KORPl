@@ -960,6 +960,13 @@ export async function trackUser(env, user, batch, now = Date.now()) {
   return next;
 }
 
+const FEEDBACK_TTL = 60 * 86400;
+export async function saveFeedback(env, user, raw, now = Date.now()) {
+  const meta = { m: Number(raw.match_id) || 0, k: clip(raw.kind, 20), x: clip(raw.text, 200), n: clip(user.username || user.first_name, 32) };
+  await env.COACH_KV.put(`fb:${mskDay(now)}:${now}:${user.id}`, "1", { metadata: meta, expirationTtl: FEEDBACK_TTL });
+  return meta;
+}
+
 async function listAll(env, prefix) {
   const out = [];
   let cursor;
@@ -975,12 +982,13 @@ async function listAll(env, prefix) {
 const EVENT_LABELS = {
   analysis: "разборов", coach: "с тренером", chat: "вопросов тренеру", compare: "сравнений", replay: "реплеев",
   share: "поделились", link: "привязали аккаунт", profile: "профиль", hero_stats: "статы героя", draft: "драфт",
+  blame: "«кто слил»", share_blame: "поделились итогом матча", demo: "смотрели пример", disagree_blame: "не согласны с «кто слил»",
 };
 const STEP_LABELS = {
   home: "главная", home_list: "список игр", home_empty: "«матчей не видно»", match: "открыл матч", empty_retry: "жмёт «Проверить снова»", empty_found: "матчи нашлись", match_parsing: "ждёт разбор реплея",
   analysis: "разбор", not_yours: "чужой матч", link: "привязал аккаунт", link_bad: "неверный ID", link_unknown: "OpenDota не знает аккаунт",
   profile: "профиль", hero_stats: "статы героя", draft: "драфт", coach: "тренер", chat: "вопрос тренеру", compare: "сравнение",
-  replay: "реплей", share: "поделился", err_opendota: "ОШИБКА OpenDota", err_no_match: "ОШИБКА нет матча", err_replay: "ОШИБКА реплей",
+  replay: "реплей", share: "поделился", blame: "«кто слил»", share_blame: "поделился итогом", demo: "пример разбора", disagree_blame: "не согласен", err_opendota: "ОШИБКА OpenDota", err_no_match: "ОШИБКА нет матча", err_replay: "ОШИБКА реплей",
   err_parse: "ОШИБКА разбора", err_boot: "ОШИБКА загрузки", err_other: "ОШИБКА",
 };
 const stepName = (x) => STEP_LABELS[x] || x;
@@ -1057,6 +1065,11 @@ export async function buildReport(env, now = Date.now(), day = mskDay(now - 8640
     const stuck = [["home_empty", "видели «матчей не видно» (закрыт профиль в Доте)"], ["link_unknown", "OpenDota не нашла аккаунт"], ["not_yours", "открыли чужой матч"]]
       .map(([k, t]) => [t, [...today.values()].filter((a) => (a.e || {})[k]).length]).filter(([, n]) => n);
     if (stuck.length) lines.push(`Застряли: ${stuck.map(([t, n]) => `${t} — ${n}`).join(", ")}`);
+  }
+  const fb = (await listAll(env, `fb:${day}:`)).filter((k) => k.metadata && !isOwner(env, k.name.split(":").pop()));
+  if (fb.length) {
+    lines.push("", `Не согласны с выводом: ${fb.length}`);
+    for (const k of fb.slice(0, 10)) lines.push(`— ${k.metadata.n ? `@${k.metadata.n} ` : ""}матч ${k.metadata.m}: «${k.metadata.x}»`);
   }
   if (fresh.length) {
     lines.push("", "Новые:");
@@ -1216,6 +1229,17 @@ async function handlePost(request, env, ctx, origin) {
     const limited = throttle(String(user.id), Date.now(), 120, "track", 50000);
     if (limited) return reply(429, { error: limited }, origin);
     await trackUser(env, user, raw);
+    return reply(200, { ok: true }, origin);
+  }
+
+  // «Не согласен» из приложения: какой вывод и в каком матче. Видно в ежедневном отчёте
+  if (mode === "feedback") {
+    if (!env.COACH_KV || !env.BOT_TOKEN) return reply(200, { ok: false }, origin);
+    const user = await telegramUser(raw.initData, env.BOT_TOKEN);
+    if (!user || !user.id) return reply(403, { error: "Открой приложение из Телеграма." }, origin);
+    const limited = throttle(String(user.id), Date.now(), 20, "feedback", 2000);
+    if (limited) return reply(429, { error: limited }, origin);
+    await saveFeedback(env, user, raw);
     return reply(200, { ok: true }, origin);
   }
 

@@ -178,6 +178,14 @@ async function shot(name, { full = true } = {}) {
 // После каждого шага: на экране не должно быть служебного мусора вроде «undefined» или «NaN»
 const step = async (name, fn) => {
   try { await fn(); } catch (e) { errors.push(`${name}: ${e.message.split("\n").slice(0, process.env.UI_DEBUG ? 12 : 1).join("\n")}`); }
+  // вёрстка не шире экрана: иначе страница ездит вбок
+  const wide = await page.evaluate(() => {
+    if (document.documentElement.scrollWidth <= innerWidth + 1) return null;
+    const el = [...document.querySelectorAll("body *")].filter((e) => e.getBoundingClientRect().right > innerWidth + 1 && getComputedStyle(e).position !== "fixed")
+      .sort((x, y) => y.getBoundingClientRect().right - x.getBoundingClientRect().right)[0];
+    return el ? `${el.tagName.toLowerCase()}.${String(el.className.baseVal ?? el.className).split(" ").join(".")} (${Math.round(el.getBoundingClientRect().right)} > ${innerWidth})` : "?";
+  }).catch(() => null);
+  if (wide) errors.push(`${name}: шире экрана: ${wide}`);
   const text = await page.evaluate(() => document.body.innerText).catch(() => "");
   // регистр важен: утёкшие значения JS пишутся строчными, а «Gem of True Sight» — название предмета
   const junk = /(^|[^a-zA-Zа-яё])(undefined|NaN|null|false|true|\[object Object\])([^a-zA-Zа-яё]|$)/.exec(text);
@@ -286,7 +294,7 @@ await step("compare", async () => {
   await shot("compare", { full: false });
 });
 await step("moment-ask", async () => {
-  await page.locator(".tabs .tab").nth(1).click();
+  await page.locator(".tabs .tab").nth(2).click();
   const before = await page.locator(".chat-msg.assistant").count();
   await page.locator("summary", { hasText: "Хронология" }).click();
   await page.locator(".moment.askable").first().click();
@@ -294,11 +302,44 @@ await step("moment-ask", async () => {
   await page.waitForFunction((n) => document.querySelectorAll(".chat-msg.assistant:not(.typing)").length > n, before, { timeout: 10000 });
   await page.locator(".tabs .tab").nth(0).click();
 });
-for (const [i, name] of ["phases", "deaths", "map", "build", "charts"].entries()) {
+for (const [i, name] of ["blame", "phases", "deaths", "map", "build", "charts"].entries()) {
   await step(name, async () => {
     await page.locator(".tabs .tab").nth(i + 1).click();
     await page.waitForTimeout(250);
     await shot(name);
+    if (name === "map") {
+      // повтор: все десять героев на карте в разгар драки, плей двигает время
+      await page.waitForSelector(".live-map .lm-h[display=inline]", { timeout: 5000 });
+      const heroes = await page.evaluate(() => { document.querySelector(".live-map").seek(1030); return document.querySelectorAll(".lm-h[display=inline]").length; });
+      if (heroes < 8) throw new Error(`на карте героев: ${heroes}`);
+      await page.locator(".live-map").scrollIntoViewIfNeeded();
+      await page.waitForTimeout(200);
+      await page.locator(".live-card").screenshot({ path: join(OUT, "map-live.png") });
+      const before = await page.locator(".lm-clock").innerText();
+      await page.locator(".lm-play").click();
+      await page.waitForTimeout(600);
+      await page.locator(".lm-play").click();
+      if ((await page.locator(".lm-clock").innerText()) === before) throw new Error("плей не двигает время");
+      // UI_PERF=1: кадры повтора на слабом телефоне (процессор замедлен в 4 раза)
+      if (process.env.UI_PERF) {
+        const cdp = await context.newCDPSession(page);
+        await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
+        // seek рисует ровно один кадр: меряем свой код и пересчёт вёрстки (rAF в безоконном браузере не показателен)
+        const gaps = await page.evaluate(() => {
+          const map = document.querySelector(".live-map"), out = [];
+          for (let i = 0; i < 60; i++) {
+            const t0 = performance.now();
+            map.seek(600 + i * 20);
+            document.querySelector(".minimap.live").getBoundingClientRect();
+            out.push(performance.now() - t0);
+          }
+          return out;
+        });
+        await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+        gaps.sort((x, y) => x - y);
+        console.log(`повтор, кадр при CPU x4: медиана ${gaps[30].toFixed(1)} мс, 95% ${gaps[57].toFixed(1)} мс`);
+      }
+    }
   });
 }
 await step("draft", async () => {
@@ -369,6 +410,27 @@ if (!only || only.has("hidden")) {
   });
   hideMatches = false;
   await ctx3.close();
+}
+
+// Без привязки: пример разбора открывается с главной, сверху плашка «Это пример»
+if (!only || only.has("demo")) {
+  const ctx4 = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: "dark", reducedMotion: "reduce" });
+  await ctx4.route("**/*", handleRoute);
+  const p4 = await ctx4.newPage();
+  p4.on("pageerror", (e) => errors.push(`demo pageerror: ${e.message}`));
+  await step("demo", async () => {
+    await p4.goto(`${BASE}/index.html`);
+    await p4.locator(".demo-entry").click();
+    await p4.waitForSelector(".demo-banner", { timeout: 20000 });
+    await p4.waitForSelector(".hero-head", { timeout: 5000 });
+    const file = join(OUT, `${String(shots.length + 1).padStart(2, "0")}-demo.png`);
+    await p4.screenshot({ path: file });
+    shots.push(file);
+    // пример не пишет задачу и сравнение в память устройства
+    const stored = await p4.evaluate(() => Object.keys(localStorage).filter((k) => /^(goal|cmp):/.test(k)));
+    if (stored.length) throw new Error(`пример записал в память: ${stored}`);
+  });
+  await ctx4.close();
 }
 
 // Офлайн: с живым service worker открыть приложение, потом без сети — главная должна открыться из кэша
