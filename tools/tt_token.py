@@ -14,7 +14,7 @@ key = input("Client key: ").strip()
 secret = input("Client secret: ").strip()
 state = secrets.token_urlsafe(16)
 url = "https://www.tiktok.com/v2/auth/authorize/?" + urlencode({
-    "client_key": key, "scope": "user.info.basic,video.upload,video.publish", "response_type": "code",
+    "client_key": key, "scope": "user.info.basic,video.upload", "response_type": "code",
     "redirect_uri": REDIRECT, "state": state})
 print("\nОткрываю вход в TikTok. Если браузер не открылся, перейди сам:\n" + url)
 webbrowser.open(url)
