@@ -977,7 +977,7 @@ const EVENT_LABELS = {
   share: "поделились", link: "привязали аккаунт", profile: "профиль", hero_stats: "статы героя", draft: "драфт",
 };
 const STEP_LABELS = {
-  home: "главная", home_list: "список игр", home_empty: "«матчей не видно»", match: "открыл матч", match_parsing: "ждёт разбор реплея",
+  home: "главная", home_list: "список игр", home_empty: "«матчей не видно»", match: "открыл матч", empty_retry: "жмёт «Проверить снова»", empty_found: "матчи нашлись", match_parsing: "ждёт разбор реплея",
   analysis: "разбор", not_yours: "чужой матч", link: "привязал аккаунт", link_bad: "неверный ID", link_unknown: "OpenDota не знает аккаунт",
   profile: "профиль", hero_stats: "статы героя", draft: "драфт", coach: "тренер", chat: "вопрос тренеру", compare: "сравнение",
   replay: "реплей", share: "поделился", err_opendota: "ОШИБКА OpenDota", err_no_match: "ОШИБКА нет матча", err_replay: "ОШИБКА реплей",

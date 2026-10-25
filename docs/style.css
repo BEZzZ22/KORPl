@@ -944,3 +944,9 @@ body { background: transparent; }
 .mm-sentry { fill: none; stroke: #7fb2f0; stroke-width: 0.9; opacity: .85; }
 .mm-sentry.mine { fill: #7fb2f0; stroke: none; opacity: 1; }
 .legend .lg-ward.sentry { border-radius: 2px; border-color: #7fb2f0; }
+
+/* Матчи скрыты: шаги по пунктам */
+.hidden-matches .steps { margin: 10px 0 14px; padding-left: 22px; display: grid; gap: 8px; font-size: 14px; line-height: 1.4; }
+.hidden-matches .steps li::marker { color: var(--fire, #ff6a2a); font-weight: 700; }
+.hidden-matches [role="status"]:empty { display: none; }
+.hidden-matches [role="status"] { margin-top: 10px; }

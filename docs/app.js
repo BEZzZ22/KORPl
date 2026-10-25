@@ -523,9 +523,7 @@ async function homeScreen() {
     const matches = (await api(`/players/${account}/recentMatches`)) || [];
     step(matches.length ? "home_list" : "home_empty");
     if (!matches.length) {
-      list.replaceChildren(h("div", { class: "card muted" },
-        "Матчей не видно. В Доте включи: Настройки (шестерёнка) → Расширенные настройки → Социальное → «Expose Public Match Data» (публичные данные матчей), " +
-        "сыграй катку и зайди сюда снова."));
+      list.replaceChildren(hiddenMatchesCard(account));
       api(`/players/${account}/refresh`, { method: "POST" }).catch(() => {});
       return;
     }
@@ -535,6 +533,41 @@ async function homeScreen() {
     step("err_opendota");
     list.replaceChildren(h("p", { class: "error" }, "OpenDota не отвечает. Попробуй позже."));
   }
+}
+
+// Матчей не видно: почти всегда в Доте закрыты публичные данные матчей. Новые от этого уходили сразу (25.10),
+// поэтому — шаги по пунктам и кнопка проверить снова, а не абзац текста
+function hiddenMatchesCard(account) {
+  const status = h("p", { class: "small muted", role: "status" });
+  const btn = h("button", { type: "button" }, "Проверить снова");
+  btn.onclick = async () => {
+    btn.disabled = true;
+    step("empty_retry");
+    haptic("light");
+    status.textContent = "Проверяю...";
+    try {
+      await api(`/players/${account}/refresh`, { method: "POST" }).catch(() => {});
+      const matches = (await api(`/players/${account}/recentMatches`)) || [];
+      if (matches.length) { step("empty_found"); haptic("medium"); navRoot("home", homeScreen); return; }
+      status.textContent = "Пока пусто. Открытые данные видны только с новых каток: сыграй одну обычную (не с ботами) и проверь снова.";
+    } catch {
+      status.textContent = "OpenDota не отвечает. Попробуй через минуту.";
+    }
+    btn.disabled = false;
+  };
+  return h("div", { class: "card hidden-matches" },
+    h("div", { class: "display" }, "Матчи скрыты в настройках Доты"),
+    h("p", { class: "small" }, "Аккаунт нашёлся, но Дота не отдаёт твои игры. Это одна галочка:"),
+    h("ol", { class: "steps" },
+      h("li", {}, "Открой Доту и нажми шестерёнку (настройки) в левом верхнем углу."),
+      h("li", {}, "Перейди на вкладку «Социальное» (в старом меню: «Расширенные настройки» → «Социальное»)."),
+      h("li", {}, "Включи пункт про публичные данные матчей — Expose Public Match Data."),
+      h("li", {}, "Сыграй одну обычную катку: старые игры так и останутся скрытыми."),
+      h("li", {}, "Вернись сюда и нажми «Проверить снова». Катка появляется через 5–15 минут после конца."),
+    ),
+    btn,
+    status,
+  );
 }
 
 function accountForm() {

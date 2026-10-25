@@ -45,6 +45,7 @@ const recent = [{ match_id: match.match_id, player_slot: ME.player_slot, radiant
   kills: ME.kills, deaths: ME.deaths, assists: ME.assists, duration: match.duration, start_time: Math.floor(Date.now() / 1000) - match.duration - 7200, game_mode: match.game_mode,
   gold_per_min: ME.gold_per_min, xp_per_min: ME.xp_per_min, last_hits: ME.last_hits }, ...history.slice(0, 19)];
 const itemIds = Object.fromEntries(Object.keys(constants.items).map((k) => [k, k]));
+let hideMatches = false; // шаг «hidden»: в Доте закрыты данные матчей
 function opendota(url) {
   const p = url.pathname.replace(/^\/api/, "");
   if (p === "/constants/heroes") return constants.heroes;
@@ -59,7 +60,7 @@ function opendota(url) {
   if (p === "/benchmarks") return { result: heroBench[url.searchParams.get("hero_id")] || {} };
   if (p === `/players/${ACCOUNT}`) return { profile: { personaname: "Ax3|", avatarfull: null }, rank_tier: 22 };
   if (p === `/players/${ACCOUNT}/wl`) return { win: 12, lose: 10 };
-  if (p === `/players/${ACCOUNT}/recentMatches`) return recent;
+  if (p === `/players/${ACCOUNT}/recentMatches`) return hideMatches ? [] : recent;
   if (p === `/players/${ACCOUNT}/heroes`) {
     if (url.searchParams.get("hero_id")) return match.players.filter((x) => x.isRadiant !== ME.isRadiant).map((x, i) => ({ hero_id: x.hero_id, against_games: 6 + i, against_win: 3 + (i % 3) }));
     return [{ hero_id: ME.hero_id, games: 48, win: 26 }, { hero_id: 74, games: 22, win: 9 }, { hero_id: 21, games: 15, win: 8 }, { hero_id: 65, games: 9, win: 3 }];
@@ -344,6 +345,31 @@ await step("hero", async () => {
   await page.waitForSelector(".page-head", { timeout: 10000 });
   await shot("hero");
 });
+
+// Матчи скрыты в настройках Доты: инструкция по шагам, «Проверить снова» без матчей — подсказка, с матчами — список
+if (!only || only.has("hidden")) {
+  const ctx3 = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: "dark", reducedMotion: "reduce" });
+  await ctx3.addInitScript((acc) => { try { localStorage.setItem("account_id", String(acc)); } catch { /* */ } }, ACCOUNT);
+  await ctx3.route("**/*", handleRoute);
+  const p3 = await ctx3.newPage();
+  p3.on("pageerror", (e) => errors.push(`hidden pageerror: ${e.message}`));
+  await step("hidden", async () => {
+    hideMatches = true;
+    await p3.goto(`${BASE}/index.html`);
+    await p3.waitForSelector(".hidden-matches .steps li", { timeout: 15000 });
+    await p3.locator(".hidden-matches button").click();
+    await p3.waitForFunction(() => /Пока пусто/.test(document.querySelector(".hidden-matches [role=status]").textContent), null, { timeout: 10000 });
+    await p3.waitForTimeout(300);
+    const file = join(OUT, `${String(shots.length + 1).padStart(2, "0")}-hidden.png`);
+    await p3.screenshot({ path: file, fullPage: true });
+    shots.push(file);
+    hideMatches = false;
+    await p3.locator(".hidden-matches button").click();
+    await p3.waitForSelector(".match-item", { timeout: 10000 });
+  });
+  hideMatches = false;
+  await ctx3.close();
+}
 
 // Офлайн: с живым service worker открыть приложение, потом без сети — главная должна открыться из кэша
 if (!only || only.has("offline")) {
