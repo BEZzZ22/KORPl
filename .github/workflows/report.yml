@@ -1,5 +1,6 @@
 # Отчёт по пользователям приложения владельцу в Телеграм прямо сейчас (обычно он приходит сам в 09:00 МСК).
-# day — за какой день (ГГГГ-ММ-ДД), пусто — вчера по Москве. dry — только показать в логе, не отправлять.
+# Кладёт в KV воркера заявку report_now, крон воркера (раз в 3 минуты) отправляет отчёт и снимает заявку.
+# day — за какой день (ГГГГ-ММ-ДД), пусто — вчера по Москве.
 name: Отчёт по юзерам
 
 on:
@@ -8,10 +9,6 @@ on:
       day:
         description: "День ГГГГ-ММ-ДД (пусто — вчера)"
         required: false
-      dry:
-        description: "Не отправлять, только показать"
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -20,12 +17,16 @@ jobs:
   report:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
-      - name: Отчёт
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Заявка на отчёт
         env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           DAY: ${{ inputs.day }}
-          DRY: ${{ inputs.dry && '1' || '' }}
         run: |
-          curl -sf --max-time 60 -X POST -H "Authorization: Bearer $BOT_TOKEN" \
-            "https://dotacoach.2007rggg.workers.dev/report?day=${DAY}&dry=${DRY}" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["text"]); print("отправлено:", d["sent"])'
+          npx --yes wrangler@4 kv key put report_now "${DAY:--}" --namespace-id ffcbcc863d684737becec7a78f57412f --remote
+          echo "Отчёт придёт в Телеграм в течение 3 минут"

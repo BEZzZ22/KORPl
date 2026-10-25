@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mergeAct, trackUser, buildReport } from "./coach.js";
+import { mergeAct, trackUser, buildReport, reportOnRequest } from "./coach.js";
 
 // KV в памяти: get, getWithMetadata, put с metadata, list по префиксу
 function memKV() {
@@ -51,4 +51,20 @@ test("отчёт: приток, вернувшиеся, удержание, вл
   assert.match(text, /— Игрок3: 1 откр\., 5 мин, вопросов тренеру 2, разборов 1/);
   assert.match(text, /Профилей с привязанным аккаунтом: 1/);
   assert.doesNotMatch(text, /Игрок99/);
+});
+
+test("заявка report_now отправляет отчёт один раз", async () => {
+  const kv = memKV(), sent = [];
+  kv.delete = async (k) => { kv.m.delete(k); };
+  const env = { COACH_KV: kv, BOT_TOKEN: "x", OWNER_TG_IDS: "5" };
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { sent.push(JSON.parse(init.body)); return { ok: true }; };
+  try {
+    await kv.put("report_now", "2026-10-24");
+    assert.ok(await reportOnRequest(env, at("2026-10-25")));
+    assert.equal(await reportOnRequest(env, at("2026-10-25")), null);
+  } finally { globalThis.fetch = real; }
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].chat_id, "5");
+  assert.match(sent[0].text, /Отчёт за 24\.10/);
 });
