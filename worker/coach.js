@@ -1042,8 +1042,16 @@ export async function sendReport(env, now = Date.now(), day) {
   const text = await buildReport(env, now, day);
   const ids = String(env.REPORT_CHAT || env.OWNER_TG_IDS || "").split(",").map((x) => x.trim()).filter(Boolean);
   let sent = 0;
-  for (const chat_id of ids) if (await sendTelegram(env, "sendMessage", { chat_id, text }).catch(() => false)) sent++;
-  return { text, sent };
+  const errors = [];
+  for (const chat_id of ids) {
+    // ответ Телеграма нужен для разбора: «chat not found» — владелец не нажимал /start у бота
+    const res = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendMessage`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id, text }), signal: AbortSignal.timeout(10000),
+    }).catch((e) => ({ ok: false, text: async () => String(e) }));
+    if (res.ok) sent++;
+    else errors.push(`${chat_id}: ${clip(await res.text(), 200)}`);
+  }
+  return { text, sent, errors };
 }
 
 // Внеочередной отчёт: workflow «Отчёт по юзерам» кладёт в KV report_now (день или "-" за вчера), крон раз в 3 минуты отправляет
@@ -1052,7 +1060,12 @@ export async function reportOnRequest(env, now = Date.now()) {
   const want = await env.COACH_KV.get("report_now");
   if (!want) return null;
   await env.COACH_KV.delete("report_now");
-  return sendReport(env, now, /^\d{4}-\d{2}-\d{2}$/.test(want) ? want : undefined);
+  // итог — в report_last: его печатает workflow «Отчёт по юзерам»
+  let out;
+  try { out = await sendReport(env, now, /^\d{4}-\d{2}-\d{2}$/.test(want) ? want : undefined); }
+  catch (e) { out = { sent: 0, errors: [clip(e && e.stack || e, 300)] }; }
+  await env.COACH_KV.put("report_last", JSON.stringify({ t: new Date(now).toISOString(), ...out }), { expirationTtl: 30 * 86400 });
+  return out;
 }
 
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47];

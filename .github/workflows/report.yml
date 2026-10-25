@@ -16,7 +16,7 @@ permissions:
 jobs:
   report:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -29,4 +29,11 @@ jobs:
           DAY: ${{ inputs.day }}
         run: |
           npx --yes wrangler@4 kv key put report_now "${DAY:--}" --namespace-id ffcbcc863d684737becec7a78f57412f --remote
-          echo "Отчёт придёт в Телеграм в течение 3 минут"
+          # крон воркера раз в 3 минуты: ждём, пока заявку снимут, и печатаем итог
+          for i in $(seq 1 30); do
+            sleep 15
+            left=$(npx --yes wrangler@4 kv key get report_now --namespace-id ffcbcc863d684737becec7a78f57412f --remote 2>/dev/null || true)
+            if [ -z "$left" ] || echo "$left" | grep -qi "not found"; then break; fi
+          done
+          echo "Итог:"
+          npx --yes wrangler@4 kv key get report_last --namespace-id ffcbcc863d684737becec7a78f57412f --remote
