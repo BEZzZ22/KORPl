@@ -1,6 +1,6 @@
 // Офлайн-кэш приложения. Свои файлы — сначала сеть (обновления приходят сразу), без сети — из кэша.
 // Разобранный матч OpenDota уже не меняется: отдаём из кэша мгновенно. Справочники — из кэша с фоновым обновлением.
-const APP = "app-v2";
+const APP = "app-v3";
 const DATA = "opendota-v2";
 const MATCHES_KEEP = 40;
 
@@ -34,6 +34,15 @@ async function staleWhileRevalidate(req, cacheName) {
   return fresh;
 }
 
+async function cacheFirstOk(req, cacheName) {
+  const cache = await caches.open(cacheName);
+  const hit = await cache.match(req);
+  if (hit) return hit;
+  const res = await fetch(req);
+  if (res.ok) await cache.put(req, res.clone());
+  return res;
+}
+
 // Матч кладём в кэш, только если реплей разобран: неразобранный ещё изменится
 async function parsedMatch(req) {
   const cache = await caches.open(DATA);
@@ -55,11 +64,14 @@ self.addEventListener("fetch", (e) => {
   const req = e.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
-  // картинки с версией в адресе не меняются: из кэша сразу, обновление в фоне (раскадровка Аегиса ~0,7 МБ)
-  if (url.origin === self.location.origin && url.pathname.includes("/img/") && url.search) { e.respondWith(staleWhileRevalidate(req, APP)); return; }
+  // файлы с версией в адресе (app.js?v=…, справочники, картинки) не меняются: из кэша сразу, обновление в фоне.
+  // Новая версия — новый адрес, поэтому второй запуск не ждёт сеть за мегабайт скриптов и JSON
+  if (url.origin === self.location.origin && /[?&]v=/.test(url.search)) { e.respondWith(staleWhileRevalidate(req, APP)); return; }
   if (url.origin === self.location.origin) { e.respondWith(networkFirst(req, APP)); return; }
   // зеркало справочников на GitHub (когда OpenDota лежит): тоже из кэша с фоновым обновлением
   if (url.hostname === "raw.githubusercontent.com" && url.pathname.startsWith("/odota/dotaconstants/")) { e.respondWith(staleWhileRevalidate(req, DATA)); return; }
+  // файл позиций реплея после разбора не меняется: второй раз открывается без сети. 404 не кэшируем — реплей ещё могут разобрать
+  if (url.hostname === "raw.githubusercontent.com" && url.pathname.startsWith("/BEZzZ22/KORPl/replays/")) { e.respondWith(cacheFirstOk(req, DATA)); return; }
   if (url.hostname !== "api.opendota.com") return;
   if (/^\/api\/matches\/\d+$/.test(url.pathname)) e.respondWith(parsedMatch(req));
   else if (url.pathname.startsWith("/api/constants/") || url.pathname === "/api/benchmarks" || /^\/api\/heroes\/\d+\//.test(url.pathname)) e.respondWith(staleWhileRevalidate(req, DATA));

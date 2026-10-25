@@ -1,14 +1,13 @@
-# Разметка карты по свежим реплеям (кемпы, где ходят герои, объекты): разовый прогон при правке tools/mapdata.py.
-# Берёт 4 недавних про-матча OpenDota, разбирает odota/parser и кладёт итог в tools/mapdata.out.json той же ветки.
+# Разметка карты по свежим про-реплеям: где добивают нейтралов (кемпы) и где ходят герои.
+# Запуск руками после патча с новой картой: Actions -> «Разметка карты». Итог — артефакт mapdata.out.json,
+# из него `python tools/camps.py mapdata.out.json` даёт CAMPS для docs/dotamap.js.
 name: Разметка карты
 
 on:
   workflow_dispatch:
-  push:
-    paths: ["tools/mapdata.mjs", ".github/workflows/mapdata.yml"]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   mapdata:
@@ -58,11 +57,7 @@ jobs:
           json.dump(out, open("tools/mapdata.out.json", "w"), ensure_ascii=False, separators=(",", ":"))
           PY
           ls -la tools/mapdata.out.json
-      - name: Сохранить
-        run: |
-          git config user.name "replay-bot"
-          git config user.email "replay-bot@users.noreply.github.com"
-          git add tools/mapdata.out.json
-          git diff --cached --quiet && exit 0
-          git commit -q -m "Разметка карты по реплеям"
-          git push -q origin HEAD:${GITHUB_REF_NAME}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mapdata
+          path: tools/mapdata.out.json

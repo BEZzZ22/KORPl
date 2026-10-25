@@ -4,7 +4,7 @@ import {
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
 } from "./engine.js?v=37";
 import { aegisBadge, openShowcase } from "./aegis.js?v=3";
-import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=2";
+import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=3";
 import { matchVerdicts } from "./blame.js?v=3";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
@@ -1132,12 +1132,18 @@ function matchListItem(m, account) {
   );
 }
 
+// Сколько разбор ждёт необязательные данные после того, как пришёл сам матч
+const OPTIONAL_WAIT = 2500;
+const upTo = (promise, ms, fallback) => Promise.race([promise.catch(() => fallback), new Promise((done) => setTimeout(() => done(fallback), ms))]);
+
 // Пример разбора до привязки аккаунта: настоящая катка с разобранным реплеем, смотрим за Tusk
 const DEMO_MATCH = 9052987576, DEMO_ACCOUNT = 163061132;
 
 async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false) {
   if (attempt === 0) loading("Призываю матч…");
   const seq = navSeq;
+  // файл позиций качается вместе с матчем, а не после него
+  const replayP = fetchReplay(matchId);
   let match;
   try {
     match = await api(`/matches/${matchId}`);
@@ -1180,7 +1186,11 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false) 
   }
   if (!player) { step("not_yours"); notYourMatch(); return; }
 
-  const [pro, bench, matchups, replay] = await Promise.all([proItems(player.hero_id), heroBench(player.hero_id), heroMatchups(player.hero_id), fetchReplay(matchId)]);
+  // Сравнение с про, нормы героя, матчапы и позиции — дополнения: медленная OpenDota или GitHub не держат разбор.
+  // Опоздавший файл позиций всё равно попадёт на «Карту» (берётся из replayCache)
+  const [pro, bench, matchups, replay] = await Promise.all([
+    upTo(proItems(player.hero_id), OPTIONAL_WAIT, {}), upTo(heroBench(player.hero_id), OPTIONAL_WAIT, {}),
+    upTo(heroMatchups(player.hero_id), OPTIONAL_WAIT, []), upTo(replayP, OPTIONAL_WAIT, null)]);
   if (stale(seq)) return;
   let a;
   try {
@@ -1275,7 +1285,7 @@ function analysisScreen(a) {
   };
   let sx = 0, sy = 0, tracking = false;
   content.addEventListener("touchstart", (e) => {
-    tracking = e.touches.length === 1 && !e.target.closest(".chart, .frame, input, textarea, .chat-chips, .chat-list, .chat-row")&& !scrollsX(e.target);
+    tracking = e.touches.length === 1 && !e.target.closest(".chart, .frame, .live-map, input, textarea, .chat-chips, .chat-list, .chat-row")&& !scrollsX(e.target);
     sx = e.touches[0].clientX; sy = e.touches[0].clientY;
   }, { passive: true });
   content.addEventListener("touchend", (e) => {
@@ -2552,18 +2562,25 @@ const REPLAY_RAW = "https://raw.githubusercontent.com/BEZzZ22/KORPl/replays/r";
 const replayCache = new Map();
 
 // Файл позиций, если реплей уже разобран; нет файла или сети — null, разбор идёт без него
+const replayInflight = new Map();
 async function fetchReplay(matchId) {
   if (replayCache.has(matchId)) return replayCache.get(matchId);
-  let data = null;
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 8000);
-    const res = await fetch(`${REPLAY_RAW}/${matchId}.json`, { signal: ctrl.signal });
-    clearTimeout(timer);
-    data = res.ok ? await res.json() : null;
-  } catch { data = null; }
-  if (data) replayCache.set(matchId, data);
-  return data;
+  if (replayInflight.has(matchId)) return replayInflight.get(matchId);
+  const job = (async () => {
+    let data = null;
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15000);
+      const res = await fetch(`${REPLAY_RAW}/${matchId}.json`, { signal: ctrl.signal });
+      data = res.ok ? await res.json() : null;
+      clearTimeout(timer);
+    } catch { data = null; }
+    if (data) replayCache.set(matchId, data);
+    replayInflight.delete(matchId);
+    return data;
+  })();
+  replayInflight.set(matchId, job);
+  return job;
 }
 
 // Кнопка заказа разбора реплея по позициям
@@ -2660,6 +2677,8 @@ function mapTab(a) {
   const deep = m.wards.filter((w) => w.enemy_half).length;
   const sentries = m.sentries || [];
   let live = null;
+  // файл позиций мог прийти уже после разбора: героев на карте всё равно покажем
+  if (raw && !raw.replay && replayCache.has(a.facts.match_id)) raw.replay = replayCache.get(a.facts.match_id);
   if (raw) {
     try {
       const model = replayModel(raw.match, raw.replay, raw.match.players.find((p) => p.account_id === a.hist_self.account) || null, {
@@ -2674,7 +2693,7 @@ function mapTab(a) {
     h("h2", {}, "Повтор матча"),
     live && h("div", { class: "card map-card live-card" },
       live,
-      !a.replay && replayCta(a, "Сейчас видно варды, здания и смерти в драках. Разбери реплей — на карте поедут все 10 героев, а тренер увидит, кто где стоял.")),
+      !a.replay && !raw.replay && replayCta(a, "Сейчас видно варды, здания и смерти в драках. Разбери реплей — на карте поедут все 10 героев, а тренер увидит, кто где стоял.")),
     !live && !a.replay && replayCta(a),
     (m.wards.length > 0 || sentries.length > 0) && h("div", { class: "card ward-sum" },
       h("div", { class: "ws-row" },
@@ -3353,21 +3372,22 @@ async function boot() {
   // проверка подписки идёт вместе с загрузкой справочников, экран ждёт только её итога
   const gate = passGate();
   try {
-    const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
+    // всё одной волной: раньше нормы и сборки грузились по очереди после справочников
+    const optional = (url, fallback) => fetch(url).then((r) => (r.ok ? r.json() : fallback)).catch(() => fallback);
+    const [heroes, items, abilities, ids, kb, tx, rn, kh, bl] = await Promise.all([
       constants("heroes"), constants("items"), constants("abilities", 40000),
       constants("item_ids"),
       fetch("knowledge.json?v=12").then((r) => r.json()), fetch("texts.json?v=19").then((r) => r.json()),
+      // нормы по рангам и сборки необязательны: без них разбор работает по общим порогам
+      optional("rank_norms.json?v=4", {}), optional("khan_builds.json?v=1", null), optional("builds.json?v=1", null),
     ]);
     dictionary = createDictionary({ heroes, items, abilities });
     itemIds = ids;
     knowledge = kb;
     texts = tx;
-    // Нормы по рангам необязательны: без них разбор работает по общим порогам
-    norms = await fetch("rank_norms.json?v=4").then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
-    [guides, builds] = await Promise.all([
-      fetch("khan_builds.json?v=1").then((r) => (r.ok ? r.json() : null)).catch(() => null),
-      fetch("builds.json?v=1").then((r) => (r.ok ? r.json() : null)).catch(() => null),
-    ]);
+    norms = rn;
+    guides = kh;
+    builds = bl;
   } catch {
     errorScreen("Не удалось загрузить данные OpenDota.", boot);
     return;

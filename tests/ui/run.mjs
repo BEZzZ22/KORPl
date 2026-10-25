@@ -323,6 +323,23 @@ for (const [i, name] of ["blame", "phases", "deaths", "map", "build", "charts"].
       await page.waitForTimeout(600);
       await page.locator(".lm-play").click();
       if ((await page.locator(".lm-clock").innerText()) === before) throw new Error("плей не двигает время");
+      // перемотка пальцем: тап в любое место шкалы и протяжка, не только по ручке
+      const box = await page.locator(".lm-scrub").boundingBox();
+      await page.mouse.move(box.x + box.width * 0.2, box.y + box.height / 2);
+      await page.mouse.down();
+      const atTap = await page.locator(".lm-clock").innerText();
+      await page.mouse.move(box.x + box.width * 0.6, box.y + box.height / 2, { steps: 5 });
+      await page.mouse.up();
+      const atDrag = await page.locator(".lm-clock").innerText();
+      const sec = (c) => c.split(":").reduce((m, x) => m * 60 + Number(x), 0);
+      if (!(sec(atDrag) > sec(atTap) + 300)) throw new Error(`протяжка по шкале: ${atTap} → ${atDrag}`);
+      if (!(await page.locator(".tab.active").first().innerText()).includes("Карт")) throw new Error("протяжка по шкале увела на другую вкладку");
+      // слежение за героем: карта приближается
+      await page.evaluate(() => document.querySelector(".live-map").seek(1000));
+      await page.locator(".lm-follow").click();
+      if ((await page.locator(".minimap.live").getAttribute("viewBox")) === "0 0 128 128") throw new Error("«Следить» не приближает карту");
+      await page.locator(".live-card").screenshot({ path: join(OUT, "map-follow.png") });
+      await page.locator(".lm-follow").click();
       // UI_PERF=1: кадры повтора на слабом телефоне (процессор замедлен в 4 раза)
       if (process.env.UI_PERF) {
         const cdp = await context.newCDPSession(page);

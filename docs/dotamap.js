@@ -1,4 +1,4 @@
-// Карта Доты: рисованная подложка (лес, река, линии, базы) и живой повтор матча со всеми десятью героями.
+// Карта Доты: подложка, кемпы и живой повтор матча со всеми десятью героями.
 // Координаты: клетки OpenDota 64..192 -> SVG 0..128, север сверху. Мир Доты: клетка = 128 + world / 128.
 
 const NS = "http://www.w3.org/2000/svg";
@@ -20,14 +20,6 @@ function plural(n, one, few, many) {
 const mm = (t) => `${t < 0 ? "-" : ""}${Math.floor(Math.abs(t) / 60)}:${String(Math.floor(Math.abs(t) % 60)).padStart(2, "0")}`;
 
 // ---------- геометрия карты ----------
-
-// Линии и река в координатах SVG (по башням: у Света низ-лево, у Тьмы верх-право)
-const LANES = [
-  [[17, 104], [14, 92], [14, 50], [13.5, 24], [17, 16.5], [26, 16], [64, 16.5], [92, 18], [100, 24]],
-  [[24, 104], [36.6, 85.8], [51.9, 75], [68.1, 58.9], [83.5, 47.5], [97.4, 34.6], [104, 24]],
-  [[28, 111], [62, 112.5], [102, 112], [110.5, 110.5], [113.5, 103], [113.5, 61], [113.5, 40], [111, 26]],
-];
-const RIVER = [[2, 31], [13, 35], [26, 41], [38, 48], [50, 56], [64, 64], [78, 72], [90, 80], [102, 87], [115, 93], [126, 97]];
 
 // Здания: башни, бараки, троны. Ключи как в objectives OpenDota (npc_dota_goodguys_tower1_top)
 const BUILDINGS = {
@@ -51,98 +43,31 @@ const BUILDINGS = {
   },
 };
 
-// Детерминированный шум: лес выглядит одинаково при каждом открытии
-function rng(seed) {
-  let s = seed >>> 0;
-  return () => { s = (s + 0x6d2b79f5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+// Кемпы нейтралов [x, y, тир] в координатах SVG: сняты с про-реплеев (tools/mapdata.mjs),
+// точка — где стоит герой, когда добивает крипов кемпа
+const CAMPS = [
+  [32.8, 1.2, "medium"], [78.8, 3.8, "medium"], [42.0, 5.2, "medium"], [66.0, 5.5, "large"],
+  [31.2, 26.0, "small"], [56.2, 27.2, "large"], [25.5, 31.5, "large"], [43.8, 32.0, "medium"],
+  [74.0, 36.0, "medium"], [73.0, 41.2, "large"], [32.2, 57.8, "medium"], [126.8, 58.0, "small"],
+  [26.5, 63.5, "ancient"], [96.2, 64.2, "ancient"], [91.0, 72.5, "medium"], [2.2, 75.0, "small"],
+  [51.8, 93.0, "large"], [101.5, 94.2, "large"], [77.5, 96.8, "medium"], [50.2, 100.2, "medium"],
+  [65.8, 102.8, "large"], [96.2, 104.5, "small"], [58.5, 125.0, "large"], [49.2, 126.2, "medium"],
+  [96.8, 126.2, "medium"], [85.8, 127.0, "medium"],
+];
+const CAMP_NAME = { small: "малый кемп", medium: "средний кемп", large: "большой кемп", ancient: "кемп древних" };
+
+// Значок кемпа: ромбик, чем больше кемп — тем больше рисок внутри
+export function campIcon(tier) {
+  const n = { small: 1, medium: 2, large: 3, ancient: 3 }[tier] || 1;
+  return el("g", { class: `lm-camp ${tier}` },
+    el("rect", { x: -1.4, y: -1.4, width: 2.8, height: 2.8, rx: 0.4, transform: "rotate(45)" }),
+    ...Array.from({ length: n }, (_, i) => { const x = ((i - (n - 1) / 2) * 0.75).toFixed(2); return el("line", { x1: x, y1: -0.6, x2: x, y2: 0.6 }); }));
 }
 
-function segDist(px, py, [ax, ay], [bx, by]) {
-  const dx = bx - ax, dy = by - ay;
-  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy || 1)));
-  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
-}
-const lineDist = (x, y, pts) => { let d = Infinity; for (let i = 1; i < pts.length; i++) d = Math.min(d, segDist(x, y, pts[i - 1], pts[i])); return d; };
-
-// Сглаженный путь через точки (Catmull-Rom -> кубические Безье)
-function smooth(pts) {
-  let d = `M${pts[0][0]} ${pts[0][1]}`;
-  for (let i = 0; i < pts.length - 1; i++) {
-    const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
-    const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6];
-    const c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
-    d += ` C${c1[0].toFixed(2)} ${c1[1].toFixed(2)} ${c2[0].toFixed(2)} ${c2[1].toFixed(2)} ${p2[0]} ${p2[1]}`;
-  }
-  return d;
-}
-
-const inBase = (x, y) => (x < 36 && y > 92 && x + (128 - y) < 52) || (x > 92 && y < 36 && (128 - x) + y < 52);
-// Поляны лагерей и проходы: без них лес сплошной и не похож на карту
-const CLEARINGS = [[30, 60, 5], [42, 70, 4.5], [26, 78, 4], [52, 92, 5], [76, 98, 4.5], [88, 104, 4], [44, 100, 4], [64, 82, 4],
-  [98, 68, 5], [86, 58, 4.5], [102, 50, 4], [76, 36, 5], [52, 30, 4.5], [40, 24, 4], [84, 28, 4], [64, 46, 4],
-  [34, 46, 4], [94, 82, 4], [57, 64, 3.5], [71, 64, 3.5]];
-
-// Где ходят герои: клетки 128x128 (бит на клетку), снято по позициям всех десяти в настоящем реплее.
-// Лес на подложке ставится только там, где никто не проходил, поэтому тропы совпадают с игрой
-const WALK = "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";
-let walkBits = null;
-function walkable(x, y) {
-  if (!walkBits) walkBits = Uint8Array.from(atob(WALK), (ch) => ch.charCodeAt(0));
-  const i = Math.floor(x), j = Math.floor(y);
-  if (i < 0 || j < 0 || i > 127 || j > 127) return false;
-  const n = j * 128 + i;
-  return (walkBits[n >> 3] >> (n & 7)) & 1;
-}
-
-let terrainCache = null;
-// Подложка одной картинкой: браузер растеризует её один раз, а не сотни кружков на каждом кадре
+// Подложка — настоящая тактическая карта Доты (патч 7.40, из открытого OpenDota web), притемнена под значки.
+// Картинка ~50 КБ: грузится один раз и дальше лежит в офлайн-кэше
 export function terrainUrl() {
-  if (terrainCache) return terrainCache;
-  const r = rng(22);
-  const rad = [], dire = [], tops = [];
-  for (let gy = 2; gy < 127; gy += 1.7) {
-    for (let gx = 2; gx < 127; gx += 1.7) {
-      const x = gx + (r() - 0.5) * 1.4, y = gy + (r() - 0.5) * 1.4;
-      if (inBase(x, y)) continue;
-      if (LANES.some((l) => lineDist(x, y, l) < 4)) continue;
-      if (lineDist(x, y, RIVER) < 4.4) continue;
-      if (walkable(x, y)) continue;
-      if (r() < 0.05) continue;
-      const rr = 0.9 + r() * 0.6;
-      const c = `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${rr.toFixed(2)}"/>`;
-      (x - y > 0 ? dire : rad).push(c);
-      // кроны: светлые точки поверх массива леса
-      if (r() < 0.55) tops.push(`<circle cx="${(x - 0.3).toFixed(1)}" cy="${(y - 0.3).toFixed(1)}" r="${(rr * 0.42).toFixed(2)}" fill="${x - y > 0 ? "#7a4a30" : "#3d7350"}" opacity="${(0.25 + r() * 0.35).toFixed(2)}"/>`);
-    }
-  }
-  const forest = (list, fill) => `<g filter="url(#goo)" fill="${fill}">${list.join("")}</g>`;
-  const lane = (pts) => `<path d="${smooth(pts)}" stroke="#3a3328" stroke-width="4.4" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity=".9"/>`
-    + `<path d="${smooth(pts)}" stroke="#5b513f" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity=".8"/>`;
-  const river = smooth(RIVER);
-  const svgText = `<svg xmlns="${NS}" viewBox="0 0 128 128" width="1024" height="1024">
-<defs>
-<linearGradient id="g" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#1c2b22"/><stop offset=".5" stop-color="#22221f"/><stop offset="1" stop-color="#2e1d1b"/></linearGradient>
-<radialGradient id="v" cx=".5" cy=".5" r=".72"><stop offset=".62" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".6"/></radialGradient>
-<filter id="b" x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="1.4"/></filter>
-<filter id="goo" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation=".7" result="bl"/><feColorMatrix in="bl" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 16 -7" result="m"/><feOffset in="m" dx=".45" dy=".7" result="o"/><feFlood flood-color="#000" flood-opacity=".55"/><feComposite in2="o" operator="in" result="sh"/><feMerge><feMergeNode in="sh"/><feMergeNode in="m"/></feMerge></filter>
-<filter id="n"><feTurbulence type="fractalNoise" baseFrequency="1.3" numOctaves="2" seed="4"/><feColorMatrix values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .06 0"/></filter>
-</defs>
-<rect width="128" height="128" fill="url(#g)"/>
-<rect width="128" height="128" filter="url(#n)"/>
-${LANES.map(lane).join("")}
-<path d="${river}" stroke="#0b3442" stroke-width="9.5" fill="none" stroke-linecap="round" filter="url(#b)" opacity=".9"/>
-<path d="${river}" stroke="#17566a" stroke-width="5.6" fill="none" stroke-linecap="round"/>
-<path d="${river}" stroke="#3c9db2" stroke-width="1.2" fill="none" stroke-linecap="round" opacity=".5"/>
-${forest(rad, "#13301f")}
-${forest(dire, "#2e1913")}
-${tops.join("")}
-<path d="M3 125 L3 96 Q12 94 22 98 L34 110 Q36 118 32 125 Z" fill="#1d3a2a" stroke="#4fae74" stroke-width=".45" opacity=".95"/>
-<path d="M125 3 L125 32 Q116 34 106 30 L94 18 Q92 10 96 3 Z" fill="#3a1c1c" stroke="#d0604f" stroke-width=".45" opacity=".95"/>
-<circle cx="9" cy="119" r="4.6" fill="#4fae74" opacity=".25"/><circle cx="119" cy="9" r="4.6" fill="#d0604f" opacity=".25"/>
-<rect width="128" height="128" fill="url(#v)"/>
-</svg>`;
-  terrainCache = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgText)}`;
-  return terrainCache;
+  return "img/map.webp?v=1";
 }
 
 // Карта-основа для статичных слоёв (тепловая карта, пути перед смертями)
@@ -268,6 +193,31 @@ function buildingLabel(b) {
   return `T${tier ? tier[1] : ""} ${who}${lane ? `, ${LANE_NAME[lane[1]]}` : ""}`;
 }
 
+// Подпись к значкам карты: что чем обозначено
+function legend() {
+  const row = document.createElement("div");
+  row.className = "lm-legend";
+  const item = (svgKids, text) => {
+    const span = document.createElement("span");
+    span.append(el("svg", { viewBox: "-5 -5 10 10", "aria-hidden": "true" }, svgKids), text);
+    return span;
+  };
+  row.append(...[
+    item(el("circle", { r: 3.6, class: "lg-me" }), "ты"),
+    item(el("circle", { r: 3.6, class: "lg-ally" }), "свои"),
+    item(el("circle", { r: 3.6, class: "lg-foe" }), "враги"),
+    item(el("path", { d: "M-4 3 L0 -1 L4 1", class: "lg-path" }), "путь за минуту"),
+    item([el("circle", { r: 4, class: "lg-vis" }), el("circle", { r: 1.6, class: "lg-obs" })], "обс и обзор"),
+    item(el("rect", { x: -1.8, y: -1.8, width: 3.6, height: 3.6, class: "lg-sen" }), "сентри"),
+    item(el("path", { d: "M-2.5 -2.5 L2.5 2.5 M-2.5 2.5 L2.5 -2.5", class: "lg-death" }), "смерть"),
+    item(el("rect", { x: -2.2, y: -2.2, width: 4.4, height: 4.4, transform: "rotate(45)", class: "lg-tower" }), "башня"),
+    CAMPS.length > 0 && item(campIcon("large"), "кемп"),
+  ].filter(Boolean));
+  const camp = row.querySelector(".lm-camp");
+  if (camp) camp.setAttribute("transform", "scale(2.2)");
+  return row;
+}
+
 // iconUrl(hero_id) -> маленькая иконка героя; onSelect(i) — тап по герою
 export function liveMap(model, { iconUrl, haptic = () => {} }) {
   const myRadiant = model.meIdx >= 0 ? model.players[model.meIdx].radiant : true;
@@ -275,6 +225,7 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
   const T = model.duration;
   let t = 0;
   let playing = false, speed = SPEEDS[1], raf = 0, last = 0, selected = model.meIdx;
+  let follow = false, cam = null;
 
   const defs = el("defs", {},
     el("clipPath", { id: "lm-clip", clipPathUnits: "objectBoundingBox" }, el("circle", { cx: 0.5, cy: 0.5, r: 0.5 })));
@@ -290,6 +241,14 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
     bLayer.append(node);
     return node;
   });
+
+  // кемпы: где стоят нейтралы
+  const cLayer = el("g", { class: "lm-camps" }, CAMPS.map(([x, y, tier]) => {
+    const g = campIcon(tier);
+    g.setAttribute("transform", `translate(${x} ${y})`);
+    g.append(el("title", {}, CAMP_NAME[tier]));
+    return g;
+  }));
 
   // варды
   const wLayer = el("g", { class: "lm-wards" });
@@ -315,17 +274,21 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
     return node;
   });
 
-  // след выбранного героя за последние 20 секунд
-  const trail = el("polyline", { class: "lm-trail", points: "" });
+  // путь выбранного героя за последнюю минуту: чем свежее, тем ярче, стрелка в конце — куда идёт
+  const TRAIL = 60, TRAIL_PARTS = 6;
+  const trail = el("g", { class: "lm-trail" });
+  const trailParts = Array.from({ length: TRAIL_PARTS }, (_, n) => el("path", { d: "", opacity: (0.18 + (0.82 * (n + 1)) / TRAIL_PARTS).toFixed(2) }));
+  const trailDots = el("g", { class: "lm-trail-dots" });
+  trail.append(...trailParts, trailDots);
 
   // герои
   const hLayer = el("g", { class: "lm-heroes" });
   const hNodes = model.players.map((p, i) => {
     const node = el("g", { class: `lm-h ${p.radiant === myRadiant ? "ally" : "foe"}${p.me ? " mine" : ""}`, display: "none", "data-i": i },
-      el("circle", { r: 4.1, class: "ring" }),
+      el("circle", { r: 3.4, class: "ring" }),
       // буквы видны, пока иконка не загрузилась или если CDN Steam недоступен
-      el("text", { class: "ini", y: 1.3, "text-anchor": "middle" }, p.name.slice(0, 2)),
-      el("image", { href: iconUrl(p.hero_id), x: -3.3, y: -3.3, width: 6.6, height: 6.6, "clip-path": "url(#lm-clip)", preserveAspectRatio: "xMidYMid slice" }),
+      el("text", { class: "ini", y: 1.1, "text-anchor": "middle" }, p.name.slice(0, 2)),
+      el("image", { href: iconUrl(p.hero_id), x: -2.7, y: -2.7, width: 5.4, height: 5.4, "clip-path": "url(#lm-clip)", preserveAspectRatio: "xMidYMid slice" }),
       el("title", {}, p.name));
     node.addEventListener("click", (e) => { e.stopPropagation(); selected = selected === i ? -1 : i; haptic("light"); draw(true); });
     hLayer.append(node);
@@ -334,7 +297,7 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
 
   const map = el("svg", { class: "minimap live", viewBox: "0 0 128 128", role: "img", "aria-label": "Повтор матча на карте" },
     defs, el("image", { href: terrainUrl(), x: 0, y: 0, width: 128, height: 128, preserveAspectRatio: "none" }),
-    bLayer, wLayer, dLayer, trail, hLayer);
+    cLayer, bLayer, wLayer, dLayer, trail, hLayer);
 
   // ---------- шкала: перевес по золоту, убийства, здания ----------
   const W = 300, H = 40, MID = H / 2;
@@ -357,12 +320,40 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
     ...model.objectives.filter((o) => o.kind === "roshan").map((o) => el("circle", { cx: tx(o.t), cy: MID, r: 2.2, class: `rosh ${o.radiant === myRadiant ? "ours" : "theirs"}` })));
   const head = el("line", { x1: 0, x2: 0, y1: 0, y2: H, class: "head" });
   track.append(head);
+  // ручка над шкалой: видно, за что тянуть
+  const knob = document.createElement("i");
+  knob.className = "lm-knob";
 
+  // Перемотка: палец кладётся в любое место шкалы и ведёт, время идёт за пальцем.
+  // Невидимый input range на телефоне ловил только саму ручку, а iOS не прыгал по тапу
   const range = document.createElement("input");
   Object.assign(range, { type: "range", min: String(t0), max: String(T), step: "1", value: String(t) });
   range.className = "lm-range";
   range.setAttribute("aria-label", "Время матча");
   range.addEventListener("input", () => { pause(); t = Number(range.value); draw(); });
+  let dragging = false;
+  const timeAtX = (clientX) => {
+    const r = scrubBox.getBoundingClientRect();
+    return t0 + Math.max(0, Math.min(1, (clientX - r.left) / Math.max(1, r.width))) * (T - t0);
+  };
+  const scrubBox = document.createElement("div");
+  scrubBox.className = "lm-scrub";
+  scrubBox.addEventListener("pointerdown", (e) => {
+    if (e.button > 0) return;
+    e.preventDefault();
+    dragging = true;
+    scrubBox.classList.add("drag");
+    try { scrubBox.setPointerCapture(e.pointerId); } catch { /* не критично */ }
+    pause();
+    haptic("light");
+    t = timeAtX(e.clientX);
+    draw();
+  });
+  scrubBox.addEventListener("pointermove", (e) => { if (!dragging) return; t = timeAtX(e.clientX); draw(); });
+  const stopDrag = () => { if (!dragging) return; dragging = false; scrubBox.classList.remove("drag"); };
+  scrubBox.addEventListener("pointerup", stopDrag);
+  scrubBox.addEventListener("pointercancel", stopDrag);
+  scrubBox.addEventListener("lostpointercapture", stopDrag);
 
   const playBtn = document.createElement("button");
   playBtn.type = "button";
@@ -370,6 +361,18 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
   const icon = (d) => { const s = el("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, el("path", { d })); playBtn.replaceChildren(s); };
   const setIcon = () => { icon(playing ? "M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" : "M8 5.5v13l10.5-6.5z"); playBtn.setAttribute("aria-label", playing ? "Пауза" : "Смотреть"); };
   playBtn.addEventListener("click", () => { haptic("light"); playing ? pause() : play(); });
+  const btn = (cls, text, label, onClick) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = cls;
+    b.textContent = text;
+    if (label) b.setAttribute("aria-label", label);
+    b.addEventListener("click", () => { haptic("light"); onClick(); });
+    return b;
+  };
+  const back = btn("lm-step", "−15 с", "Назад на 15 секунд", () => seek(t - 15));
+  const fwd = btn("lm-step", "+15 с", "Вперёд на 15 секунд", () => seek(t + 15));
+  const followBtn = btn("lm-step lm-follow", "Следить", "Приблизить карту и вести выбранного героя", () => { follow = !follow; draw(true); });
   const speedBtn = document.createElement("button");
   speedBtn.type = "button";
   speedBtn.className = "lm-speed";
@@ -387,7 +390,7 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
   info.className = "lm-info";
 
   // слои: тап по чипу прячет и показывает
-  const layers = [["heroes", "Герои", model.hasPos], ["wards", "Варды", model.wards.length > 0], ["deaths", "Смерти", model.kills.some((k) => k.pos)], ["buildings", "Здания", true]];
+  const layers = [["heroes", "Герои", model.hasPos], ["camps", "Кемпы", CAMPS.length > 0], ["wards", "Варды", model.wards.length > 0], ["deaths", "Смерти", model.kills.some((k) => k.pos)], ["buildings", "Здания", true]];
   const chips = document.createElement("div");
   chips.className = "lm-layers";
   for (const [k, label, on] of layers) {
@@ -419,20 +422,25 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
       if (state.b[i] !== dead || force) { state.b[i] = dead; bNodes[i].classList.toggle("dead", dead); }
     });
     if (model.hasPos) {
+      // слежение: карта приближается вдвое и держит выбранного героя в центре
+      const focus = follow && selected >= 0 ? model.posAt(selected, t) : null;
+      const k = focus ? 0.62 : 1;
+      if (focus) {
+        const cx = Math.max(32, Math.min(96, mapX(focus[0]))), cy = Math.max(32, Math.min(96, mapY(focus[1])));
+        cam = playing && cam ? [cam[0] + (cx - cam[0]) * 0.25, cam[1] + (cy - cam[1]) * 0.25] : [cx, cy];
+        map.setAttribute("viewBox", `${(cam[0] - 32).toFixed(2)} ${(cam[1] - 32).toFixed(2)} 64 64`);
+      } else if (cam) { cam = null; map.setAttribute("viewBox", "0 0 128 128"); }
+      map.classList.toggle("zoomed", Boolean(focus));
       model.players.forEach((p, i) => {
         const at = model.posAt(i, t);
         const node = hNodes[i];
         show(state.h, i, node, Boolean(at));
-        if (at) node.setAttribute("transform", `translate(${mapX(at[0]).toFixed(2)} ${mapY(at[1]).toFixed(2)})`);
+        if (at) node.setAttribute("transform", `translate(${mapX(at[0]).toFixed(2)} ${mapY(at[1]).toFixed(2)})${k !== 1 ? ` scale(${k})` : ""}`);
         node.classList.toggle("sel", i === selected);
       });
       // выбранный герой рисуется поверх остальных
       if (selected >= 0 && hNodes[selected].nextSibling) hLayer.append(hNodes[selected]);
-      if (selected >= 0) {
-        const pts = [];
-        for (let s = Math.max(t0, t - 20); s <= t; s += 1) { const q = model.posAt(selected, s); if (q) pts.push(`${mapX(q[0]).toFixed(1)},${mapY(q[1]).toFixed(1)}`); }
-        trail.setAttribute("points", pts.join(" "));
-      } else trail.setAttribute("points", "");
+      drawTrail();
     }
     // счёт и перевес
     let ours = 0, theirs = 0;
@@ -454,7 +462,10 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
     const x = tx(t);
     head.setAttribute("x1", x.toFixed(1));
     head.setAttribute("x2", x.toFixed(1));
-    range.style.setProperty("--p", `${((t - t0) / Math.max(1, T - t0)) * 100}%`);
+    knob.style.left = `${((t - t0) / Math.max(1, T - t0)) * 100}%`;
+    followBtn.disabled = !model.hasPos || selected < 0;
+    followBtn.setAttribute("aria-pressed", String(follow && selected >= 0));
+    followBtn.classList.toggle("on", follow && selected >= 0);
     // лента: последние 3 события до текущей секунды
     const evs = [];
     for (const k of model.kills) { if (k.t > t) break; evs.push({ t: k.t, kill: k }); }
@@ -473,13 +484,41 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
       const d = model.kills.filter((x) => x.t <= t && x.victim === selected).length;
       const line = `${p.name}${p.me ? " (ты)" : ""} · ${k} ${plural(k, "убийство", "убийства", "убийств")}, ${d} ${plural(d, "смерть", "смерти", "смертей")} к ${mm(Math.max(t, 0))}`;
       if (info.textContent !== line) info.textContent = line;
-    } else info.textContent = model.hasPos ? "Тапни по герою — покажу его путь." : "";
+    } else info.textContent = model.hasPos ? "Тапни по герою: покажу его путь за минуту, «Следить» приблизит карту к нему." : "";
     info.classList.toggle("foe", selected >= 0 && model.players[selected].radiant !== myRadiant);
   }
 
+  // путь за минуту кусками по 10 секунд: старые бледнее; телепорт и смерть рвут линию.
+  // Точки — каждые 10 секунд, по ним видно, где стоял, а где бежал
+  function drawTrail() {
+    const ds = trailParts.map(() => "");
+    const dots = [];
+    if (selected >= 0) {
+      let prev = null;
+      for (let s = Math.ceil(Math.max(t0, t - TRAIL)); s <= t; s += 1) {
+        const q = model.posAt(selected, s);
+        if (!q) { prev = null; continue; }
+        const xy = `${mapX(q[0]).toFixed(1)} ${mapY(q[1]).toFixed(1)}`;
+        const x = mapX(q[0]), y = mapY(q[1]);
+        if (prev && Math.hypot(x - prev[0], y - prev[1]) < 8) {
+          const n = Math.min(TRAIL_PARTS - 1, Math.floor(((s - (t - TRAIL)) / TRAIL) * TRAIL_PARTS));
+          ds[n] += `M${prev[0].toFixed(1)} ${prev[1].toFixed(1)}L${xy}`;
+        }
+        if (s % 10 === 0 && s < t - 1) dots.push([x, y]);
+        prev = [x, y];
+      }
+    }
+    trailParts.forEach((node, n) => node.setAttribute("d", ds[n]));
+    trailDots.replaceChildren(...dots.map(([x, y]) => el("circle", { cx: x.toFixed(1), cy: y.toFixed(1), r: 0.6 })));
+    trail.setAttribute("class", `lm-trail${selected < 0 ? "" : model.players[selected].me ? " mine" : model.players[selected].radiant === myRadiant ? " ally" : " foe"}`);
+  }
+
   function feedRow(e) {
-    const row = document.createElement("div");
+    const row = document.createElement("button");
+    row.type = "button";
     row.className = "lm-ev";
+    // тап по событию — перемотка за 10 секунд до него: видно, как к этому пришли
+    row.addEventListener("click", () => { haptic("light"); seek(e.t - 10); });
     const time = Object.assign(document.createElement("time"), { textContent: mm(e.t) });
     if (e.kill) {
       const killer = model.players[e.kill.killer], victim = model.players[e.kill.victim];
@@ -524,7 +563,8 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
   }
   // карта ушла с экрана (другая вкладка, уход со страницы) — не крутим кадры впустую
   const io = typeof IntersectionObserver === "function" ? new IntersectionObserver((es) => { if (!es[0].isIntersecting && playing) pause(); }) : null;
-  map.addEventListener("click", () => { if (selected >= 0) { selected = -1; draw(true); } });
+  map.addEventListener("click", () => { if (selected >= 0 && !follow) { selected = -1; draw(true); } });
+  function seek(s) { pause(); t = Math.max(t0, Math.min(T, s)); draw(); }
 
   setIcon();
   setSpeed();
@@ -537,15 +577,16 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
   top.append(clock, score);
   const controls = document.createElement("div");
   controls.className = "lm-controls";
-  const scrub = document.createElement("div");
-  scrub.className = "lm-scrub";
-  scrub.append(track, range);
-  controls.append(playBtn, scrub, speedBtn);
+  scrubBox.append(track, knob, range);
+  controls.append(playBtn, scrubBox, speedBtn);
+  const steps = document.createElement("div");
+  steps.className = "lm-steps";
+  steps.append(back, fwd, followBtn);
   const frameBox = document.createElement("div");
   frameBox.className = "lm-frame";
   frameBox.append(map, top);
-  root.append(frameBox, controls, feed, chips, info);
+  root.append(frameBox, controls, steps, info, feed, legend(), chips);
   if (io) io.observe(root);
-  root.seek = (s) => { pause(); t = Math.max(t0, Math.min(T, s)); draw(); };
+  root.seek = seek;
   return root;
 }
