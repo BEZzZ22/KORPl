@@ -1,11 +1,11 @@
 # Разметка карты по свежим реплеям (кемпы, где ходят герои, объекты): разовый прогон при правке tools/mapdata.py.
-# Берёт 4 последних про-матча OpenDota, разбирает python-manta и кладёт итог в tools/mapdata.out.json той же ветки.
+# Берёт 4 недавних про-матча OpenDota, разбирает odota/parser и кладёт итог в tools/mapdata.out.json той же ветки.
 name: Разметка карты
 
 on:
   workflow_dispatch:
   push:
-    paths: ["tools/mapdata.py", ".github/workflows/mapdata.yml"]
+    paths: ["tools/mapdata.mjs", ".github/workflows/mapdata.yml"]
 
 permissions:
   contents: write
@@ -16,20 +16,21 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -q python-manta
+      - name: Парсер OpenDota
+        run: |
+          docker run -d --name parser -p 5600:5600 odota/parser
+          for i in $(seq 1 60); do curl -s -o /dev/null http://localhost:5600/healthz && break; sleep 2; done
+          curl -sf https://raw.githubusercontent.com/odota/dotaconstants/master/build/heroes.json -o heroes.json
       - name: Реплеи
         run: |
           mkdir -p md
           curl -sf --max-time 60 https://api.opendota.com/api/proMatches -o pro.json
-          ids=$(python -c 'import json;print(" ".join(str(m["match_id"]) for m in json.load(open("pro.json"))[8:40]))')
+          ids=$(python3 -c 'import json;print(" ".join(str(m["match_id"]) for m in json.load(open("pro.json"))[8:40]))')
           n=0
           for id in $ids; do
-            [ $n -ge 4 ] && break
+            [ $n -ge 6 ] && break
             curl -sf --max-time 60 "https://api.opendota.com/api/matches/$id" -o m.json || continue
-            read url patch <<< $(python -c 'import json;m=json.load(open("m.json"));print(m.get("replay_url") or "-", m.get("patch"))')
+            read url patch <<< $(python3 -c 'import json;m=json.load(open("m.json"));print(m.get("replay_url") or "-", m.get("patch"))')
             [ "$url" = "-" ] && continue
             curl -sf --max-time 300 "$url" -o replay.dem || continue
             for layer in 1 2 3; do
@@ -41,16 +42,15 @@ jobs:
               esac
             done
             echo "::group::$id (патч $patch)"
-            ls -la replay.dem; head -c 16 replay.dem | od -An -c
-            python -c 'import python_manta as pm,sys;r=pm.Parser(sys.argv[1]).parse(header=True,game_info=True);print(r.success,r.error,str(r.header)[:300])' replay.dem || true
-            if python tools/mapdata.py replay.dem > "md/$id.json"; then
-              python -c 'import json,sys;d=json.load(open(sys.argv[1]));print({k:(len(v) if isinstance(v,(list,str)) else v) for k,v in d.items()})' "md/$id.json"
+            curl -s --max-time 900 -X POST -T - -o parsed.jsonl http://localhost:5600 < replay.dem || true
+            if node tools/mapdata.mjs heroes.json < parsed.jsonl > "md/$id.json"; then
+              python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print({k:(len(v) if isinstance(v,(list,str)) else v) for k,v in d.items()})' "md/$id.json"
               n=$((n+1))
             else rm -f "md/$id.json"; fi
             echo "::endgroup::"
-            rm -f replay.dem
+            rm -f replay.dem parsed.jsonl
           done
-          python - <<'PY'
+          python3 - <<'PY'
           import glob, json
           out = {}
           for f in sorted(glob.glob("md/*.json")):
