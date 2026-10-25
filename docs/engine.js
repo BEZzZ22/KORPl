@@ -1676,7 +1676,7 @@ class MatchAnalyzer {
         () => {
           const n = t.hardBlock + (t.hardBlock ? 0 : t.silence);
           const parts = [];
-          if (n) parts.push(`БКБ заблокировал бы ${n} ${plural(n, "контроль", "контроля", "контролей")} на тебе`);
+          if (n) parts.push(`BKB заблокировал бы ${n} ${plural(n, "контроль", "контроля", "контролей")} на тебе`);
           if (t.magicBlock >= 0.25) parts.push(`${pct(t.magicBlock)}% урона по тебе идёт магией, которую он режет`);
           return parts.join(", плюс ") || "защита от магии и контроля";
         }],
@@ -1697,7 +1697,7 @@ class MatchAnalyzer {
       ["hood_of_defiance", core ? 1 : 0.6, t.magic * 4.5,
         () => `${pct(t.magic)}% урона магией, а это самый дешёвый способ его срезать`],
       ["ghost", 1, t.phys * 3.5 + t.auto * 1.5,
-        () => `${pct(t.phys)}% урона физического: Ghost Scepter даёт к нему неуязвимость на несколько секунд`],
+        () => `${pct(t.phys)}% физического урона: Ghost Scepter даёт к нему неуязвимость на несколько секунд`],
       ["heavens_halberd", core ? 1 : 0.3, t.auto * 6,
         () => `${pct(t.auto)}% урона пришло автоатаками: Halberd отключает атаку и даёт уклонение`],
       ["assault", core ? (minutes >= 28 ? 1 : 0) : 0, t.auto * 5 + t.phys * 1.5,
@@ -2152,7 +2152,7 @@ class MatchAnalyzer {
     this.issue("farm_pace", (target - pace) * free * 45, "Медленный фарм в мидгейме",
       `С 10:00 до 20:00 в спокойные минуты (${free} ${plural(free, "минута", "минуты", "минут")}) ты добивал ${tenths(pace)} крипа в минуту — для ${ROLE_GEN_PLURAL[this.pos]}${rankGen} нормальный темп от ${tenths(target)}`,
       "Фарми по кругу: волна на линии → ближайший кемп → следующая волна. Пока идёшь — смотри на миникарту и сразу решай, куда дальше",
-      `Цель на следующую катку: с 10 по 20 минуту ${tenths(target)}+ крипов в минуту`);
+      `Цель на следующую катку: с 10-й по 20-ю минуту ${tenths(target)}+ крипов в минуту`);
   }
 
   // Самая длинная дыра между обсами у саппорта (без учёта времени мёртвым)
@@ -2344,7 +2344,7 @@ class MatchAnalyzer {
     for (const d of lead) if (!this.deathNotes.has(d.time)) this.deathNotes.set(d.time, "умер, когда команда вела по золоту");
     this.issue("lead_deaths", n * 600, "Умирал при перевесе",
       `${n} ${deathsWord(n)} в моменты, когда команда вела по золоту на ${num(LEAD_DEATH_GOLD)}+ (${times})`,
-      "С перевесом тебя должны ловить, а не ты бегать: стой с командой, бери объекты и не лезь в туман один",
+      "С перевесом пусть враги ищут тебя, а не ты их: стой с командой, бери объекты и не лезь в туман один",
       "Цель на следующую катку: ни одной смерти, когда команда ведёт по золоту на 8 000+");
   }
 
@@ -2482,7 +2482,7 @@ class MatchAnalyzer {
     const d = (this.p.deaths_log || []).find((x) => x.time > buy.time && x.time <= buy.time + BKB_SOLO_WINDOW && this.isSoloDeath(x.time));
     if (!d) return;
     this.micro(SURVIVAL, WARN, "micro_bkb_solo", { buy: mmss(buy.time), death: mmss(d.time) });
-    if (!this.deathNotes.has(d.time)) this.deathNotes.set(d.time, "через пару минут после БКБ, в одиночку");
+    if (!this.deathNotes.has(d.time)) this.deathNotes.set(d.time, "через пару минут после BKB, в одиночку");
   }
 
   // ---------- сравнение с другими игроками на герое ----------
@@ -3545,7 +3545,7 @@ function reviewPurchases({ od, base, core, early, counters, finished, turbo }) {
     if (lv && lv.level > 1 && pool.has(lv.base) && !pool.has(it.key)) {
       const extraGold = od.itemCost(it.key) - od.itemCost(lv.base);
       extra.push({ key: it.key, item: it.item, time: it.time, share: null, instead: null, leveled: true,
-        note: `прокачал до ${lv.level} уровня${extraGold > 0 ? ` (${num(extraGold)} золота сверху)` : ""}: про на этой позиции дальше первого уровня почти не качают` });
+        note: `прокачал до ${lv.level}-го уровня${extraGold > 0 ? ` (${num(extraGold)} золота сверху)` : ""}: про на этой позиции дальше первого уровня почти не качают` });
       continue;
     }
     if (lv) continue;
@@ -3638,14 +3638,14 @@ export function skillPlan(builds, heroId, pos, upgrades = null) {
     const proTop = basic[0];
     const over = [...basic].filter((a) => a !== proTop).sort((a, b) => (b.you - b.pro) - (a.you - a.pro))[0];
     if (proTop && over && proTop.you <= proTop.pro - 1.5 && over.you - over.pro >= 1.5) {
-      notes.push(`Про первым максят ${proTop.name}: к 10 уровню в среднем ${tenths(proTop.pro)}, у тебя ${proTop.you}, зато в ${over.name} ${over.you} (у про ${tenths(over.pro)})`);
+      notes.push(`Про первым максят ${proTop.name}: к 10-му уровню в среднем ${tenths(proTop.pro)}, у тебя ${proTop.you}, зато в ${over.name} ${over.you} (у про ${tenths(over.pro)})`);
     }
-    if (sp.first && sp.first_share >= 90 && ups[0] !== sp.first) notes.push(`На 1 уровне про почти всегда (${sp.first_share}%) берут ${name(sp.first)}, ты взял ${name(ups[0])}`);
+    if (sp.first && sp.first_share >= 90 && ups[0] !== sp.first) notes.push(`На 1-м уровне про почти всегда (${sp.first_share}%) берут ${name(sp.first)}, ты взял ${name(ups[0])}`);
     const ult = abilities.find((a) => a.ult);
-    if (ult && ult.pro >= 0.9 && ult.you === 0) notes.push(`К 10 уровню ${ult.name} так и не взята, а про берут её на 6`);
+    if (ult && ult.pro >= 0.9 && ult.you === 0) notes.push(`К 10-му уровню ${ult.name} так и не взята, а про берут её на 6`);
     for (const t of talents) {
       const mine = t.options.find((o) => o.picked), best = [...t.options].sort((a, b) => b.rate - a.rate)[0];
-      if (mine && best && mine.id !== best.id && best.rate >= 70) notes.push(`На ${t.level} уровне про в ${best.rate}% берут «${best.name}», ты взял «${mine.name}»`);
+      if (mine && best && mine.id !== best.id && best.rate >= 70) notes.push(`На ${t.level}-м уровне про в ${best.rate}% берут «${best.name}», ты взял «${mine.name}»`);
     }
   }
   const firstPick = ups && ups.length ? ups[0] : null;

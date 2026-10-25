@@ -1087,3 +1087,19 @@ body { background: transparent; }
 .demo-banner span { display: block; font-size: 12.5px; color: var(--muted); line-height: 1.35; }
 .demo-banner button { flex: none; min-height: 0; height: 36px; padding: 0 14px; font-size: 13px; }
 .lm-empty { margin: 0; padding: 6px 2px; font-size: 12.5px; color: var(--faint); }
+
+/* ---------- вход с подпиской ---------- */
+.gate { display: flex; flex-direction: column; gap: 14px; }
+.gate-card { display: flex; flex-direction: column; gap: 4px; padding: 8px; }
+.gate-row { display: flex; align-items: center; gap: 12px; padding: 10px; border-radius: var(--r-md); }
+.gate-row + .gate-row { border-top: 1px solid var(--line); border-radius: 0 0 var(--r-md) var(--r-md); }
+.gate-row b { display: block; font-size: 15px; }
+.gate-row span { display: block; font-size: 12.5px; color: var(--muted); line-height: 1.35; }
+.gate-ic { flex: none; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: linear-gradient(160deg, #f6dda4, #c9984a 60%, #8d6428); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .7), 0 8px 16px -6px rgba(232, 194, 122, .55); }
+.gate-ic svg { width: 21px; height: 21px; fill: none; stroke: #3a2608; stroke-width: 2.1; stroke-linecap: round; stroke-linejoin: round; }
+.gate-btn { flex: none; min-height: 0; height: 38px; padding: 0 16px; font-size: 13.5px; }
+.gate-row.done .gate-btn { background: rgba(79, 209, 165, 0.14); color: var(--radiant); box-shadow: none; border: 1px solid rgba(79, 209, 165, 0.4); }
+.gate-row.done .gate-ic { background: linear-gradient(160deg, #8ff0cc, #2fae84); }
+.gate-check { width: 100%; }
+.gate-status:empty { display: none; }
+body.gated .tabbar { display: none; }

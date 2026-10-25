@@ -960,9 +960,34 @@ export async function trackUser(env, user, batch, now = Date.now()) {
   return next;
 }
 
+// Канал и чат проекта (создан workflow «Чат канала», ссылки и id — docs/community.json)
+export const COMMUNITY = {
+  channel: -1003943596949, chat: -1003744417862,
+  links: { channel_url: "https://t.me/Dota_Razbor", chat_url: "https://t.me/dotarazbor_chat" },
+};
+const MEMBER = new Set(["creator", "administrator", "member"]);
+
+// { ok, channel, chat }: подписан ли на канал и состоит ли в чате. Не ответил Телеграм — считаем, что да
+export async function gateCheck(env, userId, fetcher = fetch) {
+  const one = async (chat_id) => {
+    try {
+      const res = await fetcher(`https://api.telegram.org/bot${env.BOT_TOKEN}/getChatMember`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id, user_id: userId }), signal: AbortSignal.timeout(6000),
+      });
+      const data = await res.json();
+      if (!data.ok) return null;
+      const m = data.result || {};
+      return MEMBER.has(m.status) || (m.status === "restricted" && m.is_member === true);
+    } catch { return null; }
+  };
+  const [channel, chat] = await Promise.all([one(COMMUNITY.channel), one(COMMUNITY.chat)]);
+  const unknown = channel === null || chat === null;
+  return { ok: (channel ?? true) && (chat ?? true), channel: channel ?? true, chat: chat ?? true, ...(unknown ? { unknown: true } : {}) };
+}
+
 const FEEDBACK_TTL = 60 * 86400;
 export async function saveFeedback(env, user, raw, now = Date.now()) {
-  const meta = { m: Number(raw.match_id) || 0, k: clip(raw.kind, 20), x: clip(raw.text, 200), n: clip(user.username || user.first_name, 32) };
+  const meta = { m: Number(raw.match_id) || 0, k: clip(raw.kind, 20), x: clip(raw.text, 200), n: clip([user.first_name, user.last_name].filter(Boolean).join(" "), 40), u: clip(user.username, 32) };
   await env.COACH_KV.put(`fb:${mskDay(now)}:${now}:${user.id}`, "1", { metadata: meta, expirationTtl: FEEDBACK_TTL });
   return meta;
 }
@@ -1069,7 +1094,8 @@ export async function buildReport(env, now = Date.now(), day = mskDay(now - 8640
   const fb = (await listAll(env, `fb:${day}:`)).filter((k) => k.metadata && !isOwner(env, k.name.split(":").pop()));
   if (fb.length) {
     lines.push("", `Не согласны с выводом: ${fb.length}`);
-    for (const k of fb.slice(0, 10)) lines.push(`— ${k.metadata.n ? `@${k.metadata.n} ` : ""}матч ${k.metadata.m}: «${k.metadata.x}»`);
+    for (const k of fb.slice(0, 5)) lines.push(`— ${who(k.metadata, k.name.split(":").pop())}, матч ${k.metadata.m}: «${clip(k.metadata.x, 120)}»`);
+    if (fb.length > 5) lines.push(`…и ещё ${fb.length - 5}`);
   }
   if (fresh.length) {
     lines.push("", "Новые:");
@@ -1115,8 +1141,11 @@ async function chatName(env, id) {
   } catch { return {}; }
 }
 
+const TG_TEXT_MAX = 4096;
 export async function sendReport(env, now = Date.now(), day) {
-  const text = await buildReport(env, now, day);
+  const full = await buildReport(env, now, day);
+  // Телеграм не примет сообщение длиннее 4096: режем по строке, чтобы отчёт дошёл хотя бы началом
+  const text = full.length <= TG_TEXT_MAX ? full : `${full.slice(0, TG_TEXT_MAX - 40).replace(/\n[^\n]*$/, "")}\n…отчёт обрезан`;
   const ids = String(env.REPORT_CHAT || env.OWNER_TG_IDS || "").split(",").map((x) => x.trim()).filter(Boolean);
   let sent = 0;
   const errors = [];
@@ -1230,6 +1259,18 @@ async function handlePost(request, env, ctx, origin) {
     if (limited) return reply(429, { error: limited }, origin);
     await trackUser(env, user, raw);
     return reply(200, { ok: true }, origin);
+  }
+
+  // Подписка на канал и чат: без неё приложением не пользуются (решение владельца 25.10).
+  // Бот — админ в обоих, поэтому getChatMember отвечает. Ошибка Телеграма — пускаем, чтобы сбой не закрыл всем вход
+  if (mode === "gate") {
+    if (!env.BOT_TOKEN) return reply(200, { ok: true, unknown: true }, origin);
+    const user = await telegramUser(raw.initData, env.BOT_TOKEN);
+    if (!user || !user.id) return reply(403, { error: "Открой приложение из Телеграма." }, origin);
+    if (isOwner(env, user.id)) return reply(200, { ok: true, channel: true, chat: true, ...COMMUNITY.links }, origin);
+    const limited = throttle(String(user.id), Date.now(), 120, "gate", 100000);
+    if (limited) return reply(200, { ok: true, unknown: true }, origin);
+    return reply(200, { ...(await gateCheck(env, user.id)), ...COMMUNITY.links }, origin);
   }
 
   // «Не согласен» из приложения: какой вывод и в каком матче. Видно в ежедневном отчёте
