@@ -3,23 +3,37 @@
 Режимы (переменная TT_MODE):
   inbox  (по умолчанию) — ролик падает черновиком во «Входящие» TikTok, публикуешь сам в приложении. Работает без аудита.
   direct — сразу публикация. Пока приложение не прошло аудит TikTok, видно только тебе, а аккаунт должен быть закрытым.
-Не больше одного ролика за прогон и не чаще раза в 5 часов. Что вышло — promo/tt_posted.json.
+TikTok идёт быстрее YouTube: даты из очереди не ждёт, берёт следующий не залитый ролик по порядку,
+раз в TT_GAP_HOURS часов (по умолчанию 3) и только днём по Москве (9:00–23:00). Что вышло — promo/tt_posted.json.
 Запуск: python tools/promo_tt.py [--dry | --check]"""
 import json
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import promo_tokens  # noqa: E402
-from promo_yt import due  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 QUEUE, POSTED = ROOT / "promo" / "yt_queue.json", ROOT / "promo" / "tt_posted.json"
 API = "https://open.tiktokapis.com/v2"
 SINGLE_MAX, CHUNK = 64 * 1024 * 1024, 10 * 1024 * 1024
+MSK, DAY = timezone(timedelta(hours=3)), range(9, 23)
+
+
+def due(queue, posted, now=None):
+    """Следующий ролик для TikTok: по порядку очереди, не чаще раза в TT_GAP_HOURS и только днём по Москве."""
+    now = now or datetime.now(timezone.utc)
+    force = os.environ.get("PROMO_FORCE")
+    if now.astimezone(MSK).hour not in DAY and not force:
+        return []
+    gap = timedelta(hours=float(os.environ.get("TT_GAP_HOURS") or 3))
+    last = max((datetime.fromisoformat(v["at"]) for v in posted.values() if isinstance(v, dict) and v.get("at")), default=None)
+    if last and now - last < gap - timedelta(minutes=10) and not force:   # запас на сдвиг крона
+        return []
+    return [p for p in queue if p["id"] not in posted and (ROOT / p["video"]).exists()][:1]
 
 
 def refresh(env):

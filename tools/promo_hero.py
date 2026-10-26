@@ -3,7 +3,8 @@
 на нужную строку экрана бота и подсвечивает её рамкой, перед развязкой нарастание и секунда тишины, на дропе удар со
 вспышкой и тряской, затем твист и финал с ботом. Без эмодзи и стикеров, только типографика и векторная графика.
 Ролики (VIDEOS): guessrank (угадай ранг), versus (ты против про), killers (топ тех, кто убивал), myth (миф или правда),
-phases (оценка каждой фазы), wards (найди вард на половине врага), lanexp (крипы в плюс, опыт в минус).
+phases (оценка каждой фазы), wards (найди вард на половине врага), lanexp (крипы в плюс, опыт в минус),
+zero3 (0 из 3 главных предметов), ganked (ганкали одного), manta (Manta, которой не было), fightquiz (где умирал в драках).
 Все цифры — с настоящих экранов разбора: кадры берутся из рилсов promo/reels/<id>.mp4 (tools/promo_reels.py).
 Матчи: Undying (саппорт, поражение, ранг Страж) и Drow Ranger (керри, ранг Страж).
 Запуск: python tools/promo_hero.py [имя ...]  ->  promo/shorts/<имя>.mp4"""
@@ -33,6 +34,17 @@ BEAT = 0.5                                  # 120 BPM: все времена н�
 
 
 # ---------- базовые инструменты ----------
+def shift(a, dx, dy=0, fill=None):
+    """Сдвиг кадра без заворота: уехавшее за край пропадает (np.roll выносил текст на другую сторону).
+    Освободившийся край тянется (для мелкой тряски) или заливается цветом fill (для смаз-перехода)."""
+    if not dx and not dy:
+        return a
+    h, w = a.shape[:2]
+    pad = [(abs(dy), abs(dy)), (abs(dx), abs(dx))] + [(0, 0)] * (a.ndim - 2)
+    p = np.pad(a, pad, mode="edge") if fill is None else np.pad(a, pad, constant_values=fill)
+    return p[abs(dy) - dy:abs(dy) - dy + h, abs(dx) - dx:abs(dx) - dx + w]
+
+
 def clamp01(x):
     return max(0.0, min(1.0, x))
 
@@ -426,11 +438,11 @@ class Cut:
             amp = (1 - k / (0.5 * power)) ** 2 * power
             rng = np.random.default_rng(i)
             dx, dy = (rng.uniform(-1, 1, 2) * 26 * amp).astype(int)
-            arr = np.roll(arr, (dy, dx), axis=(0, 1))
+            arr = shift(arr, dx, dy)
             s = int(16 * amp)
             if s:
-                arr[..., 0] = np.roll(arr[..., 0], s, axis=1)
-                arr[..., 2] = np.roll(arr[..., 2], -s, axis=1)
+                arr[..., 0] = shift(arr[..., 0], s)
+                arr[..., 2] = shift(arr[..., 2], -s)
             if at == self.drop and k < 0.1:
                 arr = (arr * (1 - (1 - k / 0.1) * 0.85) + 255 * (1 - k / 0.1) * 0.85).astype(np.uint8)
             arr = self.punch(arr, 1 + 0.07 * amp)
@@ -449,11 +461,11 @@ class Cut:
             dt = t - c
             if -0.12 < dt < 0.12:
                 p = dt / 0.12
-                shift = int((1 if n % 2 else -1) * (-p if dt < 0 else 1 - p) * W * 0.25)
+                off = int((1 if n % 2 else -1) * (-p if dt < 0 else 1 - p) * W * 0.25)
                 strength = 1 - abs(p)
                 acc = np.zeros(arr.shape, np.float32)
                 for j in range(8):
-                    acc += np.roll(arr, shift + int((j - 4) * 22 * strength), axis=1)
+                    acc += shift(arr, off + int((j - 4) * 22 * strength), fill=INK[0])
                 return (acc / 8).astype(np.uint8)
         return arr
 
@@ -1014,7 +1026,331 @@ class Lane(Cut):
             self.twist_cap.draw(img, 1550, k - 1.0)
 
 
-VIDEOS = {c.name: c for c in (GuessRank, Versus, Killers, Myth, Phases, Wards, Lane)}
+# ---------- общий квиз: подсветка бегает по вариантам и садится на ответ к тишине ----------
+class Quiz(Cut):
+    OPTIONS, ANSWER = [], 0
+    option_size = 64
+
+    def quiz_setup(self):
+        self.opt_off = [self.option_card(o, False) for o in self.OPTIONS]
+        self.opt_on = [self.option_card(o, True) for o in self.OPTIONS]
+        self.ticks = accel_ticks(self.build + 0.3, self.land, 0.3, 0.07)
+
+    def option_card(self, text, on):
+        layer = panel(W - 200, 150, fill=(GOLD + (60,)) if on else (255, 255, 255, 16), outline=(GOLD + (255,)) if on else (255, 255, 255, 60), width=4 if on else 2)
+        put(layer, line_layer(text, "Black", self.option_size, WHITE if on else (200, 198, 194)), (W - 200) / 2, 75)
+        return layer
+
+    def picked(self, t):
+        c = sum(1 for x in self.ticks if x <= t)
+        return (self.ANSWER - (len(self.ticks) - c)) % len(self.OPTIONS) if c else None
+
+    def options(self, img, t, y0, step=180, final=False):
+        cur = self.ANSWER if final else self.picked(t)
+        for i in range(len(self.OPTIONS)):
+            e = expo((t - self.build - i * 0.08) / 0.4) if not final else 1
+            on = i == cur
+            layer = self.opt_on[i] if on else self.opt_off[i]
+            if final and not on:
+                put(img, layer, W / 2, y0 + i * step, alpha=0.35)
+            else:
+                put(img, layer, W / 2 + (1 - e) * 200, y0 + i * step, 1.04 if on and not final else 1.0, alpha=e)
+
+
+# ---------- 8. Ноль из трёх ----------
+class Zero3(Cut):
+    name = "zero3"
+    stills = {"main": ("build2", 1.5), "order": ("build2", 6.5), "phase": ("build2", 10)}
+    glow = [(100, 20, 18), (60, 40, 14), (30, 20, 60)]
+    chords, seed = 1, 51
+    cta_text = ("Сверь свою сборку с про", "кинь Match ID боту")
+    CLUES = [(2.0, "main", "Glimmer Cape так и не собрал", (80, 200, 820, 550), (100, 285, 790, 415)),
+             (5.0, "main", "Consecrated Wraps на 25:42. Про его почти не берут", (80, 200, 820, 550), (100, 435, 720, 520)),
+             (8.0, "phase", "Phase Boots на 15:19. У про к 8:11", (40, 500, 860, 700), (50, 530, 840, 660))]
+
+    def setup(self):
+        self.big = line_layer("0 из 3", "Black", 300, RED)
+        self.big_glow = glow_layer(self.big, RED)
+        self.hook_sub = Headline("главных предметов у саппорта на Страже", "SemiBold", 58, (220, 214, 206))
+        self.hook_q = Headline("Найди, где он слил сборку", "Black", 80, GOLD)
+        self.tags = [label(f"Ошибка {i + 1} из 3", RED) for i in range(3)]
+        self.heads = [Headline(c[2], "Black", 76, WHITE) for c in self.CLUES]
+        self.q_head = Headline("Сколько главных предметов собрал?", "Black", 92, WHITE)
+        self.digits = {n: line_layer(str(n), "Black", 340, WHITE) for n in range(4)}
+        self.answer = line_layer("0 ИЗ 3", "Black", 230, RED)
+        self.answer_glow = glow_layer(self.answer, RED)
+        self.twist_head = Headline("Про собирают их к 21:41–31:07", "Black", 80, WHITE)
+        self.twist_cap = Caption("А у тебя первый предмет только на 25:42", 60, GOLD, per_word=0.18)
+        self.cuts = [2.0, 5.0, 8.0, self.build]
+        self.hits = [(c[0] + 1.5, 0.45) for c in self.CLUES]
+        self.ticks = accel_ticks(self.build + 0.3, self.land)
+        self.clicks = [c[0] + 0.9 for c in self.CLUES]
+
+    def scene(self, img, t):
+        if t < 2.0:
+            sc = 1.25 - 0.25 * expo(t / 0.3)
+            put(img, self.big_glow, W / 2, 700, sc, alpha=0.7)
+            put(img, self.big, W / 2, 700, sc)
+            self.hook_sub.draw(img, W / 2, 950, t - 0.4)
+            self.hook_q.draw(img, W / 2, 1180, t - 0.9)
+        elif t < self.build:
+            i = 0 if t < 5 else 1 if t < 8 else 2
+            t0, key, _, roi, box = self.CLUES[i]
+            put(img, self.tags[i], W / 2, 330, alpha=clamp01((t - t0) / 0.15))
+            self.heads[i].draw(img, W / 2, 510, t - t0 - 0.05)
+            self.proof(img, t, t0, key, roi, box, cy=1130, width=940, color=RED)
+        elif t < self.drop:
+            k = t - self.build
+            self.q_head.draw(img, W / 2, 440, k)
+            n = sum(1 for x in self.ticks if x <= t)
+            landed = t >= self.land
+            put(img, panel(520, 460, outline=(GOLD + (255,)) if landed else (255, 255, 255, 70), width=3), W / 2, 1020)
+            if not landed:
+                put(img, self.digits[3 - n % 4], W / 2, 1010, 1 + 0.06 * math.exp(-(t - max([x for x in self.ticks if x <= t], default=0)) * 20))
+            else:
+                put(img, line_layer("?", "Black", 340, GOLD), W / 2, 1010)
+            put(img, ring(150, clamp01(k / (self.land - self.build)), GOLD), W / 2, 1480)
+        elif t < self.twist:
+            k = t - self.drop
+            sc = 1.5 - 0.5 * expo(k / 0.25)
+            put(img, self.answer_glow, W / 2, 420, sc, alpha=0.7)
+            put(img, self.answer, W / 2, 420, sc)
+            self.proof(img, t, self.drop + 0.3, "order", (40, 220, 860, 620), (60, 240, 640, 290), cy=1150, width=940, color=RED)
+        else:
+            k = t - self.twist
+            self.twist_head.draw(img, W / 2, 420, k)
+            c = self.shot("order", 1, (40, 380, 860, 610), spot=1, box=[(40, 500, 560, 610)], box_k=max(0.01, k - 0.4), width=940,
+                          bump=self.pulse(t, self.twist), color=GREEN)
+            put(img, c, W / 2, 960)
+            self.twist_cap.draw(img, 1520, k - 1.0)
+
+
+# ---------- 9. Ганкали одного ----------
+class Ganked(Quiz):
+    name = "ganked"
+    stills = {"card": ("firsterr", 6.5), "tip": ("firsterr", 8)}
+    glow = [(90, 18, 18), (20, 50, 70), (60, 14, 20)]
+    chords, seed = 0, 61
+    cta_text = ("Узнай, где умираешь ты", "кинь Match ID боту")
+    DEATHS = [(11 * 60 + 34, 2.0), (29 * 60 + 47, 3.5), (32 * 60 + 46, 5.0), (38 * 60 + 40, 6.5)]
+    LENGTH = 48 * 60
+    OPTIONS = ["Купить побольше вардов", "Считать врагов на миникарте", "Фармить только лес"]
+    ANSWER = 1
+    option_size = 56
+
+    def setup(self):
+        self.h1 = line_layer("4 смерти", "Black", 190, RED)
+        self.h1_glow = glow_layer(self.h1, RED)
+        self.hook_sub = Headline("и ни одной в драке. Его просто ловили одного", "SemiBold", 58, (220, 214, 206))
+        self.tag = label("Тебя ганкали одного", RED)
+        self.gank_cap = Caption("Ганкали: башня, Sven, Anti-Mage", 60, RED, per_word=0.2)
+        self.q_head = Headline("Что советует бот?", "Black", 100, WHITE)
+        self.quiz_setup()
+        self.answer_tag = label("Ответ бота", GREEN)
+        self.twist_head = Headline("Трёх врагов нет на карте — значит, идут на тебя", "Black", 76, WHITE)
+        self.twist_cap = Caption("Фарми ближе к своим", 66, GOLD, per_word=0.25)
+        self.cuts = [2.0, self.build]
+        self.clicks = [d[1] for d in self.DEATHS]
+        self.hits = [(d[1], 0.3) for d in self.DEATHS[1:]]
+
+    def timeline(self, img, t):
+        x0, x1, y = 120, W - 120, 640
+        put(img, panel(x1 - x0, 12, fill=(255, 255, 255, 50), outline=(0, 0, 0, 0), radius=6), W / 2, y)
+        for m in (0, 12, 24, 36, 48):
+            put(img, line_layer(f"{m}:00" if m else "0", "SemiBold", 30, MUTED), x0 + (x1 - x0) * m / 48, y + 56)
+        for n, (sec, at) in enumerate(self.DEATHS):
+            k = t - at
+            if k < 0:
+                continue
+            x = x0 + (x1 - x0) * sec / self.LENGTH
+            e = expo(k / 0.3)
+            put(img, panel(28, 28, fill=RED + (255,), outline=(255, 255, 255, 200), radius=14), x, y, 2 - e)
+            ly = y - 70 - 62 * max(0, n - 1)                  # поздние смерти идут плотно, подписи лесенкой
+            if n > 1:
+                put(img, panel(4, int(y - ly - 50), fill=(255, 255, 255, 90), outline=(0, 0, 0, 0), radius=2), x, (ly + y) / 2 + 5, alpha=e)
+            put(img, line_layer(fmt_time(sec), "Black", 46, WHITE), x, ly + (1 - e) * 30, alpha=e)
+
+    def scene(self, img, t):
+        if t < 2.0:
+            sc = 1.25 - 0.25 * expo(t / 0.3)
+            put(img, self.h1_glow, W / 2, 720, sc, alpha=0.7)
+            put(img, self.h1, W / 2, 720, sc)
+            self.hook_sub.draw(img, W / 2, 1000, t - 0.5)
+        elif t < self.build:
+            put(img, self.tag, W / 2, 300, alpha=clamp01((t - 2.0) / 0.15))
+            self.timeline(img, t)
+            self.proof(img, t, 2.3, "card", (20, 530, 880, 856), (180, 630, 810, 730), cy=1190, width=940, color=RED, zoom=0.8)
+            self.gank_cap.draw(img, 1700, t - 8.0)
+        elif t < self.drop:
+            k = t - self.build
+            self.q_head.draw(img, W / 2, 420, k)
+            self.options(img, t, 800)
+            put(img, ring(130, clamp01(k / (self.land - self.build)), GOLD), W / 2, 1450)
+        elif t < self.twist:
+            k = t - self.drop
+            put(img, self.answer_tag, W / 2, 300, alpha=clamp01(k / 0.2))
+            put(img, self.opt_on[1], W / 2, 460, 1.3 - 0.3 * expo(k / 0.25))
+            self.proof(img, t, self.drop + 0.3, "tip", (60, 120, 880, 700), (180, 380, 800, 630), cy=1130, width=940, color=GREEN, zoom=0.8)
+        else:
+            k = t - self.twist
+            self.twist_head.draw(img, W / 2, 420, k)
+            c = self.shot("tip", 0.8, (60, 120, 880, 700), spot=1, box=(180, 380, 800, 630), box_k=1, width=900, color=GREEN)
+            put(img, c, W / 2, 1060)
+            self.twist_cap.draw(img, 1560, k - 1.2)
+
+
+# ---------- 10. Manta, которой не было ----------
+class Manta(Cut):
+    name = "manta"
+    stills = {"core": ("order", 12)}
+    glow = [(100, 20, 18), (30, 60, 90), (60, 50, 14)]
+    chords, seed = 3, 71
+    cta_text = ("Проверь, вовремя ли твоя сборка", "кинь Match ID боту")
+    ITEMS = [(2.0, "Manta Style", "53%", "42%", (60, 64, 840, 254), (674, 134, 839, 179)),
+             (5.0, "Aghanim's Scepter", "52%", "40%", (60, 314, 840, 494), (674, 384, 839, 429)),
+             (8.0, "Hurricane Pike", "54%", "44%", (60, 564, 840, 744), (674, 629, 839, 674))]
+    CLOCK = [20, 25, 30, 35, 40, 45]
+
+    def setup(self):
+        self.h1 = line_layer("−11%", "Black", 320, RED)
+        self.h1_glow = glow_layer(self.h1, RED)
+        self.hook_sub = Headline("побед, если Manta на Drow позже 25:00", "SemiBold", 60, (220, 214, 206))
+        self.hook_q = Headline("А когда собрал этот Drow?", "Black", 80, GOLD)
+        self.tags = [label(f"Предмет {i + 1} из 3", GOLD) for i in range(3)]
+        self.names = [line_layer(it[1], "Black", 92, WHITE) for it in self.ITEMS]
+        self.rates = [(line_layer(it[2], "Black", 110, GREEN), line_layer(it[3], "Black", 110, RED)) for it in self.ITEMS]
+        self.arrow = line_layer("→", "Black", 90, WHITE)
+        self.small = (line_layer("до 25:00", "SemiBold", 36, MUTED), line_layer("позже", "SemiBold", 36, MUTED))
+        self.q_head = Headline("Во сколько у него Manta?", "Black", 96, WHITE)
+        self.clock = {m: line_layer(f"{m}:00", "Black", 230, WHITE) for m in self.CLOCK}
+        self.answer = stamp("НЕ БЫЛО", RED, 170)
+        self.twist_head = Headline("Из всего ядра только BKB, и тот на 41:55", "Black", 78, WHITE)
+        self.twist_cap = Caption("Бот покажет, какой предмет решал твою катку", 58, GOLD, per_word=0.17)
+        self.cuts = [2.0, 5.0, 8.0, self.build]
+        self.hits = [(it[0] + 1.0, 0.4) for it in self.ITEMS]
+        self.ticks = accel_ticks(self.build + 0.3, self.land, 0.28, 0.06)
+        self.clicks = [it[0] + 1.0 for it in self.ITEMS]
+
+    def scene(self, img, t):
+        if t < 2.0:
+            sc = 1.25 - 0.25 * expo(t / 0.3)
+            put(img, self.h1_glow, W / 2, 680, sc, alpha=0.7)
+            put(img, self.h1, W / 2, 680, sc)
+            self.hook_sub.draw(img, W / 2, 940, t - 0.4)
+            self.hook_q.draw(img, W / 2, 1160, t - 0.9)
+        elif t < self.build:
+            i = 0 if t < 5 else 1 if t < 8 else 2
+            t0, _, _, _, roi, _ = self.ITEMS[i]
+            k = t - t0
+            put(img, self.tags[i], W / 2, 270, alpha=clamp01(k / 0.15))
+            put(img, self.names[i], W / 2, 400, 1.1 - 0.1 * expo(k / 0.3), alpha=clamp01(k / 0.1))
+            good, bad = self.rates[i]
+            e1, e2 = expo((k - 0.3) / 0.3), expo((k - 1.0) / 0.3)
+            put(img, good, W / 2 - 230, 560, alpha=e1)
+            put(img, self.small[0], W / 2 - 230, 650, alpha=e1)
+            put(img, self.arrow, W / 2, 555, alpha=e2)
+            put(img, bad, W / 2 + 230, 560, 1.3 - 0.3 * e2, alpha=clamp01((k - 1.0) / 0.08))
+            put(img, self.small[1], W / 2 + 230, 650, alpha=e2)
+            text_box = (roi[0] + 130, roi[1], 660, roi[3])
+            self.proof(img, t, t0 + 0.2, "core", roi, text_box, cy=1180, width=940, zoom=0.9)
+        elif t < self.drop:
+            k = t - self.build
+            self.q_head.draw(img, W / 2, 440, k)
+            n = sum(1 for x in self.ticks if x <= t)
+            landed = t >= self.land
+            put(img, panel(W - 200, 330, outline=(GOLD + (255,)) if landed else (255, 255, 255, 70), width=3), W / 2, 980)
+            if landed:
+                put(img, line_layer("??:??", "Black", 230, GOLD), W / 2, 970)
+            else:
+                put(img, self.clock[self.CLOCK[n % len(self.CLOCK)]], W / 2, 970)
+            put(img, ring(150, clamp01(k / (self.land - self.build)), GOLD), W / 2, 1450)
+        elif t < self.twist:
+            k = t - self.drop
+            put(img, self.answer, W / 2, 400, 2.0 - 1.0 * expo(k / 0.2), alpha=clamp01(k / 0.06))
+            self.proof(img, t, self.drop + 0.3, "core", (60, 64, 840, 744), [it[5] for it in self.ITEMS], cy=1150, width=900, color=RED, zoom=0.6)
+        else:
+            k = t - self.twist
+            self.twist_head.draw(img, W / 2, 420, k)
+            c = self.shot("core", 1, (60, 560, 840, 856), spot=1, box=(190, 805, 840, 856), box_k=max(0.01, k - 0.4), width=940,
+                          bump=self.pulse(t, self.twist), color=GOLD)
+            put(img, c, W / 2, 1000)
+            self.twist_cap.draw(img, 1540, k - 1.0)
+
+
+# ---------- 11. Где умирал в драках ----------
+class FightMap(Quiz):
+    name = "fightquiz"
+    stills = {"map": ("fightmap", 4.5)}
+    glow = [(20, 70, 40), (90, 18, 18), (30, 30, 70)]
+    chords, seed = 2, 81
+    cta_text = ("Посмотри свою карту смертей", "кинь Match ID боту")
+    XS = [(150, 188), (250, 383), (408, 463), (200, 517)]
+    MAP = (70, 30, 840, 700)
+    OPTIONS = ["0", "1", "2", "4"]
+    ANSWER = 0
+    option_size = 80
+
+    def setup(self):
+        self.h1 = line_layer("4 смерти", "Black", 190, WHITE)
+        self.hook_sub = Headline("в драках у саппорта на Страже", "SemiBold", 58, (220, 214, 206))
+        self.hook_q = Headline("Сколько из них на половине врага?", "Black", 82, GOLD)
+        self.tag = label("Карта смертей", GOLD)
+        self.heads = [Headline("Крестик — место смерти", "Black", 76, WHITE),
+                      Headline("Зелёный угол — твоя база, красный — вражеская", "Black", 70, WHITE)]
+        self.q_head = Headline("Сколько смертей на половине врага?", "Black", 86, WHITE)
+        self.quiz_setup()
+        self.answer = line_layer("НОЛЬ", "Black", 260, GOLD)
+        self.answer_glow = glow_layer(self.answer, GOLD)
+        self.twist_head = Headline("Все 4 на своей половине", "Black", 88, WHITE)
+        self.twist_cap = Caption("Враг сам заходил к тебе, а ты узнавал об этом последним", 56, GOLD, per_word=0.15)
+        self.cuts = [2.0, 7.0, self.build]
+        self.clicks = [2.6 + i * 0.9 for i in range(4)] + [7.6, 8.2]
+        self.hits = [(7.6, 0.35)]
+
+    def xbox(self, n):
+        return [(x - 32, y - 32, x + 32, y + 32) for x, y in self.XS[:n]]
+
+    def scene(self, img, t):
+        if t < 2.0:
+            put(img, self.h1, W / 2, 640, 1.2 - 0.2 * expo(t / 0.3))
+            self.hook_sub.draw(img, W / 2, 860, t - 0.4)
+            self.hook_q.draw(img, W / 2, 1100, t - 0.9)
+        elif t < self.build:
+            put(img, self.tag, W / 2, 270, alpha=clamp01((t - 2.0) / 0.15))
+            if t < 7.0:
+                self.heads[0].draw(img, W / 2, 420, t - 2.05)
+                n = sum(1 for x in self.clicks[:4] if x <= t)
+                box, col = self.xbox(n) or None, RED
+                k_box = max(0.01, t - self.clicks[max(0, n - 1)]) if n else 0
+            else:
+                self.heads[1].draw(img, W / 2, 440, t - 7.05)
+                box = [(100, 568, 215, 680)] + ([(665, 52, 775, 148)] if t >= 8.2 else [])
+                col, k_box = GREEN if t < 8.2 else GOLD, max(0.01, t - (7.6 if t < 8.2 else 8.2))
+            c = self.shot("map", 1, self.MAP, spot=0.6 if box else 0, box=box, box_k=k_box, width=900,
+                          bump=self.pulse(t, 2.0), color=col)
+            e = expo((t - 2.0) / 0.5)
+            put(img, c, W / 2, 1150 + (1 - e) * 140, alpha=clamp01((t - 2.0) / 0.12))
+        elif t < self.drop:
+            k = t - self.build
+            self.q_head.draw(img, W / 2, 400, k)
+            self.options(img, t, 700)
+            put(img, ring(130, clamp01(k / (self.land - self.build)), GOLD), W / 2, 1550)
+        elif t < self.twist:
+            k = t - self.drop
+            sc = 1.5 - 0.5 * expo(k / 0.25)
+            put(img, self.answer_glow, W / 2, 380, sc, alpha=0.7)
+            put(img, self.answer, W / 2, 380, sc)
+            self.proof(img, t, self.drop + 0.3, "map", (60, 560, 840, 856), (70, 735, 800, 815), cy=1100, width=940, zoom=0.8)
+        else:
+            k = t - self.twist
+            self.twist_head.draw(img, W / 2, 330, k)
+            c = self.shot("map", 1, self.MAP, spot=1, box=self.xbox(4), box_k=max(0.01, k - 0.3), width=860,
+                          bump=self.pulse(t, self.twist), color=RED)
+            put(img, c, W / 2, 1000)
+            self.twist_cap.draw(img, 1620, k - 1.0)
+
+
+VIDEOS = {c.name: c for c in (GuessRank, Versus, Killers, Myth, Phases, Wards, Lane, Zero3, Ganked, Manta, FightMap)}
 
 
 # ---------- звук ----------
