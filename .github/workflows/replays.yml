@@ -1,7 +1,9 @@
 # Разбор реплеев с позициями героев.
-# Воркер тренера держит очередь матчей (GET /replay-queue). Раз в 10 минут берём из неё до 4 матчей,
-# качаем реплей у Valve, разбираем парсером OpenDota (docker odota/parser) и кладём позиции
+# Воркер тренера держит очередь матчей (GET /replay-queue). Прогон дежурит почти 6 часов и раз в минуту смотрит очередь:
+# качает реплей у Valve, разбирает парсером OpenDota (docker odota/parser) и кладёт позиции
 # в ветку replays: r/<match_id>.json. Воркер видит файл, снимает матч с очереди и пишет игроку в Телеграм.
+# Крон GitHub «раз в 10 минут» на деле срабатывает раз в 2–5 часов, поэтому заявка ждала часами.
+# Теперь следующий прогон уже стоит в очереди concurrency и стартует сразу, как закончится дежурство.
 # Секреты не нужны: очередь публичная, результат пишется встроенным GITHUB_TOKEN.
 name: Разбор реплеев
 
@@ -23,83 +25,79 @@ concurrency:
 jobs:
   parse:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 358
     steps:
       - uses: actions/checkout@v4
 
-      - name: Очередь матчей
-        id: queue
-        run: |
-          curl -sf --max-time 30 https://dotacoach.2007rggg.workers.dev/replay-queue -o queue.json || echo '{"matches":[]}' > queue.json
-          ids=$(node -e 'const q=JSON.parse(require("fs").readFileSync("queue.json","utf8"));console.log((q.matches||[]).filter(Number.isInteger).slice(0,4).join(" "))')
-          echo "Очередь: ${ids:-пусто}"
-          echo "ids=$ids" >> "$GITHUB_OUTPUT"
-
       - name: Ветка с результатами
-        if: steps.queue.outputs.ids != ''
         uses: actions/checkout@v4
         with:
           ref: replays
           path: out
 
       - name: Парсер OpenDota
-        if: steps.queue.outputs.ids != ''
         run: |
           docker run -d --name parser -p 5600:5600 odota/parser
           for i in $(seq 1 60); do curl -s -o /dev/null http://localhost:5600/healthz && break; sleep 2; done
 
-      - name: Разбор
-        if: steps.queue.outputs.ids != ''
+      - name: Дежурство
         run: |
+          git -C out config user.name "replay-bot"
+          git -C out config user.email "replay-bot@users.noreply.github.com"
           mkdir -p out/r
-          for id in ${{ steps.queue.outputs.ids }}; do
-            if [ -f "out/r/$id.json" ] || [ -f "out/r/$id.err.json" ]; then echo "$id уже разобран"; continue; fi
-            echo "::group::Матч $id"
-            url=$(curl -sf --max-time 60 "https://api.opendota.com/api/matches/$id" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).replay_url||"")}catch{console.log("")}})')
-            if [ -z "$url" ]; then
-              echo '{"error":"У OpenDota нет ссылки на реплей: матч ещё не разобран или реплей удалён"}' > "out/r/$id.err.json"
-              echo "::endgroup::"; continue
-            fi
-            if ! curl -sf --max-time 300 "$url" -o replay.dem; then
-              echo '{"error":"Реплей не скачался: Valve хранит их около двух недель"}' > "out/r/$id.err.json"
-              echo "::endgroup::"; continue
-            fi
-            # Valve пакует по-разному (bzip2, внутри бывает ещё zstd): снимаем слои по сигнатуре, пока не останется .dem
-            for layer in 1 2 3; do
-              magic=$(head -c 4 replay.dem | od -An -tx1 | tr -d " \n")
-              case "$magic" in
-                425a68*) bunzip2 -c replay.dem > replay.tmp && mv replay.tmp replay.dem; echo "слой $layer: bzip2" ;;
-                28b52ffd) zstd -dqf replay.dem -o replay.tmp && mv replay.tmp replay.dem; echo "слой $layer: zstd" ;;
-                *) break ;;
-              esac
+          # дежурим 5 ч 40 мин, место до таймаута job — на последний разбор
+          until=$(( $(date +%s) + 340 * 60 ))
+          while [ "$(date +%s)" -lt "$until" ]; do
+            curl -sf --max-time 30 https://dotacoach.2007rggg.workers.dev/replay-queue -o queue.json || echo '{"matches":[]}' > queue.json
+            ids=$(node -e 'const q=JSON.parse(require("fs").readFileSync("queue.json","utf8"));console.log((q.matches||[]).filter(Number.isInteger).slice(0,4).join(" "))')
+            if [ -z "$ids" ]; then sleep 60; continue; fi
+            echo "$(date -u +%H:%M) очередь: $ids"
+            git -C out pull -q --rebase origin replays || true
+            for id in $ids; do
+                if [ -f "out/r/$id.json" ] || [ -f "out/r/$id.err.json" ]; then echo "$id уже разобран"; continue; fi
+                echo "::group::Матч $id"
+                url=$(curl -sf --max-time 60 "https://api.opendota.com/api/matches/$id" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).replay_url||"")}catch{console.log("")}})')
+                if [ -z "$url" ]; then
+                  echo '{"error":"У OpenDota нет ссылки на реплей: матч ещё не разобран или реплей удалён"}' > "out/r/$id.err.json"
+                  echo "::endgroup::"; continue
+                fi
+                if ! curl -sf --max-time 300 "$url" -o replay.dem; then
+                  echo '{"error":"Реплей не скачался: Valve хранит их около двух недель"}' > "out/r/$id.err.json"
+                  echo "::endgroup::"; continue
+                fi
+                # Valve пакует по-разному (bzip2, внутри бывает ещё zstd): снимаем слои по сигнатуре, пока не останется .dem
+                for layer in 1 2 3; do
+                  magic=$(head -c 4 replay.dem | od -An -tx1 | tr -d " \n")
+                  case "$magic" in
+                    425a68*) bunzip2 -c replay.dem > replay.tmp && mv replay.tmp replay.dem; echo "слой $layer: bzip2" ;;
+                    28b52ffd) zstd -dqf replay.dem -o replay.tmp && mv replay.tmp replay.dem; echo "слой $layer: zstd" ;;
+                    *) break ;;
+                  esac
+                done
+                # как у самой OpenDota: поток через -T - (chunked), без Content-Length и Expect
+                code=$(curl -s --max-time 900 -X POST -T - -o parsed.jsonl -w "%{http_code}" http://localhost:5600 < replay.dem || echo "curl-fail")
+                if node tools/replay-summary.mjs "$id" < parsed.jsonl > "out/r/$id.json"; then
+                  echo "готово: $(wc -c < "out/r/$id.json") байт"
+                else
+                  rm -f "out/r/$id.json"
+                  # что пошло не так: ответ парсера, размер, начало вывода и хвост логов контейнера (логи Actions без входа не видны)
+                  MAGIC="$(head -c 16 replay.dem | od -An -c | tr -s " ")" DEM=$(stat -c %s replay.dem 2>/dev/null || echo 0) CODE="$code" LOGS="$(docker logs --tail 15 parser 2>&1 | tail -c 1500)" node -e '
+                    const fs = require("fs");
+                    const out = fs.existsSync("parsed.jsonl") ? fs.readFileSync("parsed.jsonl", "utf8") : "";
+                    const lines = out.split("\n");
+                    fs.writeFileSync(process.argv[1], JSON.stringify({ error: "Парсер не отдал позиции героев",
+                      debug: { http: process.env.CODE, magic: process.env.MAGIC, dem_bytes: Number(process.env.DEM), out_bytes: out.length, lines: lines.length,
+                        intervals: lines.filter((l) => l.includes("\"interval\"")).length, head: out.slice(0, 600), logs: process.env.LOGS } }));
+                  ' "out/r/$id.err.json"
+                fi
+                rm -f replay.dem parsed.jsonl
+                echo "::endgroup::"
             done
-            # как у самой OpenDota: поток через -T - (chunked), без Content-Length и Expect
-            code=$(curl -s --max-time 900 -X POST -T - -o parsed.jsonl -w "%{http_code}" http://localhost:5600 < replay.dem || echo "curl-fail")
-            if node tools/replay-summary.mjs "$id" < parsed.jsonl > "out/r/$id.json"; then
-              echo "готово: $(wc -c < "out/r/$id.json") байт"
-            else
-              rm -f "out/r/$id.json"
-              # что пошло не так: ответ парсера, размер, начало вывода и хвост логов контейнера (логи Actions без входа не видны)
-              MAGIC="$(head -c 16 replay.dem | od -An -c | tr -s " ")" DEM=$(stat -c %s replay.dem 2>/dev/null || echo 0) CODE="$code" LOGS="$(docker logs --tail 15 parser 2>&1 | tail -c 1500)" node -e '
-                const fs = require("fs");
-                const out = fs.existsSync("parsed.jsonl") ? fs.readFileSync("parsed.jsonl", "utf8") : "";
-                const lines = out.split("\n");
-                fs.writeFileSync(process.argv[1], JSON.stringify({ error: "Парсер не отдал позиции героев",
-                  debug: { http: process.env.CODE, magic: process.env.MAGIC, dem_bytes: Number(process.env.DEM), out_bytes: out.length, lines: lines.length,
-                    intervals: lines.filter((l) => l.includes("\"interval\"")).length, head: out.slice(0, 600), logs: process.env.LOGS } }));
-              ' "out/r/$id.err.json"
+            git -C out add r
+            if ! git -C out diff --cached --quiet; then
+              git -C out commit -q -m "Реплеи: $ids"
+              git -C out push -q origin HEAD:replays || { git -C out pull -q --rebase origin replays && git -C out push -q origin HEAD:replays; }
             fi
-            rm -f replay.dem parsed.jsonl
-            echo "::endgroup::"
+            # матч снимается с очереди кроном воркера (раз в 3 минуты): не берём его по второму кругу
+            sleep 60
           done
-
-      - name: Сохранить
-        if: steps.queue.outputs.ids != ''
-        working-directory: out
-        run: |
-          git config user.name "replay-bot"
-          git config user.email "replay-bot@users.noreply.github.com"
-          git add r
-          git diff --cached --quiet && { echo "нового нет"; exit 0; }
-          git commit -q -m "Реплеи: ${{ steps.queue.outputs.ids }}"
-          git push -q origin HEAD:replays
