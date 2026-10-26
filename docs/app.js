@@ -589,9 +589,14 @@ function accountForm() {
     const id = toAccountId(input.value);
     if (!id) {
       step("link_bad");
-      status.textContent = /steamcommunity\.com\/id\//.test(input.value)
+      // что за ввод (без самого текста): по этому видно, какую подсказку дописать
+      const v = input.value.trim();
+      const kind = !v ? "empty" : /steamcommunity\.com\/id\//.test(v) ? "vanity" : /https?:|\.com|\.ru|\//.test(v) ? "url" : /^\d+$/.test(v) ? "num" : "text";
+      track(`link_bad_${kind}`);
+      status.textContent = kind === "vanity"
         ? "Это ссылка с ником: по ней аккаунт не найти. Нужен Friend ID из профиля в Доте или ссылка вида steamcommunity.com/profiles/7656…"
-        : "Это не похоже на Friend ID.";
+        : kind === "text" ? "Ник не подойдёт: нужен Friend ID — только цифры, например 123456789. Он в Доте в профиле, под ником."
+          : "Это не похоже на Friend ID. Это только цифры, например 123456789: в Доте открой профиль, номер под ником.";
       return;
     }
     status.textContent = "Проверяю…";
@@ -1571,7 +1576,15 @@ function step(name) {
 }
 
 // Ошибки в коде: счётчик плюс текст последней, чтобы найти по нему место
-addEventListener("error", (e) => { stats.jsError = String((e && e.message) || "error").slice(0, 120); track("err_js"); });
+// «Script error.» без файла — ошибка в чужом скрипте (telegram-web-app.js, Sketchfab или код самого Телеграма):
+// браузер прячет подробности, и приложению она не мешает. Считаем отдельно, в «ошибку в коде» не пишем
+addEventListener("error", (e) => {
+  const msg = String((e && e.message) || "error");
+  const file = String((e && e.filename) || "");
+  if (/^Script error\.?$/.test(msg) || (file && !file.startsWith(location.origin))) { track("err_ext"); return; }
+  stats.jsError = `${msg} @ ${file.split("/").pop().split("?")[0] || "?"}:${(e && e.lineno) || 0}`.slice(0, 120);
+  track("err_js");
+});
 addEventListener("unhandledrejection", (e) => { stats.jsError = String((e && e.reason && e.reason.message) || e.reason || "rejection").slice(0, 120); track("err_js"); });
 
 // Пачкой: через несколько секунд после запуска, когда приложение сворачивают, и раз в 2 минуты.
