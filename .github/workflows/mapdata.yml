@@ -1,0 +1,63 @@
+# Разметка карты по свежим про-реплеям: где добивают нейтралов (кемпы) и где ходят герои.
+# Запуск руками после патча с новой картой: Actions -> «Разметка карты». Итог — артефакт mapdata.out.json,
+# из него `python tools/camps.py mapdata.out.json` даёт CAMPS для docs/dotamap.js.
+name: Разметка карты
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mapdata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Парсер OpenDota
+        run: |
+          docker run -d --name parser -p 5600:5600 odota/parser
+          for i in $(seq 1 60); do curl -s -o /dev/null http://localhost:5600/healthz && break; sleep 2; done
+          curl -sf https://raw.githubusercontent.com/odota/dotaconstants/master/build/heroes.json -o heroes.json
+      - name: Реплеи
+        run: |
+          mkdir -p md
+          curl -sf --max-time 60 https://api.opendota.com/api/proMatches -o pro.json
+          ids=$(python3 -c 'import json;print(" ".join(str(m["match_id"]) for m in json.load(open("pro.json"))[8:40]))')
+          n=0
+          for id in $ids; do
+            [ $n -ge 6 ] && break
+            curl -sf --max-time 60 "https://api.opendota.com/api/matches/$id" -o m.json || continue
+            read url patch <<< $(python3 -c 'import json;m=json.load(open("m.json"));print(m.get("replay_url") or "-", m.get("patch"))')
+            [ "$url" = "-" ] && continue
+            curl -sf --max-time 300 "$url" -o replay.dem || continue
+            for layer in 1 2 3; do
+              magic=$(head -c 4 replay.dem | od -An -tx1 | tr -d " \n")
+              case "$magic" in
+                425a68*) bunzip2 -c replay.dem > replay.tmp && mv replay.tmp replay.dem ;;
+                28b52ffd) zstd -dqf replay.dem -o replay.tmp && mv replay.tmp replay.dem ;;
+                *) break ;;
+              esac
+            done
+            echo "::group::$id (патч $patch)"
+            curl -s --max-time 900 -X POST -T - -o parsed.jsonl http://localhost:5600 < replay.dem || true
+            if node tools/mapdata.mjs heroes.json < parsed.jsonl > "md/$id.json"; then
+              python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print({k:(len(v) if isinstance(v,(list,str)) else v) for k,v in d.items()})' "md/$id.json"
+              n=$((n+1))
+            else rm -f "md/$id.json"; fi
+            echo "::endgroup::"
+            rm -f replay.dem parsed.jsonl
+          done
+          python3 - <<'PY'
+          import glob, json
+          out = {}
+          for f in sorted(glob.glob("md/*.json")):
+              out[f.split("/")[-1][:-5]] = json.load(open(f))
+          json.dump(out, open("tools/mapdata.out.json", "w"), ensure_ascii=False, separators=(",", ":"))
+          PY
+          ls -la tools/mapdata.out.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mapdata
+          path: tools/mapdata.out.json
