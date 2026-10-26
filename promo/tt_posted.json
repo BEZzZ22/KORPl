@@ -22,11 +22,5 @@
   "status": "SEND_TO_USER_INBOX",
   "mode": "inbox",
   "at": "2026-10-26T15:27:45.713401+00:00"
- },
- "versus": {
-  "publish_id": "v_inbox_file~v2.7701066512073066518",
-  "status": "SEND_TO_USER_INBOX",
-  "mode": "inbox",
-  "at": "2026-10-26T19:53:25.168075+00:00"
  }
 }
