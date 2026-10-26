@@ -44,6 +44,16 @@ test("отчёт показывает путь, где закрыли и где 
   assert.match(text, /Застряли: видели «матчей не видно» \(закрыт профиль в Доте\) — 1/);
 });
 
+test("Script error — не ошибка в коде, неверный ID расшифрован", async () => {
+  const kv = memKV(), env = { COACH_KV: kv };
+  await trackUser(env, { id: 6, first_name: "Asnar" }, { open: true, secs: 60, events: { link_bad: 1, link_bad_text: 1, err_ext: 1 }, path: "home:0,link_bad:54", jserr: "Script error." }, at("2026-10-25"));
+  const text = await buildReport(env, at("2026-10-26", 9));
+  assert.match(text, /неверный ID: ввёл ник/);
+  assert.match(text, /ошибка в чужом скрипте \(Телеграм\), приложению не мешала/);
+  assert.match(text, /Ошибки: в чужом скрипте \(Телеграм, не мешает\) 1/);
+  assert.doesNotMatch(text, /ошибка в коде/);
+});
+
 test("первый заход пишется один раз, дни — отдельно", async () => {
   const kv = memKV(), env = { COACH_KV: kv };
   await trackUser(env, { id: 1, first_name: "Вася", username: "vasya" }, { open: true, src: "promo" }, at("2026-10-23"));

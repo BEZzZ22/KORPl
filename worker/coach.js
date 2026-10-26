@@ -1010,7 +1010,7 @@ const EVENT_LABELS = {
   blame: "«кто слил»", share_blame: "поделились итогом матча", demo: "смотрели пример", disagree_blame: "не согласны с «кто слил»",
 };
 const STEP_LABELS = {
-  home: "главная", home_list: "список игр", home_empty: "«матчей не видно»", match: "открыл матч", empty_retry: "жмёт «Проверить снова»", empty_found: "матчи нашлись", match_parsing: "ждёт разбор реплея",
+  home: "главная", home_list: "список игр", home_empty: "«матчей не видно»", match: "открыл матч", link_bad_empty: "пустой ID", link_bad_vanity: "ссылка с ником", link_bad_url: "не та ссылка", link_bad_num: "не те цифры", link_bad_text: "ввёл ник", empty_retry: "жмёт «Проверить снова»", empty_found: "матчи нашлись", match_parsing: "ждёт разбор реплея",
   analysis: "разбор", not_yours: "чужой матч", link: "привязал аккаунт", link_bad: "неверный ID", link_unknown: "OpenDota не знает аккаунт",
   profile: "профиль", hero_stats: "статы героя", draft: "драфт", coach: "тренер", chat: "вопрос тренеру", compare: "сравнение",
   replay: "реплей", share: "поделился", blame: "«кто слил»", share_blame: "поделился итогом", demo: "пример разбора", disagree_blame: "не согласен", err_opendota: "ОШИБКА OpenDota", err_no_match: "ОШИБКА нет матча", err_replay: "ОШИБКА реплей",
@@ -1022,6 +1022,15 @@ function pathLine(a) {
   if (!a.p) return "";
   const steps = a.p.split(",").map((x) => x.split(":"));
   return `${steps.map(([n, t]) => `${stepName(n)} ${mins(Number(t))}`).join(" → ")}`;
+}
+// Пояснения под строкой юзера: что вводил вместо ID и была ли ошибка в коде.
+// «Script error.» — чужой скрипт (Телеграм): так писали до 26.10, приложению она не мешает
+function userNotes(a) {
+  const out = [];
+  const bad = Object.keys(a.e || {}).filter((k) => k.startsWith("link_bad_")).map(stepName);
+  if (bad.length) out.push(`  неверный ID: ${bad.join(", ")}`);
+  if (a.j) out.push(/^Script error/.test(a.j) ? "  ошибка в чужом скрипте (Телеграм), приложению не мешала" : `  ошибка в коде: ${a.j}`);
+  return out;
 }
 const lastStep = (a) => (a.p ? a.p.split(",").pop().split(":")[0] : "");
 
@@ -1085,7 +1094,7 @@ export async function buildReport(env, now = Date.now(), day = mskDay(now - 8640
     for (const a of today.values()) { const l = lastStep(a); if (l) exits[l] = (exits[l] || 0) + 1; }
     const ex = Object.entries(exits).sort((x, y) => y[1] - x[1]).map(([k, v]) => `${stepName(k)} ${v}`).join(", ");
     if (ex) lines.push(`Где закрыли приложение: ${ex}`);
-    const errs = Object.entries(sum.e).filter(([k]) => k.startsWith("err_")).map(([k, v]) => `${k === "err_js" ? "в коде" : stepName(k).replace("ОШИБКА ", "")} ${v}`);
+    const errs = Object.entries(sum.e).filter(([k]) => k.startsWith("err_")).map(([k, v]) => `${k === "err_js" ? "в коде" : k === "err_ext" ? "в чужом скрипте (Телеграм, не мешает)" : stepName(k).replace("ОШИБКА ", "")} ${v}`);
     if (errs.length) lines.push(`Ошибки: ${errs.join(", ")}`);
     const stuck = [["home_empty", "видели «матчей не видно» (закрыт профиль в Доте)"], ["link_unknown", "OpenDota не нашла аккаунт"], ["not_yours", "открыли чужой матч"]]
       .map(([k, t]) => [t, [...today.values()].filter((a) => (a.e || {})[k]).length]).filter(([, n]) => n);
@@ -1104,7 +1113,7 @@ export async function buildReport(env, now = Date.now(), day = mskDay(now - 8640
       const ev = eventsLine(a.e || {});
       lines.push(`— ${who(m, id)}${m.src ? ` [${m.src}]` : ""}${a.pl ? ` (${a.pl})` : ""}: ${a.o || 0} откр., ${mins(a.s || 0)}${ev ? `, ${ev}` : ""}`);
       if (a.p) lines.push(`  путь: ${pathLine(a)}`);
-      if (a.j) lines.push(`  ошибка в коде: ${a.j}`);
+      lines.push(...userNotes(a));
     }
     if (fresh.length > 15) lines.push(`…и ещё ${fresh.length - 15}`);
     const noLink = fresh.filter((id) => !((today.get(id) || {}).e || {}).analysis).length;
@@ -1116,7 +1125,7 @@ export async function buildReport(env, now = Date.now(), day = mskDay(now - 8640
       const a = today.get(id), ev = eventsLine(a.e || {});
       lines.push(`— ${who(seen.get(id) || {}, id)}${a.pl ? ` (${a.pl})` : ""}: ${a.o || 0} откр., ${mins(a.s || 0)}${ev ? `, ${ev}` : ""}`);
       if (a.p) lines.push(`  путь: ${pathLine(a)}`);
-      if (a.j) lines.push(`  ошибка в коде: ${a.j}`);
+      lines.push(...userNotes(a));
     }
     if (back.length > 15) lines.push(`…и ещё ${back.length - 15}`);
   }
