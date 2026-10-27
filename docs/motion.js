@@ -71,7 +71,7 @@ function start() {
     each(el, BARS, (b) => gsap.from(b, { scaleX: 0, transformOrigin: "0 50%", duration: 1.2, delay: delay + 0.1, clearProps: "transform" }));
     each(el, LINES, (p) => draw(p, delay + 0.1));
     each(el, ".form-strip", (s) => gsap.from(s.children, { scale: 0, autoAlpha: 0, duration: 0.6, delay, stagger: 0.025, ease: "back.out(2)", clearProps: "transform,opacity,visibility" }));
-    each(el, ".hero-banner > img", (img) => gsap.from(img, { scale: 1.16, duration: 2.2, ease: "power3.out", clearProps: "transform" }));
+    each(el, ".hero-banner img", (img) => gsap.from(img, { scale: 1.16, duration: 2.2, ease: "power3.out", clearProps: "transform" }));
     each(el, ".app-top", (top) => {
       const tl = gsap.timeline({ delay });
       tl.from(top.querySelector(".aegis"), { scale: 0.86, autoAlpha: 0, duration: 1.4, clearProps: "transform,opacity,visibility" })
@@ -245,7 +245,7 @@ function interactive() {
         const k = Math.min(1, y / 260);
         gsap.set(shield, { scale: 1 - k * 0.22, y: y * 0.35, opacity: 1 - k * 0.7 });
       }
-      const banner = app.querySelector(".hero-banner > img");
+      const banner = app.querySelector(".hero-banner img");
       if (banner) gsap.set(banner, { y: Math.min(y, 400) * 0.3 });
     });
   }, { passive: true });

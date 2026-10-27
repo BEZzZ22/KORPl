@@ -3,9 +3,12 @@ import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan, skillPlan,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
 } from "./engine.js?v=37";
-import { aegisBadge, openShowcase } from "./aegis.js?v=3";
+import { aegisBadge, openShowcase } from "./aegis.js?v=4";
 import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=3";
 import { matchVerdicts } from "./blame.js?v=3";
+import { rankMedal3d } from "./medal3d.js?v=1";
+import { heroCard3d } from "./herocard3d.js?v=1";
+import { tacticalTable } from "./map3d.js?v=1";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -689,6 +692,8 @@ async function profileScreen() {
   const topHeroes = (heroes || []).filter((hx) => hx.games > 0).sort((a, b) => b.games - a.games).slice(0, 6);
 
   render(
+    V2 && h("div", { class: "rank3d-wrap" }, rankMedal3d(player.rank_tier, { reduced: reducedMotion(), haptic, tick: hapticTick }),
+      h("div", { class: "small muted" }, "Крути пальцем, тап — перевернуть")),
     h("div", { class: "card" },
       h("div", { class: "profile-card" },
         avatar ? h("img", { class: "avatar", src: avatar, alt: "", loading: "lazy" }) : h("div", { class: "avatar" }),
@@ -1325,7 +1330,7 @@ function analysisScreen(a) {
       h("div", { class: "grow" }, h("b", {}, "Это пример разбора"), h("span", {}, "Настоящая катка на Tusk. Привяжи аккаунт — разберу твои.")),
       h("button", { type: "button", onclick: () => { haptic(); navRoot("home", homeScreen); } }, "Привязать")),
     h("div", { class: "card hero-head" },
-      h("div", { class: "hero-banner" },
+      ((banner) => (V2 ? heroCard3d(banner, heroCardBack(a), { reduced: reducedMotion(), haptic }) : banner))(h("div", { class: "hero-banner" },
         img(dictionary.heroImage(f.hero_id), null, f.hero),
         h("div", { class: "hero-title" },
           h("h1", {}, f.hero),
@@ -1334,7 +1339,7 @@ function analysisScreen(a) {
             ` позиция ${f.position} · ${f.duration}`),
         ),
         h("div", { class: "hero-ring" }, medal(a.overall)),
-      ),
+      )),
       h("div", { class: "hero-body" },
         h("div", { class: "verdict" }, a.verdict),
         f.game_mode === TURBO_MODE && h("div", { class: "advice" },
@@ -1356,6 +1361,18 @@ function analysisScreen(a) {
 }
 
 // Шеринг: короткий вердикт + ссылка на бота (растит бота)
+// Оборот карты героя в шапке разбора (дизайн «Новый»): итог катки одним взглядом
+function heroCardBack(a) {
+  const f = a.facts;
+  const cell = (value, label) => h("div", { class: "hcb-cell" }, h("b", {}, String(value)), h("span", {}, label));
+  return h("div", {},
+    h("div", { class: "hcb-top" },
+      h("div", { class: "grow" }, h("div", { class: "hcb-name" }, f.hero), h("div", { class: "hcb-sub" }, `${f.won ? "Победа" : "Поражение"} · позиция ${f.position} · ${f.duration}`)),
+      h("div", { class: "hcb-score" }, h("b", {}, a.overall.toFixed(1)), h("span", {}, "из 10"))),
+    h("div", { class: "hcb-grid" }, cell(f.kda, "KDA"), cell(f.gpm, "GPM"), cell(f.xpm, "XPM"), cell(`${f.last_hits}/${f.denies}`, "LH/DN")),
+    h("div", { class: "hcb-hint" }, "Тап — перевернуть обратно"));
+}
+
 function shareLink(a, custom = null) {
   const f = a.facts;
   const link = `https://t.me/${BOT_USERNAME}?startapp`;
@@ -2726,6 +2743,9 @@ function mapTab(a) {
       live,
       !a.replay && !raw.replay && replayCta(a, "Сейчас видно варды, здания и смерти в драках. Разбери реплей — на карте поедут все 10 героев, а тренер увидит, кто где стоял.")),
     !live && !a.replay && replayCta(a),
+    V2 && (m.deaths.length > 0 || m.wards.length > 0 || (a.replay && a.replay.deaths.length > 0)) && h("h2", {}, "Тактический стол"),
+    V2 && (m.deaths.length > 0 || m.wards.length > 0 || (a.replay && a.replay.deaths.length > 0)) && h("div", { class: "card map3d-card" },
+      tacticalTable({ deaths: a.replay && a.replay.deaths.length ? a.replay.deaths : m.deaths, wards: m.wards, reduced: reducedMotion(), haptic })),
     (m.wards.length > 0 || sentries.length > 0) && h("div", { class: "card ward-sum" },
       h("div", { class: "ws-row" },
         h("div", {}, h("b", {}, String(m.wards.length)), h("span", {}, "обсов команды")),
