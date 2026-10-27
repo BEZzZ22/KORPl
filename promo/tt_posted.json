@@ -34,5 +34,11 @@
   "status": "SEND_TO_USER_INBOX",
   "mode": "inbox",
   "at": "2026-10-27T13:33:15.880964+00:00"
+ },
+ "myth": {
+  "publish_id": "v_inbox_file~v2.7701423279961229334",
+  "status": "PROCESSING_UPLOAD",
+  "mode": "inbox",
+  "at": "2026-10-27T19:07:18.466114+00:00"
  }
 }
