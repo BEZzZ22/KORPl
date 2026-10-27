@@ -54,13 +54,13 @@ function start() {
     const now = [], later = [];
     for (const el of items) (el.getBoundingClientRect().top < innerHeight ? now : later).push(el);
     reveal(now, x);
-    for (const el of later) { gsap.set(el, { autoAlpha: 0, y: 28 }); seen.observe(el); }
+    for (const el of later) { gsap.set(el, { opacity: 0, y: 28 }); seen.observe(el); }
   }
 
   function reveal(items, x) {
     if (!items.length) return;
-    gsap.fromTo(items, { autoAlpha: 0, y: x ? 0 : 22, x },
-      { autoAlpha: 1, y: 0, x: 0, duration: 0.9, stagger: 0.055, clearProps: "opacity,visibility,transform" });
+    gsap.fromTo(items, { opacity: 0, y: x ? 0 : 22, x },
+      { opacity: 1, y: 0, x: 0, duration: 0.9, stagger: 0.055, clearProps: "opacity,visibility,transform" });
     items.forEach((el, i) => details(el, 0.12 + i * 0.055));
   }
 
@@ -82,26 +82,6 @@ function start() {
   function each(el, sel, fn) {
     if (el.matches && el.matches(sel)) fn(el);
     el.querySelectorAll && el.querySelectorAll(sel).forEach(fn);
-  }
-
-  // «4/19/30», «53%», «4.8», «−12» — бегут все числа в строке, формат (знаки после запятой, разделитель) сохраняется
-  function countUp(node, delay) {
-    const text = node.textContent;
-    if (!text || text.length > 16 || !/\d/.test(text)) return;
-    const parts = text.split(/(\d+(?:[.,]\d+)?)/);
-    const nums = parts.map((p, i) => (i % 2 ? Number(p.replace(",", ".")) : null));
-    const digits = parts.map((p, i) => (i % 2 ? (p.split(/[.,]/)[1] || "").length : 0));
-    const sep = parts.map((p) => (p.includes(",") ? "," : "."));
-    const state = { t: 0 };
-    gsap.to(state, {
-      t: 1, duration: 1.3, delay, ease: "power3.out",
-      onUpdate: () => {
-        if (!node.isConnected) return;
-        node.textContent = parts.map((p, i) => (i % 2 ? (nums[i] * state.t).toFixed(digits[i]).replace(".", sep[i]) : p)).join("");
-      },
-      onComplete: () => { node.textContent = text; },
-    });
-    node.textContent = parts.map((p, i) => (i % 2 ? (0).toFixed(digits[i]).replace(".", sep[i]) : p)).join("");
   }
 
   function draw(path, delay) {
@@ -141,4 +121,137 @@ function start() {
     const btn = e.target instanceof Element && e.target.closest(".tabbtn, .tab");
     if (btn) gsap.fromTo(btn.querySelector("svg") || btn, { scale: 0.86 }, { scale: 1, duration: 0.7, ease: "elastic.out(1, 0.45)", clearProps: "transform" });
   }, { capture: true });
+
+  interactive();
+}
+
+// «4/19/30», «53%», «4.8», «−12» — бегут все числа в строке, формат (знаки после запятой, разделитель) сохраняется
+function countUp(node, delay) {
+  // повторный тап посреди счёта: берём итоговое значение, а не промежуточное
+  if (!node.dataset.final || !node.dataset.counting) node.dataset.final = node.textContent;
+  const text = node.dataset.final;
+  if (!text || text.length > 16 || !/\d/.test(text)) return;
+  const parts = text.split(/(\d+(?:[.,]\d+)?)/);
+  const nums = parts.map((p, i) => (i % 2 ? Number(p.replace(",", ".")) : null));
+  const digits = parts.map((p, i) => (i % 2 ? (p.split(/[.,]/)[1] || "").length : 0));
+  const sep = parts.map((p) => (p.includes(",") ? "," : "."));
+  const state = { t: 0 };
+  gsap.killTweensOf(node.__count || {});
+  node.__count = state;
+  node.dataset.counting = "1";
+  gsap.to(state, {
+    t: 1, duration: 1.3, delay, ease: "power3.out",
+    onUpdate: () => {
+      if (!node.isConnected) return;
+      node.textContent = parts.map((p, i) => (i % 2 ? (nums[i] * state.t).toFixed(digits[i]).replace(".", sep[i]) : p)).join("");
+    },
+    onComplete: () => { node.textContent = text; delete node.dataset.counting; },
+  });
+  node.textContent = parts.map((p, i) => (i % 2 ? (0).toFixed(digits[i]).replace(".", sep[i]) : p)).join("");
+}
+
+// ---------- интерактив: всё отвечает на палец ----------
+
+const LIT = ".card, .fresh-match, .draft-entry, .match-item, .ach, .hero-stat, .compare-item, .week-match";
+const PRESS = "button:not(.tab):not(.tabbtn):not(.coach-step):not(.seg), .match-item, .fresh-match, .draft-entry";
+
+function interactive() {
+  // Свет за пальцем: мягкое пятно на фоне всего экрана
+  const glow = document.createElement("div");
+  glow.className = "v2-glow";
+  glow.setAttribute("aria-hidden", "true");
+  document.body.append(glow);
+  const gx = gsap.quickTo(glow, "x", { duration: 0.6, ease: "power3.out" });
+  const gy = gsap.quickTo(glow, "y", { duration: 0.6, ease: "power3.out" });
+  let lit = null;
+
+  const move = (e) => {
+    gx(e.clientX); gy(e.clientY);
+    const card = e.target instanceof Element && e.target.closest(LIT);
+    if (card !== lit) {
+      if (lit) gsap.to(lit, { "--sa": 0, duration: 0.6 });
+      lit = card;
+      if (lit) gsap.to(lit, { "--sa": 1, duration: 0.35 });
+    }
+    // блик на плите идёт за пальцем
+    if (lit) {
+      const r = lit.getBoundingClientRect();
+      lit.style.setProperty("--mx", `${e.clientX - r.left}px`);
+      lit.style.setProperty("--my", `${e.clientY - r.top}px`);
+    }
+  };
+  addEventListener("pointerdown", (e) => {
+    gsap.set(glow, { x: e.clientX, y: e.clientY });
+    gsap.to(glow, { autoAlpha: 1, scale: 1, duration: 0.4 });
+    move(e);
+    const el = e.target instanceof Element && e.target.closest(PRESS);
+    if (el && !el.disabled) gsap.to(el, { scale: 0.965, duration: 0.18, ease: "power2.out" });
+  }, { passive: true });
+  addEventListener("pointermove", move, { passive: true });
+  const release = () => {
+    gsap.to(glow, { autoAlpha: 0, scale: 0.6, duration: 0.8 });
+    if (lit) { gsap.to(lit, { "--sa": 0, duration: 0.8 }); lit = null; }
+    gsap.utils.toArray(document.querySelectorAll(PRESS)).forEach((el) => {
+      if (gsap.getProperty(el, "scale") !== 1) gsap.to(el, { scale: 1, duration: 0.9, ease: "elastic.out(1, 0.4)", clearProps: "transform" });
+    });
+  };
+  addEventListener("pointerup", release, { passive: true });
+  addEventListener("pointercancel", release, { passive: true });
+
+  // Тап по цифрам и кольцу оценки: пересчитываются заново с пружинкой
+  app.addEventListener("click", (e) => {
+    const t = e.target instanceof Element ? e.target : null;
+    if (!t) return;
+    const medal = t.closest(".medal");
+    if (medal) {
+      gsap.fromTo(medal, { "--p": 0 }, { "--p": medal.style.getPropertyValue("--p") || 50, duration: 1.4, ease: "power4.out" });
+      gsap.fromTo(medal, { scale: 0.9 }, { scale: 1, duration: 1, ease: "elastic.out(1, 0.4)", clearProps: "transform" });
+      const b = medal.querySelector("b");
+      if (b) countUp(b, 0);
+      buzz();
+      return;
+    }
+    const tile = t.closest(".stat, .metric");
+    if (tile) {
+      gsap.fromTo(tile, { scale: 0.92 }, { scale: 1, duration: 0.9, ease: "elastic.out(1, 0.4)", clearProps: "transform" });
+      const b = tile.querySelector("b");
+      if (b) countUp(b, 0);
+      buzz();
+      return;
+    }
+    // форма: волна по квадратикам от того, по которому ткнули
+    const strip = t.closest(".form-strip");
+    if (strip) {
+      const dots = [...strip.children];
+      const from = Math.max(0, dots.indexOf(t.closest(".dot")));
+      gsap.fromTo(dots, { y: 0 }, { y: -8, duration: 0.22, yoyo: true, repeat: 1, ease: "power2.out", stagger: { each: 0.03, from }, clearProps: "transform" });
+      buzz();
+      return;
+    }
+    // полоски: тап по строке с полоской — она дорастает заново
+    const row = t.closest(".score-row, .zone-row, .build-row, .ach");
+    if (row) row.querySelectorAll(BARS).forEach((bar) => gsap.fromTo(bar, { scaleX: 0 }, { scaleX: 1, transformOrigin: "0 50%", duration: 1, clearProps: "transform" }));
+  });
+
+  // Скролл: Аегис на главной уходит в глубину, картинка героя в шапке разбора едет медленнее страницы
+  let raf = 0;
+  addEventListener("scroll", () => {
+    if (raf) return;
+    raf = requestAnimationFrame(() => {
+      raf = 0;
+      const y = scrollY;
+      const shield = app.querySelector(".app-top .aegis");
+      if (shield) {
+        const k = Math.min(1, y / 260);
+        gsap.set(shield, { scale: 1 - k * 0.22, y: y * 0.35, opacity: 1 - k * 0.7 });
+      }
+      const banner = app.querySelector(".hero-banner > img");
+      if (banner) gsap.set(banner, { y: Math.min(y, 400) * 0.3 });
+    });
+  }, { passive: true });
+}
+
+function buzz() {
+  const tg = window.Telegram && window.Telegram.WebApp;
+  try { if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred("light"); } catch { /* старый клиент */ }
 }
