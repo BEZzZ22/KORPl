@@ -6,9 +6,9 @@ import {
 import { aegisBadge, openShowcase } from "./aegis.js?v=4";
 import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=3";
 import { matchVerdicts } from "./blame.js?v=3";
-import { rankMedal3d } from "./medal3d.js?v=1";
+import { rankMedal3d } from "./medal3d.js?v=2";
 import { heroCard3d } from "./herocard3d.js?v=1";
-import { tacticalTable } from "./map3d.js?v=1";
+import { tacticalTable } from "./map3d.js?v=2";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -693,7 +693,7 @@ async function profileScreen() {
 
   render(
     V2 && h("div", { class: "rank3d-wrap" }, rankMedal3d(player.rank_tier, { reduced: reducedMotion(), haptic, tick: hapticTick }),
-      h("div", { class: "small muted" }, "Крути пальцем, тап — перевернуть")),
+      h("div", { class: "small muted" }, "Крути пальцем, тап — глитч")),
     h("div", { class: "card" },
       h("div", { class: "profile-card" },
         avatar ? h("img", { class: "avatar", src: avatar, alt: "", loading: "lazy" }) : h("div", { class: "avatar" }),

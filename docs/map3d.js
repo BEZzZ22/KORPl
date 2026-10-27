@@ -49,7 +49,7 @@ export function tacticalTable({ deaths = [], wards = [], reduced = false, haptic
     });
     board.append(pin);
   });
-  wards.slice(0, 40).forEach((w, i) => {
+  wards.slice(0, 24).forEach((w, i) => {
     const pin = pillar(`ward${w.mine ? " mine" : ""}${w.dewarded ? " dewarded" : ""}`, 12, 300 + i * 30);
     pin.style.left = `${(mapX(w.x) / 128) * 100}%`;
     pin.style.top = `${(mapY(w.y) / 128) * 100}%`;
@@ -71,11 +71,12 @@ export function tacticalTable({ deaths = [], wards = [], reduced = false, haptic
   showInfo("Крути стол пальцем, тап по столбу — что там было");
 
   // ---------- вращение: угол стола и наклон, инерция ----------
-  let spin = -20, tilt = 52, v = 0, held = false, lastX = 0, lastY = 0, lastT = 0, raf = 0, moved = 0;
+  let spin = -20, tilt = 52, v = 0, held = false, lastX = 0, lastY = 0, lastT = 0, raf = 0, moved = 0, visible = false;
   const draw = () => { stage.style.transform = `rotateX(${tilt.toFixed(2)}deg) rotateZ(${spin.toFixed(2)}deg)`; };
   const loop = () => {
     raf = 0;
-    if (!root.isConnected) return;
+    // вне экрана и в свёрнутом приложении стол не крутим
+    if (!root.isConnected || !visible || document.hidden) return;
     if (!held) {
       spin += v;
       v *= 0.95;
@@ -110,11 +111,15 @@ export function tacticalTable({ deaths = [], wards = [], reduced = false, haptic
   });
 
   draw();
-  if (!reduced) raf = requestAnimationFrame(loop);
-  // столбы вырастают, когда стол доехал до экрана
+  const kick = () => { if (!raf && !reduced) raf = requestAnimationFrame(loop); };
+  view.addEventListener("pointerdown", kick);
+  document.addEventListener("visibilitychange", kick);
+  // столбы вырастают, когда стол доехал до экрана; вне экрана — пауза
   const io = new IntersectionObserver((es) => {
-    if (es.some((x) => x.isIntersecting)) { root.classList.add("grown"); io.disconnect(); }
-  }, { threshold: 0.3 });
+    visible = es.some((x) => x.isIntersecting);
+    root.classList.toggle("paused", !visible);
+    if (visible) { root.classList.add("grown"); kick(); }
+  }, { threshold: 0.15 });
   io.observe(root);
   if (reduced) root.classList.add("grown");
   return root;

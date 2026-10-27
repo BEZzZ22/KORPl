@@ -163,7 +163,7 @@ function interactive() {
   document.body.append(glow);
   const gx = gsap.quickTo(glow, "x", { duration: 0.6, ease: "power3.out" });
   const gy = gsap.quickTo(glow, "y", { duration: 0.6, ease: "power3.out" });
-  let lit = null;
+  let lit = null, lastPt = [0, 0], spotRaf = 0;
 
   const move = (e) => {
     gx(e.clientX); gy(e.clientY);
@@ -173,11 +173,17 @@ function interactive() {
       lit = card;
       if (lit) gsap.to(lit, { "--sa": 1, duration: 0.35 });
     }
-    // блик на плите идёт за пальцем
+    // блик на плите идёт за пальцем: не чаще кадра, иначе на дешёвых телефонах карточка перерисовывается
+    // по нескольку раз за кадр
     if (lit) {
-      const r = lit.getBoundingClientRect();
-      lit.style.setProperty("--mx", `${e.clientX - r.left}px`);
-      lit.style.setProperty("--my", `${e.clientY - r.top}px`);
+      lastPt = [e.clientX, e.clientY];
+      if (!spotRaf) spotRaf = requestAnimationFrame(() => {
+        spotRaf = 0;
+        if (!lit) return;
+        const r = lit.getBoundingClientRect();
+        lit.style.setProperty("--mx", `${lastPt[0] - r.left}px`);
+        lit.style.setProperty("--my", `${lastPt[1] - r.top}px`);
+      });
     }
   };
   addEventListener("pointerdown", (e) => {
