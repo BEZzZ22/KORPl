@@ -11,5 +11,6 @@
  "faq_steam": 16,
  "lane": 17,
  "die10": 18,
- "draft": 19
+ "draft": 19,
+ "limits": 20
 }
