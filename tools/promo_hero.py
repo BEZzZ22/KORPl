@@ -31,6 +31,8 @@ WHITE, MUTED, INK = (246, 244, 240), (150, 150, 160), (7, 8, 11)
 GOLD, RED, GREEN, BLUE = (255, 196, 64), (240, 78, 64), (52, 199, 120), (120, 180, 255)
 YOU = (255, 110, 100)
 BEAT = 0.5                                  # 120 BPM: все времена ниже кратны доле
+SLOW = 1.6                                  # сценарии пишутся в «быстром» времени, ролик растягивается: 120 -> 75 BPM, ~37 с.
+                                            # На 1.0 Ярик не успевал читать. Тряска, вспышка и смаз в спокойном режиме мягче.
 
 
 # ---------- базовые инструменты ----------
@@ -376,7 +378,7 @@ class Cut:
     def pulse(t, t0):
         if t < t0:
             return 1.0
-        return 1 + 0.018 * math.exp(-((t - t0) % BEAT) / BEAT * 9)
+        return 1 + 0.018 / SLOW * math.exp(-((t - t0) % BEAT) / BEAT * 9)
 
     def background(self, t):
         ox, oy = 200 + 150 * math.sin(t * 0.3 + self.seed), 200 + 160 * math.cos(t * 0.23)
@@ -421,7 +423,7 @@ class Cut:
         put(img, line_layer("ссылка в описании", "SemiBold", 40, MUTED), W / 2, py + 120, alpha=clamp01((k - 1.0) / 0.3))
 
     def frame(self, i):
-        t = i / FPS
+        t = i / FPS / SLOW
         img = self.background(t)
         if t < self.cta:
             self.scene(img, t)
@@ -430,12 +432,13 @@ class Cut:
         img.alpha_composite(self.vignette)
         img.alpha_composite(self.grain[i % len(self.grain)])
         arr = np.asarray(img.convert("RGB")).copy()
-        arr = self.whip(arr, t)
+        arr = self.whip(arr, i / FPS)
+        calm = 1 / SLOW
         for at, power in self.hits + [(self.drop, 1.0), (0.0, 0.6)]:
-            k = t - at
+            k = i / FPS - at * SLOW
             if not 0 <= k < 0.5 * power:
                 continue
-            amp = (1 - k / (0.5 * power)) ** 2 * power
+            amp = (1 - k / (0.5 * power)) ** 2 * power * calm ** 2
             rng = np.random.default_rng(i)
             dx, dy = (rng.uniform(-1, 1, 2) * 26 * amp).astype(int)
             arr = shift(arr, dx, dy)
@@ -444,7 +447,8 @@ class Cut:
                 arr[..., 0] = shift(arr[..., 0], s)
                 arr[..., 2] = shift(arr[..., 2], -s)
             if at == self.drop and k < 0.1:
-                arr = (arr * (1 - (1 - k / 0.1) * 0.85) + 255 * (1 - k / 0.1) * 0.85).astype(np.uint8)
+                fl = (1 - k / 0.1) * 0.85 * calm
+                arr = (arr * (1 - fl) + 255 * fl).astype(np.uint8)
             arr = self.punch(arr, 1 + 0.07 * amp)
         return arr.tobytes()
 
@@ -458,10 +462,10 @@ class Cut:
 
     def whip(self, arr, t):
         for n, c in enumerate(self.cuts):
-            dt = t - c
+            dt = t - c * SLOW
             if -0.12 < dt < 0.12:
                 p = dt / 0.12
-                off = int((1 if n % 2 else -1) * (-p if dt < 0 else 1 - p) * W * 0.25)
+                off = int((1 if n % 2 else -1) * (-p if dt < 0 else 1 - p) * W * 0.25 / SLOW)
                 strength = 1 - abs(p)
                 acc = np.zeros(arr.shape, np.float32)
                 for j in range(8):
@@ -542,7 +546,7 @@ class GuessRank(Cut):
             put(img, line_layer(str(max(1, math.ceil(self.land - t))), "Black", 64, WHITE, shadow=False), W / 2, 1478)
         elif t < self.twist:
             k = t - self.drop
-            sc = 1.55 - 0.55 * expo(k / 0.28)
+            sc = 1.2 - 0.2 * expo(k / 0.28)
             put(img, self.answer_tag, W / 2, 300, alpha=clamp01((k - 0.2) / 0.2))
             put(img, self.answer_glow, W / 2, 520, sc, alpha=0.6 + 0.4 * math.sin(k * 5) ** 2)
             put(img, self.answer, W / 2, 520, sc)
@@ -1412,13 +1416,15 @@ PROGS = [[(220.0, True), (174.61, False), (261.63, False), (196.0, False)],     
 
 def soundtrack(cut, path):
     rng = np.random.default_rng(cut.seed + 100)
-    end, build, land, drop, cta = cut.end, cut.build, cut.land, cut.drop, cut.cta
+    beat = BEAT * SLOW                                    # трек растягивается вместе с картинкой
+    bar_len = 4 * beat
+    end, build, land, drop, cta = (x * SLOW for x in (cut.end, cut.build, cut.land, cut.drop, cut.cta))
     n = int(end * SR)
     drums, bass, pad, arp, fx = (np.zeros(n) for _ in range(5))
     K, C, Hh, Ho = kick(), clap(rng), hat(rng), hat(rng, True)
     duck = np.ones(n)
-    for b in range(int(end / BEAT)):
-        t = b * BEAT
+    for b in range(int(end / beat)):
+        t = b * beat
         if build <= t < drop:
             continue
         hot, outro = drop <= t < cta, t >= cta
@@ -1429,34 +1435,34 @@ def soundtrack(cut, path):
             duck[s:s + ln] *= np.linspace(0.35, 1, ln)
         if b % 4 in (1, 3) and not outro:
             add(drums, t, C, 0.55 if hot else 0.45)
-        add(drums, t + BEAT / 2, Ho if hot else Hh, 0.3 if hot else 0.22)
+        add(drums, t + beat / 2, Ho if hot else Hh, 0.3 if hot else 0.22)
         if not outro:
-            add(drums, t + BEAT / 4, Hh, 0.12)
-            add(drums, t + 3 * BEAT / 4, Hh, 0.12)
-        if b % 8 == 7 and not outro and t + BEAT < build:
+            add(drums, t + beat / 4, Hh, 0.12)
+            add(drums, t + 3 * beat / 4, Hh, 0.12)
+        if b % 8 == 7 and not outro and t + beat < build:
             for j in range(6):
-                add(drums, t + j * BEAT / 6, Hh, 0.1 + 0.03 * j)
+                add(drums, t + j * beat / 6, Hh, 0.1 + 0.03 * j)
     t = build
     while t < land - 0.02:                                # дробь клэпа ускоряется к дропу
         u = (t - build) / (land - build)
         add(drums, t, C, 0.15 + 0.45 * u)
-        t += BEAT / (2 if u < 0.35 else 4 if u < 0.7 else 8)
+        t += beat / (2 if u < 0.35 else 4 if u < 0.7 else 8)
     prog = PROGS[cut.chords % len(PROGS)]
-    for bar in range(int(end / 2) + 1):
+    for bar in range(int(end / bar_len) + 1):
         root, minor = prog[bar % 4]
-        t0 = bar * 2.0
+        t0 = bar * bar_len
         third = 1.189 if minor else 1.26
         for mult in (1, third, 1.498, 2):
-            s = fft_lp(tone(root * mult, int(2.0 * SR), "saw"), 1800) * np.minimum(1, n_(2.0) / 0.25) * np.exp(-n_(2.0) / 2.5)
+            s = fft_lp(tone(root * mult, int(bar_len * SR), "saw"), 1800) * np.minimum(1, n_(bar_len) / 0.25) * np.exp(-n_(bar_len) / 2.5)
             add(pad, t0, s, 0.05)
         if t0 < build or t0 >= drop:
             per = 8 if drop <= t0 < cta else 4
             for j in range(per if t0 < cta else 1):
-                add(bass, t0 + j * 2.0 / per, sub808(root / 4, 2.0 / per * 1.6), 0.6)
-        if 2.0 <= t0 < build or drop <= t0 < cta:
+                add(bass, t0 + j * bar_len / per, sub808(root / 4, bar_len / per * 1.6), 0.6)
+        if 2.0 * SLOW <= t0 < build or drop <= t0 < cta:
             for j in range(16):
                 f = root * [1, third, 1.498, 2.0, 1.498, third][(j * (5 + cut.seed % 3)) % 6] * 2
-                add(arp, t0 + j * 0.125, pluck(f), 0.09 if t0 < build else 0.12)
+                add(arp, t0 + j * bar_len / 16, pluck(f), 0.09 if t0 < build else 0.12)
     melody = pad + arp
     s0, s1, s2 = int(build * SR), int(land * SR), int(drop * SR)
     mix_k = np.zeros(n)
@@ -1469,15 +1475,15 @@ def soundtrack(cut, path):
     add(fx, drop, sub808(36.7, 1.8), 0.9)
     add(fx, build, riser(rng, land - build), 0.7)
     for c in cut.cuts:
-        add(fx, c - 0.22, whoosh(rng, 0.3), 0.5)
+        add(fx, c * SLOW - 0.22, whoosh(rng, 0.3), 0.5 / SLOW)
     for at, power in cut.hits:
-        add(fx, at, impact(rng)[: int(0.8 * SR)], 0.45 * power + 0.15)
+        add(fx, at * SLOW, impact(rng)[: int(0.8 * SR)], 0.45 * power + 0.15)
     for c in cut.clicks:
-        add(fx, c, pluck(1760, 0.12), 0.25)
+        add(fx, c * SLOW, pluck(1760, 0.12), 0.25)
     for x in cut.ticks:
-        add(fx, x, np.sin(2 * np.pi * 2400 * n_(0.03)) * np.exp(-n_(0.03) * 160), 0.35)
+        add(fx, x * SLOW, np.sin(2 * np.pi * 2400 * n_(0.03)) * np.exp(-n_(0.03) * 160), 0.35)
     add(fx, land, np.sin(2 * np.pi * 1318 * n_(0.4)) * np.exp(-n_(0.4) * 9), 0.3)
-    add(fx, cut.twist + 0.5, np.sin(2 * np.pi * 1568 * n_(0.6)) * np.exp(-n_(0.6) * 7), 0.25)
+    add(fx, cut.twist * SLOW + 0.5, np.sin(2 * np.pi * 1568 * n_(0.6)) * np.exp(-n_(0.6) * 7), 0.25)
     fade = np.ones(n)
     fade[-int(1.2 * SR):] = np.linspace(1, 0, int(1.2 * SR))
     mix = np.tanh((drums * 0.95 + bass * 0.75 + melody * duck + fx) * 1.25) * fade
@@ -1528,7 +1534,7 @@ def make(name):
                                 "-i", str(wav), "-c:v", "libx264", "-preset", "slow", "-crf", "23", "-pix_fmt", "yuv420p", "-profile:v", "high",
                                 "-movflags", "+faststart", "-c:a", "aac", "-b:a", "256k", "-shortest", str(OUT / f"{name}.mp4")], stdin=subprocess.PIPE)
         with ProcessPoolExecutor(initializer=_init, initargs=(name, tmp)) as pool:
-            for buf in pool.map(_frame, range(int(cut.end * FPS)), chunksize=8):
+            for buf in pool.map(_frame, range(int(cut.end * SLOW * FPS)), chunksize=8):
                 enc.stdin.write(buf)
         enc.stdin.close()
         if enc.wait():
