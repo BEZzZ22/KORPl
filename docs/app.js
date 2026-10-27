@@ -25,7 +25,8 @@ const STEAM_MIRROR = "https://cdn.akamai.steamstatic.com";
 const STEAM64_OFFSET = 76561197960265728n;
 const PARSE_POLL_MS = 15000;
 const PARSE_POLL_MAX = 20;
-const BG_COLOR = "#08090c";
+const V2 = document.documentElement.classList.contains("v2");
+const BG_COLOR = V2 ? "#09090b" : "#08090c";
 const DAMAGE_TYPES = { Physical: "физический", Magical: "магический", Pure: "чистый" };
 const PHASE_LABEL = { good: "в плюс", even: "ровно", bad: "в минус" };
 const TURBO_MODE = 23;
@@ -725,9 +726,26 @@ async function profileScreen() {
       );
     })),
     weakHeroesBlock(heroes),
+    designSwitch(),
     h("button", { class: "ghost", onclick: () => { storage.set("account_id", ""); navRoot("home", homeScreen); } }, "Сменить аккаунт"),
   );
   tilt(app.querySelector(".profile-card") && app.querySelector(".profile-card").parentElement);
+}
+
+// Дизайн «Новый» или «Классика»: выбор читает theme.js до отрисовки, поэтому после смены — перезагрузка
+function designSwitch() {
+  const pickDesign = (value) => () => {
+    if ((value === "v2") === V2) return;
+    haptic();
+    step(value === "v2" ? "design_v2" : "design_classic");
+    try { localStorage.setItem("design", value); } catch { return; }
+    location.reload();
+  };
+  const seg = (value, label) => h("button", { type: "button", class: "seg", "aria-pressed": String((value === "v2") === V2), onclick: pickDesign(value) }, label);
+  return h("div", { class: "design-switch" },
+    h("h2", {}, "Дизайн"),
+    h("div", { class: "seg-row" }, seg("v2", "Новый"), seg("classic", "Классика")),
+    h("p", { class: "small muted" }, V2 ? "Чистый тёмный стиль с анимацией." : "Привычная «ночная карта»."));
 }
 
 // Тренд по последним играм: свежие 10 против предыдущих 10 (по данным recentMatches)

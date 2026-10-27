@@ -128,14 +128,16 @@ const context = await browser.newContext({
   colorScheme: "dark", reducedMotion: process.env.UI_MOTION ? "no-preference" : "reduce",
 });
 // Привязанный аккаунт и одна уже открытая раньше катка, чтобы было с чем сравнить
-await context.addInitScript(([acc, other]) => {
+// UI_DESIGN=v2 — прогон нового дизайна (тёмный минимал), иначе классика
+await context.addInitScript(([acc, other, design]) => {
   try {
+    if (design) localStorage.setItem("design", design);
     localStorage.setItem("account_id", String(acc));
     if (!localStorage.getItem(`cmp:${acc}`)) localStorage.setItem(`cmp:${acc}`, JSON.stringify([other]));
     // задача с прошлой катки: не больше одной смерти до 10:00 (у Tusk в этой катке две — провал)
     if (!localStorage.getItem(`goal:${acc}`)) localStorage.setItem(`goal:${acc}`, JSON.stringify({ text: "Цель на следующую катку: не больше одной смерти до 10:00", check: { group: "lane_deaths", metric: "lane_deaths", op: "<=", target: 1 }, match: 1, t: 1000 }));
   } catch { /* */ }
-}, [ACCOUNT, { match: 1, hero: "Invoker", hero_id: 74, won: true, kda: "12/3/9", t: 0, payload: { hero: "Invoker", won: true, kda: "12/3/9", duration: "41:02" } }]);
+}, [ACCOUNT, { match: 1, hero: "Invoker", hero_id: 74, won: true, kda: "12/3/9", t: 0, payload: { hero: "Invoker", won: true, kda: "12/3/9", duration: "41:02" } }, process.env.UI_DESIGN || ""]);
 let netDown = false; // офлайн-проверка: все запросы рвутся, как без сети
 async function handleRoute(route) {
   if (netDown) return route.abort("internetdisconnected");
