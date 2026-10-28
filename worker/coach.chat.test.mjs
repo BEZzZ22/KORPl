@@ -448,7 +448,8 @@ test("реплеи: очередь для Actions, готовый результ
   assert.equal(await queueReplay(e, 9052987576, 42), "queued"); // повтор не дублирует
   assert.equal(JSON.parse(kv.m.get("replay_queue")).length, 1);
   const q = await (await worker.fetch(new Request("https://coach.example/replay-queue"), e)).json();
-  assert.deepEqual(q, { matches: [9052987576] });
+  assert.deepEqual(q.matches, [9052987576]);
+  assert.ok(q.since[9052987576] > 0);
   // ещё не готово
   mockFetch({ gh: [new Response("", { status: 404 }), new Response("", { status: 404 })] });
   assert.equal(await checkReplays(e), 0);
@@ -468,6 +469,26 @@ test("реплеи: ошибка разбора тоже снимается с �
   await queueReplay(e, 1234567, null);
   mockFetch({ gh: [new Response("", { status: 404 }), new Response("{}", { status: 200 })] });
   await checkReplays(e);
+  assert.equal(kv.m.get("replay:1234567"), "error");
+  assert.equal(JSON.parse(kv.m.get("replay_queue")).length, 0);
+});
+
+test("реплеи: ошибка старше повторной заявки не считается, а очередь отдаёт время заявки", async (t) => {
+  t.after(restore);
+  const kv = fakeKV();
+  const e = { COACH_KV: kv };
+  const t0 = Date.now();
+  await queueReplay(e, 1234567, null, t0);
+  const q = await (await worker.fetch(new Request("https://coach.example/replay-queue"), e)).json();
+  assert.deepEqual(q, { matches: [1234567], since: { 1234567: Math.floor(t0 / 1000) } });
+  // ошибка прошлой попытки (за час до заявки): ждём, workflow попробует снова
+  mockFetch({ gh: [new Response("", { status: 404 }), new Response(JSON.stringify({ error: "x", t: Math.floor(t0 / 1000) - 3600 }), { status: 200 })] });
+  await checkReplays(e, t0 + 60000);
+  assert.equal(JSON.parse(kv.m.get("replay_queue")).length, 1);
+  assert.equal(kv.m.get("replay:1234567"), undefined);
+  // свежая ошибка — снимаем
+  mockFetch({ gh: [new Response("", { status: 404 }), new Response(JSON.stringify({ error: "x", t: Math.floor(t0 / 1000) + 120 }), { status: 200 })] });
+  await checkReplays(e, t0 + 180000);
   assert.equal(kv.m.get("replay:1234567"), "error");
   assert.equal(JSON.parse(kv.m.get("replay_queue")).length, 0);
 });

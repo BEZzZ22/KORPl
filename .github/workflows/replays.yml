@@ -54,15 +54,21 @@ jobs:
             echo "$(date -u +%H:%M) очередь: $ids"
             git -C out pull -q --rebase origin replays || true
             for id in $ids; do
-                if [ -f "out/r/$id.json" ] || [ -f "out/r/$id.err.json" ]; then echo "$id уже разобран"; continue; fi
+                if [ -f "out/r/$id.json" ]; then echo "$id уже разобран"; continue; fi
+                # ошибка старше заявки — игрок попросил снова (OpenDota могла доразобрать матч): пробуем ещё раз.
+                # Свежая — воркер ещё не успел снять матч с очереди. То же правило у воркера в checkReplays
+                if [ -f "out/r/$id.err.json" ]; then
+                  if node -e 'const fs=require("fs");const e=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const q=JSON.parse(fs.readFileSync("queue.json","utf8"));const since=(q.since||{})[process.argv[2]]||0;process.exit(e.t&&e.t<since?1:0)' "out/r/$id.err.json" "$id"; then echo "$id: ошибка уже есть"; continue; fi
+                  git -C out rm -q "r/$id.err.json"
+                fi
                 echo "::group::Матч $id"
                 url=$(curl -sf --max-time 60 "https://api.opendota.com/api/matches/$id" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).replay_url||"")}catch{console.log("")}})')
                 if [ -z "$url" ]; then
-                  echo '{"error":"У OpenDota нет ссылки на реплей: матч ещё не разобран или реплей удалён"}' > "out/r/$id.err.json"
+                  echo "{\"error\":\"У OpenDota нет ссылки на реплей: матч ещё не разобран или реплей удалён\",\"t\":$(date +%s)}" > "out/r/$id.err.json"
                   echo "::endgroup::"; continue
                 fi
                 if ! curl -sf --max-time 300 "$url" -o replay.dem; then
-                  echo '{"error":"Реплей не скачался: Valve хранит их около двух недель"}' > "out/r/$id.err.json"
+                  echo "{\"error\":\"Реплей не скачался: Valve хранит их около двух недель\",\"t\":$(date +%s)}" > "out/r/$id.err.json"
                   echo "::endgroup::"; continue
                 fi
                 # Valve пакует по-разному (bzip2, внутри бывает ещё zstd): снимаем слои по сигнатуре, пока не останется .dem
@@ -85,7 +91,7 @@ jobs:
                     const fs = require("fs");
                     const out = fs.existsSync("parsed.jsonl") ? fs.readFileSync("parsed.jsonl", "utf8") : "";
                     const lines = out.split("\n");
-                    fs.writeFileSync(process.argv[1], JSON.stringify({ error: "Парсер не отдал позиции героев",
+                    fs.writeFileSync(process.argv[1], JSON.stringify({ error: "Парсер не отдал позиции героев", t: Math.floor(Date.now() / 1000),
                       debug: { http: process.env.CODE, magic: process.env.MAGIC, dem_bytes: Number(process.env.DEM), out_bytes: out.length, lines: lines.length,
                         intervals: lines.filter((l) => l.includes("\"interval\"")).length, head: out.slice(0, 600), logs: process.env.LOGS } }));
                   ' "out/r/$id.err.json"
