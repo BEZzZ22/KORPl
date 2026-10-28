@@ -120,3 +120,54 @@ test("«не согласен»: сохраняется и попадает в �
   assert.match(text, /Не согласны с выводом: 1\n— Аксель @axel, матч 9052987576: «Слил, похоже, Beastmaster»/);
   assert.match(text, /не согласны с «кто слил» 1/);
 });
+
+import worker, { dailyReport, reportCommandDay, handleBotUpdate } from "./coach.js";
+
+test("утренний отчёт — за вчера и один раз на день", async () => {
+  const kv = memKV(), sent = [];
+  const env = { COACH_KV: kv, BOT_TOKEN: "x", OWNER_TG_IDS: "5" };
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { sent.push(JSON.parse(init.body)); return { ok: true, text: async () => "{}" }; };
+  try {
+    await dailyReport(env, at("2026-10-27", 9));
+    assert.equal(await dailyReport(env, at("2026-10-27", 9)), null);
+    await dailyReport(env, at("2026-10-28", 9));
+  } finally { globalThis.fetch = real; }
+  assert.equal(sent.length, 2);
+  assert.match(sent[0].text, /^Отчёт за 26\.10 /);
+  assert.match(sent[1].text, /^Отчёт за 27\.10 /);
+});
+
+test("команда «отчёт»: сегодня, вчера, дата; остальное — не команда", () => {
+  const now = at("2026-10-28", 7);
+  assert.equal(reportCommandDay("отчёт", now), "2026-10-28");
+  assert.equal(reportCommandDay("Отчет", now), "2026-10-28");
+  assert.equal(reportCommandDay("/report@DotaRazbor_bot", now), "2026-10-28");
+  assert.equal(reportCommandDay("отчёт вчера", now), "2026-10-27");
+  assert.equal(reportCommandDay("отчёт 26.10", now), "2026-10-26");
+  assert.equal(reportCommandDay("отчёт 40.13", now), "2026-10-28");
+  assert.equal(reportCommandDay("отчётность", now), null);
+  assert.equal(reportCommandDay("привет", now), null);
+});
+
+test("«отчёт» в личке работает только у владельца, отчёт за сегодня", async () => {
+  const kv = memKV(), sent = [];
+  const env = { COACH_KV: kv, BOT_TOKEN: "x", OWNER_TG_IDS: "5" };
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { sent.push(JSON.parse(init.body)); return { ok: true, text: async () => "{}" }; };
+  const msg = (id, text, type = "private") => ({ message: { from: { id }, chat: { id, type }, text } });
+  try {
+    assert.equal(await handleBotUpdate(env, msg(7, "отчёт"), at("2026-10-28", 7)), null);
+    assert.equal(await handleBotUpdate(env, msg(5, "отчёт", "supergroup"), at("2026-10-28", 7)), null);
+    assert.equal(await handleBotUpdate(env, msg(5, "как дела"), at("2026-10-28", 7)), null);
+    assert.equal((await handleBotUpdate(env, msg(5, "отчёт"), at("2026-10-28", 7))).sent, 1);
+  } finally { globalThis.fetch = real; }
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].chat_id, 5);
+  assert.match(sent[0].text, /^Отчёт за 28\.10, сегодня на 07:00 МСК/);
+});
+
+test("вебхук без секрета не пускает", async () => {
+  const res = await worker.fetch(new Request("https://coach.example/tg", { method: "POST", body: "{}" }), { BOT_TOKEN: "x" }, { waitUntil() {} });
+  assert.equal(res.status, 403);
+});
