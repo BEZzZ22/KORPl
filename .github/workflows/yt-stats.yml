@@ -1,0 +1,44 @@
+# Что заходит людям: статистика Shorts на YouTube (просмотры, досмотр, лайки) владельцу в Телеграм от @DotaRazbor_bot.
+# Раз в день в 09:20 МСК, после отчёта по юзерам. История копится в promo/yt_stats.json.
+# Секреты: YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN (с правами на чтение, tools/yt_token.py), BOT_TOKEN.
+name: Статистика Shorts
+
+on:
+  schedule:
+    - cron: "20 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: yt
+  cancel-in-progress: false
+
+jobs:
+  stats:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Собираем и шлём
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        run: |
+          pip install -q google-api-python-client google-auth requests
+          python tools/yt_stats.py
+      - name: Сохранить историю
+        run: |
+          git config user.name "promo-bot"
+          git config user.email "promo-bot@users.noreply.github.com"
+          git add -A promo/yt_stats.json
+          git diff --cached --quiet && { echo "без изменений"; exit 0; }
+          git commit -q -m "YouTube: статистика Shorts"
+          for i in 1 2 3 4; do git pull -q --rebase && git push -q && exit 0; sleep $((i * 5)); done
+          exit 1
