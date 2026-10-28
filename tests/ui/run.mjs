@@ -260,8 +260,8 @@ await step("busy", async () => {
   if (busyOnce) throw new Error("429 не случился — шаг ничего не проверил");
   await p6.close();
 });
-// Переходы главная → профиль → разбор по кругу: старые экраны не должны копиться в памяти
-// (медаль и 3D-карта держали их слушателем документа). Клики через evaluate: хэндлы Playwright сами держат узлы
+// Круги по экранам (драфт, разбор со всеми вкладками, профиль, герой): старые экраны не должны копиться в памяти
+// (медаль и 3D-карта держали их слушателем документа, медаль — ещё и таймером). Клики через evaluate: хэндлы Playwright сами держат узлы
 await step("leak", async () => {
   const pl = await context.newPage();
   const cdp = await context.newCDPSession(pl);
@@ -276,18 +276,30 @@ await step("leak", async () => {
   await pl.goto(`${BASE}/index.html`);
   await wait(".fresh-match");
   const seen = [];
-  for (let i = 0; i < 5; i++) {
-    await click(".tabbar button", "Профиль");
-    await pl.waitForTimeout(2300);
-    await click(".tabbar button", "Главная");
+  for (let i = 0; i < 4; i++) {
+    await click(".draft-entry");
+    await pl.waitForTimeout(1500);
+    await click('.tabbtn[data-tab="home"]');
     await wait(".fresh-match");
     await click(".fresh-match");
     await wait(".hero-head");
+    // все вкладки разбора: на них карта, графики и 3D-стол
+    const tabs = await pl.evaluate(() => document.querySelectorAll(".tabs .tab").length);
+    for (let t = 0; t < tabs; t++) {
+      await pl.evaluate((k) => { const x = document.querySelectorAll(".tabs .tab")[k]; if (x) x.click(); }, t);
+      await pl.waitForTimeout(500);
+    }
+    await click('.tabbtn[data-tab="profile"]');
+    await pl.waitForTimeout(1000);
+    await pl.evaluate(() => { const x = document.querySelector(".hero-stat"); if (x) x.click(); });
+    await pl.waitForTimeout(1000);
+    await click('.tabbtn[data-tab="home"]');
+    await wait(".fresh-match");
     await pl.waitForTimeout(2300);
     seen.push(await nodes());
   }
   await pl.close();
-  if (seen[4] - seen[0] > 300) throw new Error(`узлы DOM копятся при переходах: ${seen.join(" → ")}`);
+  if (seen[3] - seen[0] > 300) throw new Error(`узлы DOM копятся при переходах: ${seen.join(" → ")}`);
 });
 
 await step("goal", async () => {

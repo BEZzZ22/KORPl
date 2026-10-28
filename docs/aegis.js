@@ -70,12 +70,13 @@ export function gyro(onTilt) {
 let tgGyroUsers = 0;
 
 // Экран перерисовали — элемент ушёл из DOM: fn снимает слушателей документа, датчик и наблюдателей,
-// иначе они держат в памяти весь старый экран. Ждём, пока элемент хоть раз окажется в DOM
+// иначе они держат в памяти весь старый экран. Ждём, пока элемент хоть раз окажется в DOM;
+// не попал в DOM за 10 с (экран успели сменить раньше первой проверки) — тоже убираем
 export function whenGone(el, fn) {
-  let shown = false;
+  let shown = false, ticks = 0;
   const t = setInterval(() => {
     if (el.isConnected) shown = true;
-    else if (shown) { clearInterval(t); fn(); }
+    else if (shown || ++ticks >= 5) { clearInterval(t); fn(); }
   }, 2000);
 }
 
