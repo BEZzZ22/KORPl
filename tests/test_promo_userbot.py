@@ -59,7 +59,9 @@ def test_queue_is_valid_and_human_paced():
         if p.get("photo"):
             assert (root / p["photo"]).exists(), p["id"]
         datetime.fromisoformat(p["at"])
-    posts = sorted((datetime.fromisoformat(p["at"]) for p in queue if p["id"] != "launch"))
+    # служебные посты (техработы и их окончание) идут сверх обычных трёх в день
+    service = ("launch", "maint-", "works-", "done-")
+    posts = sorted((datetime.fromisoformat(p["at"]) for p in queue if not p["id"].startswith(service)))
     per_day = {}
     for d in posts:
         per_day[d.date()] = per_day.get(d.date(), 0) + 1
