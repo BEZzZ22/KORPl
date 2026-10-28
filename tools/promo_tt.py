@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 QUEUE, POSTED = ROOT / "promo" / "yt_queue.json", ROOT / "promo" / "tt_posted.json"
 API = "https://open.tiktokapis.com/v2"
 SINGLE_MAX, CHUNK = 64 * 1024 * 1024, 10 * 1024 * 1024
+MAX_FILE = 30 * 1024 * 1024    # ролики по 50–65 МБ (12 Мбит/с) TikTok обрабатывал часами и отдавал обрезанными на середине
 MSK, DAY = timezone(timedelta(hours=3)), range(9, 23)
 
 
@@ -70,6 +71,8 @@ def upload(token, post, mode):
     head = {"Authorization": f"Bearer {token}", "Content-Type": "application/json; charset=UTF-8"}
     path = ROOT / post["video"]
     size = path.stat().st_size
+    if size > MAX_FILE:
+        sys.exit(f"{post['video']}: {size // 2**20} МБ, больше {MAX_FILE // 2**20}. Пережми (promo_hero.py держит битрейт до 5 Мбит/с), иначе TikTok режет ролик.")
     chunk, count = chunks(size)
     body = {"source_info": {"source": "FILE_UPLOAD", "video_size": size, "chunk_size": chunk, "total_chunk_count": count}}
     if mode == "direct":

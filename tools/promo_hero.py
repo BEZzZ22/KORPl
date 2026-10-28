@@ -1531,7 +1531,7 @@ def make(name):
         wav = Path(tmp) / "a.wav"
         soundtrack(cut, wav)
         enc = subprocess.Popen(["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-",
-                                "-i", str(wav), "-c:v", "libx264", "-preset", "slow", "-crf", "23", "-pix_fmt", "yuv420p", "-profile:v", "high",
+                                "-i", str(wav), "-c:v", "libx264", "-preset", "slow", "-crf", "23", "-maxrate", "5M", "-bufsize", "10M", "-pix_fmt", "yuv420p", "-profile:v", "high",
                                 "-movflags", "+faststart", "-c:a", "aac", "-b:a", "256k", "-shortest", str(OUT / f"{name}.mp4")], stdin=subprocess.PIPE)
         with ProcessPoolExecutor(initializer=_init, initargs=(name, tmp)) as pool:
             for buf in pool.map(_frame, range(int(cut.end * SLOW * FPS)), chunksize=8):
