@@ -9,6 +9,7 @@ const app = document.getElementById("app");
 const reduced = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 const EASE = "expo.out";
+const EXPO_CSS = "cubic-bezier(0.16, 1, 0.3, 1)"; // тот же expo.out для Web Animations
 // что считается отдельной «плитой» при появлении экрана
 const BLOCK = ".card, .match-item, .fresh-match, .draft-entry, .app-top, .tabs-wrap, h2, .row, .seg-row, .ach-grid, .hero-head, .page-head, .center, p, button";
 const COUNT = ".stat b, .metric b, .medal b, .hero-stat .wr, .score-row b, .ip-score b";
@@ -54,21 +55,28 @@ function start() {
     const now = [], later = [];
     for (const el of items) (el.getBoundingClientRect().top < innerHeight ? now : later).push(el);
     reveal(now, x);
-    for (const el of later) { gsap.set(el, { opacity: 0, y: 28 }); seen.observe(el); }
+    for (const el of later) { el.style.opacity = "0"; el.style.transform = "translateY(28px)"; seen.observe(el); }
   }
 
+  // Появление плит — Web Animations: прозрачность и сдвиг считает компоновщик, а не главный поток, поэтому скролл
+  // с въезжающими карточками не дёргается на слабых телефонах. fill: backwards держит начальный кадр на время задержки
   function reveal(items, x) {
     if (!items.length) return;
-    gsap.fromTo(items, { opacity: 0, y: x ? 0 : 22, x },
-      { opacity: 1, y: 0, x: 0, duration: 0.9, stagger: 0.055, clearProps: "opacity,visibility,transform" });
-    items.forEach((el, i) => details(el, 0.12 + i * 0.055));
+    items.forEach((el, i) => {
+      el.style.removeProperty("opacity");
+      el.style.removeProperty("transform");
+      if (el.animate) el.animate([{ opacity: 0, transform: `translate(${x}px, ${x ? 0 : 22}px)` }, { opacity: 1, transform: "none" }],
+        { duration: 900, delay: i * 55, easing: EXPO_CSS, fill: "backwards" });
+      details(el, 0.12 + i * 0.055);
+    });
   }
 
   // Детали внутри плиты: цифры, полоски, линии, кольцо оценки, форма
   function details(el, delay) {
     each(el, COUNT, (n) => countUp(n, delay));
     each(el, ".medal", (m) => gsap.from(m, { "--p": 0, duration: 1.6, delay, ease: "power4.out" }));
-    each(el, BARS, (b) => gsap.from(b, { scaleX: 0, transformOrigin: "0 50%", duration: 1.2, delay: delay + 0.1, clearProps: "transform" }));
+    each(el, BARS, (b) => b.animate && b.animate([{ transform: "scaleX(0)", transformOrigin: "0 50%" }, { transform: "scaleX(1)", transformOrigin: "0 50%" }],
+      { duration: 1200, delay: (delay + 0.1) * 1000, easing: EXPO_CSS, fill: "backwards" }));
     each(el, LINES, (p) => draw(p, delay + 0.1));
     each(el, ".form-strip", (s) => gsap.from(s.children, { scale: 0, autoAlpha: 0, duration: 0.6, delay, stagger: 0.025, ease: "back.out(2)", clearProps: "transform,opacity,visibility" }));
     each(el, ".hero-banner img", (img) => gsap.from(img, { scale: 1.16, duration: 2.2, ease: "power3.out", clearProps: "transform" }));

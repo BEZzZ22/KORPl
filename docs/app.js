@@ -539,7 +539,8 @@ async function homeScreen() {
     list,
   );
   try {
-    const matches = (await api(`/players/${account}/recentMatches`)) || [];
+    const early = takeRecent(account);
+    const matches = ((early && await early) || await api(`/players/${account}/recentMatches`)) || [];
     step(matches.length ? "home_list" : "home_empty");
     if (!matches.length) {
       list.replaceChildren(hiddenMatchesCard(account));
@@ -552,6 +553,17 @@ async function homeScreen() {
     step("err_opendota");
     list.replaceChildren(h("p", { class: "error" }, "OpenDota не отвечает. Попробуй позже."));
   }
+}
+
+// Ранний запрос последних каток (на старте, пока грузятся справочники). Не падает: при ошибке главная спросит сама
+let recentEarly = null, matchEarly = null;
+function prefetchRecent(account) {
+  recentEarly = { account: String(account), t: Date.now(), p: api(`/players/${account}/recentMatches`).catch(() => undefined) };
+}
+function takeRecent(account) {
+  const e = recentEarly;
+  recentEarly = null;
+  return e && e.account === String(account) && Date.now() - e.t < 60000 ? e.p : null;
 }
 
 // Кнопка примера: человек видит разбор за секунду, ещё не найдя свой Friend ID
@@ -1168,7 +1180,10 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false) 
   const replayP = fetchReplay(matchId);
   let match;
   try {
-    match = await api(`/matches/${matchId}`);
+    // ссылка на разбор: матч уже качается со старта (boot), второй раз не просим
+    const pre = matchEarly && matchEarly.id === matchId && attempt === 0 ? matchEarly.p : null;
+    matchEarly = null;
+    match = (pre && await pre) || await api(`/matches/${matchId}`);
     if (stale(seq)) return;
   } catch {
     if (stale(seq)) return;
@@ -3436,6 +3451,10 @@ async function boot() {
   loading("Разжигаю огонь…");
   // проверка подписки идёт вместе с загрузкой справочников, экран ждёт только её итога
   const gate = passGate();
+  // список каток главной качается вместе со справочниками, а не после них
+  const early = startParams().matchId;
+  if (early) { matchEarly = { id: early, p: api(`/matches/${early}`).catch(() => undefined) }; fetchReplay(early); }
+  else storage.get("account_id").then((acc) => { if (acc) prefetchRecent(acc); }).catch(() => {});
   try {
     // всё одной волной: раньше нормы и сборки грузились по очереди после справочников
     // нормы по рангам и сборки (~400 КБ) нужны только разбору и драфту: главная их не ждёт, качаются в фоне
