@@ -350,14 +350,15 @@ async function constants(name, timeout = 20000) {
   }
 }
 
-// Скиллы: свой урезанный справочник (100 КБ вместо 300 КБ сжатого, обновляется раз в неделю), без него — OpenDota
-async function abilitiesDict() {
+// Скиллы и предметы: свои урезанные справочники (tools/fetch-constants.mjs, раз в неделю): 110 КБ сжатого вместо 370 КБ
+// у OpenDota. Нет файла или он битый — полный у OpenDota
+async function localDict(name, min) {
   try {
-    const res = await fetch("abilities.json");
+    const res = await fetch(`${name}.json`);
     const data = res.ok ? await res.json() : null;
-    if (data && Object.keys(data).length > 1000) return data;
+    if (data && Object.keys(data).length > min) return data;
   } catch {}
-  return constants("abilities", 40000);
+  return constants(name, name === "abilities" ? 40000 : 20000);
 }
 
 async function proItems(heroId) {
@@ -3483,7 +3484,7 @@ async function boot() {
     // нормы по рангам и сборки (~400 КБ) нужны только разбору и драфту: главная их не ждёт, качаются в фоне
     if (!extrasReady) extrasReady = loadExtras();
     const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
-      constants("heroes"), constants("items"), abilitiesDict(),
+      constants("heroes"), localDict("items", 200), localDict("abilities", 1000),
       constants("item_ids"),
       fetch("knowledge.json?v=12").then((r) => r.json()), fetch("texts.json?v=19").then((r) => r.json()),
     ]);
