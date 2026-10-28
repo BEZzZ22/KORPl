@@ -556,7 +556,7 @@ async function homeScreen() {
 }
 
 // Ранний запрос последних каток (на старте, пока грузятся справочники). Не падает: при ошибке главная спросит сама
-let recentEarly = null;
+let recentEarly = null, matchEarly = null;
 function prefetchRecent(account) {
   recentEarly = { account: String(account), t: Date.now(), p: api(`/players/${account}/recentMatches`).catch(() => undefined) };
 }
@@ -1180,7 +1180,10 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false) 
   const replayP = fetchReplay(matchId);
   let match;
   try {
-    match = await api(`/matches/${matchId}`);
+    // ссылка на разбор: матч уже качается со старта (boot), второй раз не просим
+    const pre = matchEarly && matchEarly.id === matchId && attempt === 0 ? matchEarly.p : null;
+    matchEarly = null;
+    match = (pre && await pre) || await api(`/matches/${matchId}`);
     if (stale(seq)) return;
   } catch {
     if (stale(seq)) return;
@@ -3449,7 +3452,9 @@ async function boot() {
   // проверка подписки идёт вместе с загрузкой справочников, экран ждёт только её итога
   const gate = passGate();
   // список каток главной качается вместе со справочниками, а не после них
-  if (!startParams().matchId) storage.get("account_id").then((acc) => { if (acc) prefetchRecent(acc); }).catch(() => {});
+  const early = startParams().matchId;
+  if (early) matchEarly = { id: early, p: api(`/matches/${early}`).catch(() => undefined) };
+  else storage.get("account_id").then((acc) => { if (acc) prefetchRecent(acc); }).catch(() => {});
   try {
     // всё одной волной: раньше нормы и сборки грузились по очереди после справочников
     // нормы по рангам и сборки (~400 КБ) нужны только разбору и драфту: главная их не ждёт, качаются в фоне

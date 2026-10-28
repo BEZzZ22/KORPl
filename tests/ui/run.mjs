@@ -234,6 +234,16 @@ await step("overview", async () => {
   await page.waitForSelector(".hero-head", { timeout: 20000 });
   await shot("overview");
 });
+// ссылка из бота (?match=): матч качается со старта, разбор открывается сразу, без главной
+await step("deeplink", async () => {
+  const p5 = await context.newPage();
+  const asked = [];
+  p5.on("request", (r) => { if (r.url().includes(`/api/matches/${match.match_id}`)) asked.push(r.url()); });
+  await p5.goto(`${BASE}/index.html?match=${match.match_id}`);
+  await p5.waitForSelector(".hero-head", { timeout: 20000 });
+  if (asked.length !== 1) throw new Error(`матч запрошен ${asked.length} раз вместо одного`);
+  await p5.close();
+});
 await step("goal", async () => {
   // задача с прошлой катки проверена по этой: у Tusk две смерти до 10:00 — не вышло
   const text = await page.locator(".goal-result").innerText();
