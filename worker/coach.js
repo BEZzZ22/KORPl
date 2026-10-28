@@ -1008,6 +1008,7 @@ const EVENT_LABELS = {
   analysis: "разборов", coach: "с тренером", chat: "вопросов тренеру", compare: "сравнений", replay: "реплеев",
   share: "поделились", link: "привязали аккаунт", profile: "профиль", hero_stats: "статы героя", draft: "драфт",
   blame: "«кто слил»", share_blame: "поделились итогом матча", demo: "смотрели пример", disagree_blame: "не согласны с «кто слил»",
+  design_v2: "включили новый дизайн", design_classic: "вернули классику",
 };
 const STEP_LABELS = {
   home: "главная", home_list: "список игр", home_empty: "«матчей не видно»", match: "открыл матч", link_bad_empty: "пустой ID", link_bad_vanity: "ссылка с ником", link_bad_url: "не та ссылка", link_bad_num: "не те цифры", link_bad_text: "ввёл ник", empty_retry: "жмёт «Проверить снова»", empty_found: "матчи нашлись", match_parsing: "ждёт разбор реплея",
@@ -1015,6 +1016,7 @@ const STEP_LABELS = {
   profile: "профиль", hero_stats: "статы героя", draft: "драфт", coach: "тренер", chat: "вопрос тренеру", compare: "сравнение",
   replay: "реплей", share: "поделился", blame: "«кто слил»", share_blame: "поделился итогом", demo: "пример разбора", disagree_blame: "не согласен", err_opendota: "ОШИБКА OpenDota", err_no_match: "ОШИБКА нет матча", err_replay: "ОШИБКА реплей",
   err_parse: "ОШИБКА разбора", err_boot: "ОШИБКА загрузки", err_other: "ОШИБКА",
+  design_v2: "новый дизайн", design_classic: "классика",
 };
 const stepName = (x) => STEP_LABELS[x] || x;
 // «главная 0с → привязал аккаунт 40с → «матчей не видно» 45с → ушёл на 4 мин»

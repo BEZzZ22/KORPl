@@ -35,7 +35,7 @@ function el(tag, attrs = {}, ...children) {
 }
 
 // Наклон телефона: Telegram (Bot API 8.0) или браузер. Ноль — то положение, в котором телефон держат обычно
-function gyro(onTilt) {
+export function gyro(onTilt) {
   const base = { b: null, g: null };
   const feed = (beta, gamma) => {
     if (beta == null || gamma == null) return;
