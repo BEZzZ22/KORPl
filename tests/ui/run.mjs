@@ -489,6 +489,27 @@ if (!only || only.has("gate")) {
   await ctx5.close();
 }
 
+// Облако Телеграма не отвечает (колбэк CloudStorage не приходит): главная всё равно открывается с привязкой из localStorage
+if (!only || only.has("cloud")) {
+  const ctx7 = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: "dark", reducedMotion: "reduce" });
+  await ctx7.addInitScript((acc) => {
+    try { localStorage.setItem("account_id", String(acc)); localStorage.setItem("gate_ok", String(Date.now() + 3600_000)); } catch { /* */ }
+    const noop = () => {};
+    window.Telegram = { WebApp: { initData: "query_id=test", initDataUnsafe: {}, platform: "test", ready: noop, expand: noop, isVersionAtLeast: () => true,
+      setHeaderColor: noop, setBackgroundColor: noop, disableVerticalSwipes: noop, openTelegramLink: noop,
+      BackButton: { show: noop, hide: noop, onClick: noop }, HapticFeedback: { impactOccurred: noop, notificationOccurred: noop, selectionChanged: noop },
+      CloudStorage: { getItem: noop, setItem: noop } } };
+  }, ACCOUNT);
+  await ctx7.route("**/*", handleRoute);
+  const p7 = await ctx7.newPage();
+  p7.on("pageerror", (e) => errors.push(`cloud pageerror: ${e.message}`));
+  await step("cloud", async () => {
+    await p7.goto(`${BASE}/index.html`);
+    await p7.waitForSelector(".match-item", { timeout: 15000 });
+  });
+  await ctx7.close();
+}
+
 // Без привязки: пример разбора открывается с главной, сверху плашка «Это пример»
 if (!only || only.has("demo")) {
   const ctx4 = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: "dark", reducedMotion: "reduce" });
