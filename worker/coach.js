@@ -111,6 +111,7 @@ function throttle(ip, now, perHour = PER_IP_PER_HOUR, bucket = "coach", perDay =
 
 const RATE_PER_MIN = 20; // любые запросы с одного IP в минуту: страница делает несколько вызовов подряд, поэтому не 3
 const BAN_STEPS = [5 * 60_000, 30 * 60_000, 12 * 3600_000];
+const BAN_RECHECK = 60_000;          // как часто сверять бан IP с KV
 const STRIKE_MEMORY = 24 * 3600_000; // сколько нарушение помнится: потом лестница бана начинается заново
 const rateStamps = new Map(); // ip -> время последних запросов (память воркера, на один изолят)
 const banCache = new Map();   // ip -> { strikes, until, last }: сверяется с KV, чтобы бан держался между изолятами
@@ -126,9 +127,14 @@ export async function rateGuard(env, ip, now = Date.now()) {
   if (!ip || ip === "anon") return null;
   try {
     let st = banCache.get(ip);
-    if ((!st || st.until <= now) && env.COACH_KV) {
+    // KV спрашиваем не на каждый запрос, а раз в BAN_RECHECK: иначе каждый вызов приложения — лишнее чтение и задержка.
+    // Бан из другого изолята виден с опозданием до минуты, лимит в минуту в этом изоляте работает сразу
+    if ((!st || (st.until <= now && !(now - (st.seen || 0) < BAN_RECHECK))) && env.COACH_KV) {
       const kv = await env.COACH_KV.get(`ban:${ip}`, "json");
-      if (kv && (!st || kv.last > st.last)) { st = kv; banCache.set(ip, kv); }
+      if (kv && (!st || kv.last > st.last)) st = kv;
+      st = { ...(st || { strikes: 0, until: 0, last: 0 }), seen: now };
+      banCache.set(ip, st);
+      if (banCache.size > 5000) banCache.clear();
     }
     if (st && st.until > now) return { wait: st.until - now, text: `Слишком много запросов. Подожди ${waitText(st.until - now)}.` };
     const limit = Number(env.RATE_PER_MIN) || RATE_PER_MIN;

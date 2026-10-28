@@ -340,6 +340,16 @@ async function constants(name, timeout = 20000) {
   }
 }
 
+// Скиллы: свой урезанный справочник (100 КБ вместо 300 КБ сжатого, обновляется раз в неделю), без него — OpenDota
+async function abilitiesDict() {
+  try {
+    const res = await fetch("abilities.json");
+    const data = res.ok ? await res.json() : null;
+    if (data && Object.keys(data).length > 1000) return data;
+  } catch {}
+  return constants("abilities", 40000);
+}
+
 async function proItems(heroId) {
   if (!proCache.has(heroId)) {
     try {
@@ -895,6 +905,7 @@ async function draftScreen() {
   section = "home";
   const seq = navSeq;
   const account = await storage.get("account_id");
+  await extrasReady;
   if (stale(seq)) return;
   const enemies = [];
   let role = "core";
@@ -1201,7 +1212,7 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false) 
   // Опоздавший файл позиций всё равно попадёт на «Карту» (берётся из replayCache)
   const [pro, bench, matchups, replay] = await Promise.all([
     upTo(proItems(player.hero_id), OPTIONAL_WAIT, {}), upTo(heroBench(player.hero_id), OPTIONAL_WAIT, {}),
-    upTo(heroMatchups(player.hero_id), OPTIONAL_WAIT, []), upTo(replayP, OPTIONAL_WAIT, null)]);
+    upTo(heroMatchups(player.hero_id), OPTIONAL_WAIT, []), upTo(replayP, OPTIONAL_WAIT, null), extrasReady]);
   if (stale(seq)) return;
   let a;
   try {
@@ -1383,6 +1394,18 @@ function drawWrapped(ctx, text, x, y, width, lineHeight, maxLines) {
 
 // Карточка 1080×1920 для истории в стиле приложения: ночная карта (свет баз в углах, река),
 // герой, итог, золотой медальон оценки, цифры и главный вывод тренера
+// Шрифты карточек-картинок: интерфейсу они не нужны, поэтому не держат первый экран, а качаются при первой карточке
+let cardFontsP = null;
+function cardFonts() {
+  if (!cardFontsP) cardFontsP = new Promise((resolve) => {
+    const link = h("link", { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Manrope:wght@600;800&family=Unbounded:wght@700&display=swap" });
+    link.onload = link.onerror = () => resolve();
+    setTimeout(resolve, 4000);
+    document.head.append(link);
+  });
+  return cardFontsP;
+}
+
 async function renderCard(a) {
   const f = a.facts;
   const W = 1080, H = 1920, P = 96;
@@ -1390,7 +1413,7 @@ async function renderCard(a) {
   const canvas = document.createElement("canvas");
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext("2d");
-  try { await Promise.all(["700 120px Unbounded", "800 48px Manrope", "600 40px Manrope"].map((s) => document.fonts.load(s))); } catch { /* системный шрифт */ }
+  try { await cardFonts(); await Promise.all(["700 120px Unbounded", "800 48px Manrope", "600 40px Manrope"].map((s) => document.fonts.load(s))); } catch { /* системный шрифт */ }
   const display = (s) => `700 ${s}px Unbounded, Manrope, -apple-system, sans-serif`;
   const sans = (w, s) => `${w} ${s}px Manrope, -apple-system, "Segoe UI", sans-serif`;
   const glow = (x, y, r, color) => {
@@ -2531,7 +2554,7 @@ async function renderBlameCard(a, v) {
   const canvas = document.createElement("canvas");
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext("2d");
-  try { await Promise.all(["700 80px Unbounded", "800 40px Manrope", "600 30px Manrope"].map((s) => document.fonts.load(s))); } catch { /* системный шрифт */ }
+  try { await cardFonts(); await Promise.all(["700 80px Unbounded", "800 40px Manrope", "600 30px Manrope"].map((s) => document.fonts.load(s))); } catch { /* системный шрифт */ }
   const display = (s) => `700 ${s}px Unbounded, Manrope, -apple-system, sans-serif`;
   const sans = (w, s) => `${w} ${s}px Manrope, -apple-system, "Segoe UI", sans-serif`;
   const glow = (x, y, r, color) => { const g = ctx.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, color); g.addColorStop(1, "rgba(0,0,0,0)"); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); };
@@ -3381,6 +3404,14 @@ async function passGate() {
 // Один раз за запуск: повтор boot после ошибки сети не должен второй раз собирать панель и вешать «Назад»
 let booted = false;
 
+// Необязательные данные: без них разбор работает по общим порогам. Промис не падает
+let extrasReady = null;
+function loadExtras() {
+  const optional = (url, fallback) => fetch(url).then((r) => (r.ok ? r.json() : fallback)).catch(() => fallback);
+  return Promise.all([optional("rank_norms.json?v=4", {}), optional("khan_builds.json?v=1", null), optional("builds.json?v=1", null)])
+    .then(([rn, kh, bl]) => { norms = rn || {}; guides = kh; builds = bl; });
+}
+
 async function boot() {
   if (!booted && tg) {
     tg.ready();
@@ -3407,21 +3438,17 @@ async function boot() {
   const gate = passGate();
   try {
     // всё одной волной: раньше нормы и сборки грузились по очереди после справочников
-    const optional = (url, fallback) => fetch(url).then((r) => (r.ok ? r.json() : fallback)).catch(() => fallback);
-    const [heroes, items, abilities, ids, kb, tx, rn, kh, bl] = await Promise.all([
-      constants("heroes"), constants("items"), constants("abilities", 40000),
+    // нормы по рангам и сборки (~400 КБ) нужны только разбору и драфту: главная их не ждёт, качаются в фоне
+    if (!extrasReady) extrasReady = loadExtras();
+    const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
+      constants("heroes"), constants("items"), abilitiesDict(),
       constants("item_ids"),
       fetch("knowledge.json?v=12").then((r) => r.json()), fetch("texts.json?v=19").then((r) => r.json()),
-      // нормы по рангам и сборки необязательны: без них разбор работает по общим порогам
-      optional("rank_norms.json?v=4", {}), optional("khan_builds.json?v=1", null), optional("builds.json?v=1", null),
     ]);
     dictionary = createDictionary({ heroes, items, abilities });
     itemIds = ids;
     knowledge = kb;
     texts = tx;
-    norms = rn;
-    guides = kh;
-    builds = bl;
   } catch {
     errorScreen("Не удалось загрузить данные OpenDota.", boot);
     return;

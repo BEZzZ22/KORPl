@@ -12,13 +12,28 @@ self.addEventListener("activate", (e) => {
   })());
 });
 
-async function networkFirst(req, cacheName) {
+// wait — сколько ждать сеть, если в кэше есть копия: на плохом мобильном интернете страница открывается из кэша
+// сразу, а свежая ложится в кэш к следующему запуску
+async function networkFirst(req, cacheName, wait = 0, event = null) {
   const cache = await caches.open(cacheName);
-  try {
+  const net = (async () => {
     const res = await fetch(req);
     if (res.ok) { cache.put(req, res.clone()); return res; }
     // OpenDota отвечает 429/5xx при нагрузке: старая копия лучше ошибки
     return (await cache.match(req)) || res;
+  })();
+  if (wait) {
+    const first = await Promise.race([net.catch(() => null), new Promise((r) => setTimeout(r, wait, null))]);
+    if (first) return first;
+    const hit = await cache.match(req);
+    if (hit) {
+      const bg = net.catch(() => {});
+      if (event) event.waitUntil(bg);
+      return hit;
+    }
+  }
+  try {
+    return await net;
   } catch (err) {
     const hit = await cache.match(req);
     if (hit) return hit;
@@ -31,6 +46,16 @@ async function staleWhileRevalidate(req, cacheName) {
   const hit = await cache.match(req);
   const fresh = fetch(req).then((res) => { if (res.ok) cache.put(req, res.clone()); return res; });
   if (hit) { fresh.catch(() => {}); return hit; }
+  return fresh;
+}
+
+// Скрипт Телеграма грузится в <head> и держит первую отрисовку: с плохой связью до telegram.org экран оставался
+// белым. Со второго запуска — из кэша сразу, свежая версия в фоне. Ответ без CORS непрозрачный (status 0), его тоже кладём
+async function telegramScript(req, event) {
+  const cache = await caches.open(APP);
+  const hit = await cache.match(req);
+  const fresh = fetch(req).then((res) => { if (res.ok || res.type === "opaque") cache.put(req, res.clone()); return res; });
+  if (hit) { event.waitUntil(fresh.catch(() => {})); return hit; }
   return fresh;
 }
 
@@ -66,8 +91,11 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(req.url);
   // файлы с версией в адресе (app.js?v=…, справочники, картинки) не меняются: из кэша сразу, обновление в фоне.
   // Новая версия — новый адрес, поэтому второй запуск не ждёт сеть за мегабайт скриптов и JSON
+  // свой справочник скиллов обновляется раз в неделю: из кэша сразу, свежий — к следующему запуску
+  if (url.origin === self.location.origin && /\/abilities\.json$/.test(url.pathname)) { e.respondWith(staleWhileRevalidate(req, DATA)); return; }
   if (url.origin === self.location.origin && /[?&]v=/.test(url.search)) { e.respondWith(staleWhileRevalidate(req, APP)); return; }
-  if (url.origin === self.location.origin) { e.respondWith(networkFirst(req, APP)); return; }
+  if (url.origin === self.location.origin) { e.respondWith(networkFirst(req, APP, req.mode === "navigate" ? 2500 : 0, e)); return; }
+  if (url.hostname === "telegram.org" && url.pathname === "/js/telegram-web-app.js") { e.respondWith(telegramScript(req, e)); return; }
   // зеркало справочников на GitHub (когда OpenDota лежит): тоже из кэша с фоновым обновлением
   if (url.hostname === "raw.githubusercontent.com" && url.pathname.startsWith("/odota/dotaconstants/")) { e.respondWith(staleWhileRevalidate(req, DATA)); return; }
   // файл позиций реплея после разбора не меняется: второй раз открывается без сети. 404 не кэшируем — реплей ещё могут разобрать
