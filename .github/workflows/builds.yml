@@ -33,6 +33,10 @@ jobs:
         # Steam иногда отвечает ошибкой: старый файл лучше, чем упавшая сборка
         run: node tools/fetch-khan-builds.mjs || git checkout docs/khan_builds.json
 
+      - name: Справочник скиллов для приложения
+        # не скачался — остаётся прошлый, приложение возьмёт недостающее у OpenDota
+        run: node tools/fetch-abilities.mjs || git checkout docs/abilities.json
+
       - name: Проверка
         run: |
           node -e '
@@ -46,7 +50,7 @@ jobs:
         run: |
           git config user.name "builds-bot"
           git config user.email "builds-bot@users.noreply.github.com"
-          git add docs/builds.json docs/khan_builds.json
+          git add docs/builds.json docs/khan_builds.json docs/abilities.json
           git diff --cached --quiet && { echo "без изменений"; exit 0; }
           git commit -q -m "Сборки: $(node -p 'const b=require("./docs/builds.json"); `патч ${b.patch}, ${b.matches} матчей`')"
           git push -q

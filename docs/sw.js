@@ -66,6 +66,8 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(req.url);
   // файлы с версией в адресе (app.js?v=…, справочники, картинки) не меняются: из кэша сразу, обновление в фоне.
   // Новая версия — новый адрес, поэтому второй запуск не ждёт сеть за мегабайт скриптов и JSON
+  // свой справочник скиллов обновляется раз в неделю: из кэша сразу, свежий — к следующему запуску
+  if (url.origin === self.location.origin && /\/abilities\.json$/.test(url.pathname)) { e.respondWith(staleWhileRevalidate(req, DATA)); return; }
   if (url.origin === self.location.origin && /[?&]v=/.test(url.search)) { e.respondWith(staleWhileRevalidate(req, APP)); return; }
   if (url.origin === self.location.origin) { e.respondWith(networkFirst(req, APP)); return; }
   // зеркало справочников на GitHub (когда OpenDota лежит): тоже из кэша с фоновым обновлением
