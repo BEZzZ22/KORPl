@@ -39,4 +39,6 @@ jobs:
           git add -A promo/yt_posted.json
           git diff --cached --quiet && { echo "без изменений"; exit 0; }
           git commit -q -m "YouTube: что загружено"
-          git push -q
+          # пока шёл прогон, автопостинг мог закоммитить своё: без rebase push отбивается и отметка теряется
+          for i in 1 2 3 4; do git pull -q --rebase && git push -q && exit 0; sleep $((i * 5)); done
+          exit 1
