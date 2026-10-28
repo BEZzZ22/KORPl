@@ -3453,7 +3453,7 @@ async function boot() {
   const gate = passGate();
   // список каток главной качается вместе со справочниками, а не после них
   const early = startParams().matchId;
-  if (early) matchEarly = { id: early, p: api(`/matches/${early}`).catch(() => undefined) };
+  if (early) { matchEarly = { id: early, p: api(`/matches/${early}`).catch(() => undefined) }; fetchReplay(early); }
   else storage.get("account_id").then((acc) => { if (acc) prefetchRecent(acc); }).catch(() => {});
   try {
     // всё одной волной: раньше нормы и сборки грузились по очереди после справочников
