@@ -1742,8 +1742,10 @@ class MatchAnalyzer {
     const guide = this.khanGuide();
     const universal = UNIVERSAL_COUNTERS[this.role()];
     const fit = (key) => (!pool.size ? 1 : pool.has(key) ? 1.15 : universal.has(key) ? 0.75 : 0.3);
+    // справочник не загрузился — пропускаем всё; Object.keys на каждую строку стоил ~15 мс на разбор
+    const noItems = !Object.keys(items).length;
     return rows
-      .filter(([key, w]) => w > 0 && (!Object.keys(items).length || key in items))
+      .filter(([key, w]) => w > 0 && (noItems || key in items))
       .map(([key, w, base, why]) => ({
         key, score: base * w * fit(key) + (popular.has(key) ? 0.6 : 0), why: why(), popular: popular.has(key),
         khan: !!(guide && [...guide.core, ...guide.luxury, ...guide.early].includes(key)),
@@ -3388,7 +3390,8 @@ export function itemPlan({ builds, guides, od, knowledge, heroId, pos, enemies =
     || { source: "none", pos, start: [], early: [], core: [], sit: [] };
   const grp = POS_GROUP(pos);
   const items = od.items || {};
-  const known = (k) => !Object.keys(items).length || k in items;
+  const anyItems = Object.keys(items).length > 0;
+  const known = (k) => !anyItems || k in items;
   const pool = new Set([...base.early, ...base.core, ...base.sit].map((r) => r[0]));
   const proShare = new Map([...base.early, ...base.core, ...base.sit].map((r) => [r[0], r]));
   const universal = UNIVERSAL_COUNTERS[grp];

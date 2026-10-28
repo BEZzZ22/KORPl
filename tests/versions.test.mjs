@@ -32,7 +32,13 @@ function current() {
 }
 
 if (process.argv.includes("--update")) {
-  writeFileSync(SNAP, JSON.stringify(current(), null, 1) + "\n");
+  // снимок не примет файл, который изменился без новой версии (например, модуль, где поменялась версия импорта)
+  let snap = {};
+  try { snap = JSON.parse(readFileSync(SNAP, "utf8")); } catch { /* первый снимок */ }
+  const now = current();
+  const same = Object.keys(now).filter((f) => snap[f] && now[f].sha && now[f].sha !== snap[f].sha && now[f].v === snap[f].v);
+  if (same.length) { console.error(`изменились без новой ?v=: ${same.join(", ")} — сначала подними версии`); process.exit(1); }
+  writeFileSync(SNAP, JSON.stringify(now, null, 1) + "\n");
   console.log("снимок версий обновлён");
 } else {
   test("у каждого файла одна версия во всех ссылках", () => {

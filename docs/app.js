@@ -2,10 +2,10 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan, skillPlan,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
-} from "./engine.js?v=37";
+} from "./engine.js?v=38";
 import { aegisBadge, openShowcase } from "./aegis.js?v=5";
 import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=3";
-import { matchVerdicts } from "./blame.js?v=3";
+import { matchVerdicts } from "./blame.js?v=4";
 import { rankMedal3d } from "./medal3d.js?v=3";
 import { heroCard3d } from "./herocard3d.js?v=2";
 import { tacticalTable } from "./map3d.js?v=2";
