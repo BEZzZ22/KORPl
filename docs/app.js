@@ -529,7 +529,8 @@ async function homeScreen() {
   if (stale(seq)) return;
   const matchInput = h("input", { inputmode: "numeric", placeholder: "ID матча или ссылка", "aria-label": "ID матча" });
   const openMatch = () => {
-    const m = /(?<!\d)(\d{7,11})(?!\d)/.exec(matchInput.value);
+    // без lookbehind: Safari до iOS 16.4 падает на нём при разборе всего app.js, и приложение не открывается
+    const m = /(?:^|\D)(\d{7,11})(?!\d)/.exec(matchInput.value);
     if (m) go(matchScreen, Number(m[1]), null);
     else matchInput.focus();
   };
@@ -1030,7 +1031,7 @@ function shortWhy(text) {
   // пункт списка из статьи «Lion (Mana Drain);» — оставляем только способность
   const skill = /^[^()]+\(([^)]+?)\)?[;.]?$/.exec(String(text).trim());
   if (skill && text.length < 60) return `всё решает ${skill[1]}.`;
-  const parts = String(text).split(/(?<=[.!?])\s+/).filter(Boolean);
+  const parts = String(text).replace(/([.!?])\s+/g, "$1\u0001").split("\u0001").filter(Boolean);
   if (parts.length > 1 && parts[0].length < 40) parts.shift();
   let out = parts[0] || "";
   for (const s of parts.slice(1)) {
