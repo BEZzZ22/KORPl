@@ -217,6 +217,8 @@ button.ghost:active { transform: scale(.98); filter: none; }
 .sc-wait { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; gap: 14px; text-align: center; pointer-events: none; transition: opacity .4s ease; }
 .sc-wait img { width: min(62vw, 300px); animation: scBreath 2.4s ease-in-out infinite; }
 .sc-stage.ready .sc-wait { opacity: 0; }
+.sc-stage.local .sc-wait { opacity: 0; }
+.sc-stage .aegis.sc-local { --size: min(70vw, 320px); position: absolute; inset: 0; margin: auto; }
 .sc-controls { display: grid; gap: 8px; }
 .sc-controls .seg-row { margin: 0; }
 .sc-claim { width: 100%; }
