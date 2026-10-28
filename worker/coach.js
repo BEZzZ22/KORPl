@@ -897,9 +897,17 @@ export async function checkReplays(env, now = Date.now()) {
   for (const x of list) {
     if (!status.has(x.match) && status.size < 10) {
       const has = async (name) => (await fetch(`${REPLAY_RAW}/${name}`, { method: "HEAD", signal: AbortSignal.timeout(10000) }).catch(() => null))?.ok;
-      status.set(x.match, (await has(`${x.match}.json`)) ? "done" : (await has(`${x.match}.err.json`)) ? "error" : null);
+      // у ошибки берём время (t): ошибка старше заявки — это прошлый раз, workflow попробует снова
+      const err = async () => {
+        const res = await fetch(`${REPLAY_RAW}/${x.match}.err.json`, { signal: AbortSignal.timeout(10000) }).catch(() => null);
+        if (!res || !res.ok) return null;
+        const body = await res.json().catch(() => ({}));
+        return { s: "error", t: Number(body && body.t) || 0 };
+      };
+      status.set(x.match, (await has(`${x.match}.json`)) ? { s: "done" } : await err());
     }
-    const s = status.get(x.match);
+    const st = status.get(x.match);
+    const s = st && !(st.s === "error" && st.t && st.t * 1000 < x.t) ? st.s : null;
     if (!s) { keep.push(x); continue; }
     changed = true;
     await env.COACH_KV.put(`replay:${x.match}`, s, { expirationTtl: 30 * 86400 });
@@ -1483,8 +1491,12 @@ export default {
       if (url.pathname === "/stats") return new Response(JSON.stringify(await usageStats(env), null, 1), { headers: { "Content-Type": "application/json; charset=utf-8" } });
       // очередь для GitHub Actions: только номера матчей, без пользователей
       if (url.pathname === "/replay-queue" && env.COACH_KV) {
-        const ids = [...new Set((await replayQueue(env)).map((x) => x.match))];
-        return new Response(JSON.stringify({ matches: ids }), { headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
+        const list = await replayQueue(env);
+        const ids = [...new Set(list.map((x) => x.match))];
+        // since — время последней заявки (с): ошибка разбора старше неё значит, что игрок попросил снова
+        const since = {};
+        for (const x of list) since[x.match] = Math.max(since[x.match] || 0, Math.floor(x.t / 1000));
+        return new Response(JSON.stringify({ matches: ids, since }), { headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
       }
     }
     // Отчёт по пользователям вручную (workflow «Отчёт по юзерам»): ключ — токен бота
