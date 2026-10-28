@@ -493,7 +493,7 @@ function goTab(tab) {
 let tabLens = null;
 
 function buildTabbar() {
-  tabbar = h("nav", { class: "tabbar", role: "tablist" },
+  tabbar = h("nav", { class: "tabbar", "aria-label": "Разделы" },
     tabButton("home", "Главная"), tabButton("match", "Разбор"), tabButton("profile", "Профиль"));
   document.body.append(tabbar);
   tabLens = glassBar(tabbar, ".tabbtn", { live: false, onPick: (i) => { haptic(); goTab(NAV_TABS[i]); } });
@@ -504,6 +504,8 @@ function updateTabbar() {
   for (const btn of tabbar.querySelectorAll(".tabbtn")) {
     const t = btn.dataset.tab;
     btn.classList.toggle("active", t === section);
+    // для экранного диктора: какой раздел открыт
+    if (t === section) btn.setAttribute("aria-current", "page"); else btn.removeAttribute("aria-current");
     if (t === "match") btn.classList.toggle("disabled", !lastAnalysis);
   }
   if (tabLens) tabLens.place(Math.max(0, NAV_TABS.indexOf(section)), tabLens.current() < 0);
