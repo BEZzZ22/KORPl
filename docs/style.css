@@ -649,10 +649,10 @@ details.timeline-box > summary { font-weight: 800; }
 .draft-attr { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; color: #e9e4dc;
   font: 700 14px/1 var(--sans); letter-spacing: .08em; text-transform: uppercase; text-shadow: 0 1px 2px rgba(0, 0, 0, .6); }
 .draft-attr i { width: 16px; height: 16px; border-radius: 50%; flex: none; background: var(--attr);
-  box-shadow: inset 0 0 0 1.5px rgba(0, 0, 0, .35), 0 0 8px color-mix(in srgb, var(--attr) 60%, transparent); }
-.attr-block.str { --attr: radial-gradient(circle at 35% 30%, #ff8a6a, #c4301c 60%, #6e160b); }
-.attr-block.agi { --attr: radial-gradient(circle at 35% 30%, #a6f08a, #2fa63f 60%, #10521a); }
-.attr-block.int { --attr: radial-gradient(circle at 35% 30%, #9fe2ff, #2a8fd6 60%, #0e3e6e); }
+  box-shadow: inset 0 0 0 1.5px rgba(0, 0, 0, .35), 0 0 8px var(--attr-glow, transparent); }
+.attr-block.str { --attr: radial-gradient(circle at 35% 30%, #ff8a6a, #c4301c 60%, #6e160b); --attr-glow: rgba(255, 106, 74, .6); }
+.attr-block.agi { --attr: radial-gradient(circle at 35% 30%, #a6f08a, #2fa63f 60%, #10521a); --attr-glow: rgba(120, 220, 100, .6); }
+.attr-block.int { --attr: radial-gradient(circle at 35% 30%, #9fe2ff, #2a8fd6 60%, #0e3e6e); --attr-glow: rgba(100, 190, 255, .6); }
 .attr-block.all { --attr: conic-gradient(#e0503c 0 33%, #4cc764 0 66%, #3fa6ea 0); }
 .attr-tiles { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; }
 .draft-hero { padding: 0; border-radius: 3px; overflow: hidden; min-width: 0; background: #0b0d12;
