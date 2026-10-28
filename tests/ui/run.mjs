@@ -528,6 +528,14 @@ if (!only || only.has("demo")) {
     const stored = await p4.evaluate(() => Object.keys(localStorage).filter((k) => /^(goal|cmp):/.test(k)));
     if (stored.length) throw new Error(`пример записал в память: ${stored}`);
   });
+  // привязка: Friend ID, скопированный с пробелами, тоже подходит
+  await step("link", async () => {
+    await p4.goto(`${BASE}/index.html`);
+    const spaced = String(ACCOUNT).replace(/(\d{3})(?=\d)/g, "$1 ");
+    await p4.locator('input[aria-label="Friend ID"]').fill(spaced);
+    await p4.locator('input[aria-label="Friend ID"] >> xpath=ancestor::div[contains(@class,"row")]//button').click();
+    await p4.waitForSelector(".match-item", { timeout: 15000 });
+  });
   await ctx4.close();
   // карта героя (только с анимацией): видна одна сторона, тап переворачивает на оборот
   const ctx6 = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: "dark" });
