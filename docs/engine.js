@@ -54,7 +54,9 @@ const ACTIVE_ITEMS = ["black_king_bar", "blink", "force_staff", "hurricane_pike"
   "wind_waker", "overwhelming_blink", "swift_blink", "arcane_blink"];
 const MAX_COUNTER_ITEMS = 3;
 // Контроль, который можно распознать по описанию умения; БКБ и диспел зависят от полей bkbpierce и dispellable
-const CONTROL_KINDS = [
+// Меняешь список — перегенерируй docs/abilities.json (node tools/fetch-constants.mjs): от описаний скиллов там
+// оставлены только слова, по которым находится контроль
+export const CONTROL_KINDS = [
   ["stun", /stun/, "стан", true],
   ["hex", /\bhex|transforms? .{0,30}into/, "хекс", true],
   ["hard", /sleep|fear|taunt|banish|petrif|cyclone|forced to|mute/, "жёсткий контроль", true],
