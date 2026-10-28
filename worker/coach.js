@@ -1064,7 +1064,10 @@ export async function buildReport(env, now = Date.now(), day = mskDay(now - 8640
   const today = act.get(day);
   const fresh = newOn(day);
   const total = [...seen.values()].filter((m) => !m.t || mskDay(m.t) <= day).length;
-  const lines = [`Отчёт за ${shortDay(day)} (МСК)`, ""];
+  // за сегодня (команда «отчёт» в боте) день ещё идёт: пишем, на какое время цифры
+  const nowMsk = new Date(now + 3 * 3600_000).toISOString().slice(11, 16);
+  const title = day === mskDay(now) ? `Отчёт за ${shortDay(day)}, сегодня на ${nowMsk} МСК` : `Отчёт за ${shortDay(day)} (МСК)`;
+  const lines = [title, ""];
   lines.push(`Всего юзеров: ${total}, новых за день: ${fresh.length}`);
   lines.push(`Приток по дням: ${days.slice(0, 7).reverse().map((d) => `${shortDay(d)} ${newOn(d).length}`).join(" · ")}`);
   const week = new Set(days.slice(0, 7).flatMap((d) => [...act.get(d).keys()]));
@@ -1153,11 +1156,11 @@ async function chatName(env, id) {
 }
 
 const TG_TEXT_MAX = 4096;
-export async function sendReport(env, now = Date.now(), day) {
+export async function sendReport(env, now = Date.now(), day, to) {
   const full = await buildReport(env, now, day);
   // Телеграм не примет сообщение длиннее 4096: режем по строке, чтобы отчёт дошёл хотя бы началом
   const text = full.length <= TG_TEXT_MAX ? full : `${full.slice(0, TG_TEXT_MAX - 40).replace(/\n[^\n]*$/, "")}\n…отчёт обрезан`;
-  const ids = String(env.REPORT_CHAT || env.OWNER_TG_IDS || "").split(",").map((x) => x.trim()).filter(Boolean);
+  const ids = to || String(env.REPORT_CHAT || env.OWNER_TG_IDS || "").split(",").map((x) => x.trim()).filter(Boolean);
   let sent = 0;
   const errors = [];
   for (const chat_id of ids) {
@@ -1183,6 +1186,60 @@ export async function reportOnRequest(env, now = Date.now()) {
   catch (e) { out = { sent: 0, errors: [clip(e && e.stack || e, 300)] }; }
   await env.COACH_KV.put("report_last", JSON.stringify({ t: new Date(now).toISOString(), ...out }), { expirationTtl: 30 * 86400 });
   return out;
+}
+
+// Утренний отчёт за вчера: один раз на день, даже если крон сработал повторно
+export async function dailyReport(env, now = Date.now()) {
+  if (!env.COACH_KV || !env.BOT_TOKEN) return null;
+  const day = mskDay(now - 86400000);
+  const key = `report_daily:${day}`;
+  if (await env.COACH_KV.get(key)) return null;
+  await env.COACH_KV.put(key, "1", { expirationTtl: 7 * 86400 });
+  return sendReport(env, now, day);
+}
+
+// ---------- бот: команда «отчёт» от владельца ----------
+// Апдейты бота приходят вебхуком на /tg (крон сам ставит его один раз). Отвечаем только владельцу в личке,
+// остальным бот молчит, как и раньше. «отчёт» — за сегодня до текущей минуты, «отчёт вчера», «отчёт 26.10»
+const WORKER_URL = "https://dotacoach.2007rggg.workers.dev";
+const WEBHOOK_VERSION = "1";
+async function webhookSecret(token) {
+  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`tg-hook:${token}`)));
+  return [...hash.slice(0, 20)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+export async function ensureWebhook(env) {
+  if (!env.COACH_KV || !env.BOT_TOKEN) return false;
+  if ((await env.COACH_KV.get("tg_webhook")) === WEBHOOK_VERSION) return true;
+  const ok = await sendTelegram(env, "setWebhook", {
+    url: `${env.WORKER_URL || WORKER_URL}/tg`, secret_token: await webhookSecret(env.BOT_TOKEN), allowed_updates: ["message"], drop_pending_updates: true,
+  }).catch(() => false);
+  if (ok) await env.COACH_KV.put("tg_webhook", WEBHOOK_VERSION);
+  return ok;
+}
+
+// День для команды: null — не команда отчёта
+export function reportCommandDay(text, now = Date.now()) {
+  const m = /^\/?(?:отч[её]т|report)(?:@\w+)?(?:\s+(.*))?$/i.exec(String(text || "").trim());
+  if (!m) return null;
+  const arg = (m[1] || "").trim().toLowerCase();
+  if (arg === "вчера") return mskDay(now - 86400000);
+  const d = /^(\d{1,2})\.(\d{1,2})$/.exec(arg);
+  const day = d && `${mskDay(now).slice(0, 4)}-${d[2].padStart(2, "0")}-${d[1].padStart(2, "0")}`;
+  if (day && mskDay(Date.parse(`${day}T12:00:00+03:00`) || 0) === day) return day;
+  return mskDay(now);
+}
+
+export async function handleBotUpdate(env, update, now = Date.now()) {
+  const msg = update && update.message;
+  if (!msg || !msg.from || !msg.chat || msg.chat.type !== "private" || !isOwner(env, msg.from.id)) return null;
+  const day = reportCommandDay(msg.text, now);
+  if (!day) return null;
+  try { return await sendReport(env, now, day, [msg.chat.id]); }
+  catch (e) {
+    await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: `Отчёт не собрался: ${clip(e && e.message || e, 200)}` }).catch(() => false);
+    return null;
+  }
 }
 
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47];
@@ -1395,6 +1452,13 @@ async function handlePost(request, env, ctx, origin) {
 export default {
   async fetch(request, env, ctx) {
     const origin = request.headers.get("Origin") || "";
+    // апдейты бота от Телеграма: проверяем секрет вебхука, отвечаем сразу, отчёт шлём в фоне
+    if (request.method === "POST" && new URL(request.url).pathname === "/tg") {
+      if (!env.BOT_TOKEN || request.headers.get("X-Telegram-Bot-Api-Secret-Token") !== await webhookSecret(env.BOT_TOKEN)) return new Response("Нельзя.", { status: 403 });
+      const update = await request.json().catch(() => null);
+      if (env.COACH_KV) ctx.waitUntil(handleBotUpdate(env, update));
+      return new Response("ok");
+    }
     // антиддос: любой запрос с одного IP считается, при превышении лестница банов (5 мин, 30 мин, 12 ч)
     if (request.method !== "OPTIONS") {
       const ban = await rateGuard(env, request.headers.get("CF-Connecting-IP") || "anon");
@@ -1433,9 +1497,9 @@ export default {
 
   async scheduled(event, env, ctx) {
     if (event && event.cron === REPORT_CRON) {
-      if (env.COACH_KV && env.BOT_TOKEN) ctx.waitUntil(sendReport(env));
+      ctx.waitUntil(dailyReport(env));
       return;
     }
-    ctx.waitUntil(Promise.all([checkWatches(env), checkReplays(env), reportOnRequest(env)]));
+    ctx.waitUntil(Promise.all([checkWatches(env), checkReplays(env), reportOnRequest(env), ensureWebhook(env)]));
   },
 };
