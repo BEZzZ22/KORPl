@@ -547,11 +547,16 @@ export function openShowcase({ haptic = () => {}, openLink = (url) => window.ope
   document.documentElement.classList.add("sc-open"); // страница под витриной не листается
   document.addEventListener("keydown", onKey);
 
+  // Sketchfab не поднялся (тяжёлый для телефона, режется сетью) — крутим свой щит, без вечной «загрузки»
+  let local = null;
   const fail = () => {
-    if (!overlay.isConnected || viewer) return;
-    waitText.textContent = "3D-модель не загрузилась. Проверь интернет и открой ещё раз.";
+    if (!overlay.isConnected || viewer || local) return;
+    local = aegisBadge({ haptic, onOpen: () => {} });
+    local.classList.add("sc-local");
+    stage.append(local);
+    stage.classList.add("local");
   };
-  const timer = setTimeout(fail, 30000);
+  const timer = setTimeout(fail, 7000);
   loadApi().then(() => {
     if (!overlay.isConnected) return;
     const client = new window.Sketchfab("1.12.1", iframe);
@@ -566,6 +571,7 @@ export function openShowcase({ haptic = () => {}, openLink = (url) => window.ope
           if (!overlay.isConnected) return;
           viewer = v;
           clearTimeout(timer);
+          if (local) { local.remove(); stage.classList.remove("local"); }
           v.setEnvironment(LIGHTS[light]);
           camera(view, 0);
           stage.classList.add("ready");

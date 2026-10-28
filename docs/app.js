@@ -3,11 +3,11 @@ import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan, skillPlan,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
 } from "./engine.js?v=37";
-import { aegisBadge, openShowcase } from "./aegis.js?v=4";
+import { aegisBadge, openShowcase } from "./aegis.js?v=5";
 import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=3";
 import { matchVerdicts } from "./blame.js?v=3";
-import { rankMedal3d } from "./medal3d.js?v=2";
-import { heroCard3d } from "./herocard3d.js?v=1";
+import { rankMedal3d } from "./medal3d.js?v=3";
+import { heroCard3d } from "./herocard3d.js?v=2";
 import { tacticalTable } from "./map3d.js?v=2";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
@@ -731,26 +731,9 @@ async function profileScreen() {
       );
     })),
     weakHeroesBlock(heroes),
-    designSwitch(),
     h("button", { class: "ghost", onclick: () => { storage.set("account_id", ""); navRoot("home", homeScreen); } }, "Сменить аккаунт"),
   );
   tilt(app.querySelector(".profile-card") && app.querySelector(".profile-card").parentElement);
-}
-
-// Дизайн «Новый» или «Классика»: выбор читает theme.js до отрисовки, поэтому после смены — перезагрузка
-function designSwitch() {
-  const pickDesign = (value) => () => {
-    if ((value === "v2") === V2) return;
-    haptic();
-    step(value === "v2" ? "design_v2" : "design_classic");
-    try { localStorage.setItem("design", value); } catch { return; }
-    location.reload();
-  };
-  const seg = (value, label) => h("button", { type: "button", class: "seg", "aria-pressed": String((value === "v2") === V2), onclick: pickDesign(value) }, label);
-  return h("div", { class: "design-switch" },
-    h("h2", {}, "Дизайн"),
-    h("div", { class: "seg-row" }, seg("v2", "Новый"), seg("classic", "Классика")),
-    h("p", { class: "small muted" }, V2 ? "Чистый тёмный стиль с анимацией." : "Привычная «ночная карта»."));
 }
 
 // Тренд по последним играм: свежие 10 против предыдущих 10 (по данным recentMatches)

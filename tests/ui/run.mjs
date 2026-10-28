@@ -220,10 +220,10 @@ if (errors.some((e) => e.startsWith("pageerror")) && !(await page.$(".app-top"))
   process.exit(1);
 }
 await step("showcase", async () => {
-  // тап по Аегису — витрина; Sketchfab в тесте недоступен, поэтому должна быть понятная ошибка, а не вечная загрузка
+  // тап по Аегису — витрина; Sketchfab в тесте недоступен, поэтому вместо вечной загрузки должен крутиться свой щит
   await page.locator(".app-top .aegis").click();
   await page.waitForSelector(".showcase", { timeout: 3000 });
-  await page.waitForFunction(() => /не загрузилась/.test(document.querySelector(".sc-wait").textContent), null, { timeout: 5000 });
+  await page.waitForSelector(".sc-stage.local .aegis.sc-local", { timeout: 10000 });
   await shot("showcase");
   await page.locator(".showcase .sc-head button").click();
   await page.waitForSelector(".showcase", { state: "detached", timeout: 3000 });
@@ -482,6 +482,27 @@ if (!only || only.has("demo")) {
     if (stored.length) throw new Error(`пример записал в память: ${stored}`);
   });
   await ctx4.close();
+  // карта героя (только с анимацией): видна одна сторона, тап переворачивает на оборот
+  const ctx6 = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: "dark" });
+  await ctx6.addInitScript(() => { try { localStorage.setItem("design", "v2"); } catch { /* */ } });
+  await ctx6.route("**/*", handleRoute);
+  const p6 = await ctx6.newPage();
+  p6.on("pageerror", (e) => errors.push(`herocard pageerror: ${e.message}`));
+  await step("herocard", async () => {
+    await p6.goto(`${BASE}/index.html`);
+    await p6.locator(".demo-entry").click();
+    await p6.waitForSelector(".hero-banner.hc", { timeout: 20000 });
+    const sides = () => p6.evaluate(() => [".hc-front", ".hc-back"].map((c) => getComputedStyle(document.querySelector(c)).visibility).join(","));
+    if (await sides() !== "visible,hidden") throw new Error(`до тапа: ${await sides()}`);
+    await p6.locator(".hero-banner.hc").click({ force: true });
+    await p6.waitForFunction(() => getComputedStyle(document.querySelector(".hc-back")).visibility === "visible", null, { timeout: 3000 });
+    await p6.waitForTimeout(1200);
+    if (await sides() !== "hidden,visible") throw new Error(`после тапа: ${await sides()}`);
+    const file = join(OUT, `${String(shots.length + 1).padStart(2, "0")}-herocard-back.png`);
+    await p6.locator(".hero-banner.hc").screenshot({ path: file });
+    shots.push(file);
+  });
+  await ctx6.close();
 }
 
 // Офлайн: с живым service worker открыть приложение, потом без сети — главная должна открыться из кэша

@@ -1,14 +1,6 @@
-// Выбор дизайна до первой отрисовки: «Новый» (тёмный минимал с моушном) или «Классика» (ночная карта).
-// ?design=v2 / ?design=classic в ссылке переключает и запоминает. Выбор живёт в браузере телефона.
+// Дизайн до первой отрисовки: тёмный минимал с моушном. Классика (style.css без html.v2) больше не включается,
+// код её лежит как есть — вернуть можно, если снова читать выбор отсюда.
 (function () {
-  var KEY = "design";
-  var pick = null;
-  try {
-    var q = new URLSearchParams(location.search).get("design");
-    if (q === "v2" || q === "classic") localStorage.setItem(KEY, q);
-    pick = localStorage.getItem(KEY);
-  } catch (e) { /* приватный режим: остаёмся на классике */ }
-  if (pick !== "v2") return;
   var root = document.documentElement;
   root.classList.add("v2");
   var meta = document.querySelector('meta[name="theme-color"]');
