@@ -1,6 +1,6 @@
 // Шапка разбора как коллекционная карта (дизайн «Новый»): наклоняется за пальцем и за наклоном телефона,
 // по ней бежит голографическая фольга и блик. Тап — карта переворачивается, на обороте итог катки.
-import { gyro } from "./aegis.js?v=5";
+import { gyro, whenGone } from "./aegis.js?v=6";
 
 const MAX = 11; // наклон, градусы
 
@@ -96,5 +96,6 @@ export function heroCard3d(banner, back, { reduced = false, haptic = () => {} } 
     gy = Math.max(-MAX, Math.min(MAX, gamma * 0.6));
     kick();
   });
+  whenGone(banner, () => { stop(); if (raf) cancelAnimationFrame(raf); });
   return banner;
 }

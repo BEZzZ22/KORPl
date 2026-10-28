@@ -2,6 +2,7 @@
 // (несколько смертей в одном месте — столб выше), обсы — золотыми. Пальцем стол крутится с инерцией
 // и наклоняется, без пальца медленно поворачивается сам. Тап по столбу — что там случилось.
 import { mapX, mapY, terrainUrl } from "./dotamap.js?v=3";
+import { whenGone } from "./aegis.js?v=6";
 
 function d(cls, ...children) {
   const n = document.createElement("div");
@@ -121,6 +122,11 @@ export function tacticalTable({ deaths = [], wards = [], reduced = false, haptic
     if (visible) { root.classList.add("grown"); kick(); }
   }, { threshold: 0.15 });
   io.observe(root);
+  whenGone(root, () => {
+    io.disconnect();
+    document.removeEventListener("visibilitychange", kick);
+    if (raf) cancelAnimationFrame(raf);
+  });
   if (reduced) root.classList.add("grown");
   return root;
 }
