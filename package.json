@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Dota-тренер: Telegram Mini App (docs/), воркер тренера (worker/), тесты",
   "scripts": {
-    "test": "node --test tests/engine.test.mjs tests/match.test.mjs worker/coach.test.mjs worker/coach.chat.test.mjs worker/promo.test.mjs worker/stats.test.mjs",
+    "test": "node --test tests/versions.test.mjs tests/engine.test.mjs tests/match.test.mjs worker/coach.test.mjs worker/coach.chat.test.mjs worker/promo.test.mjs worker/stats.test.mjs",
     "test:ui": "node tests/ui/run.mjs"
   },
   "devDependencies": {
