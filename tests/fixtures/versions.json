@@ -8,12 +8,12 @@
   "sha": "fa104be1129fe933"
  },
  "app.js": {
-  "v": "92",
-  "sha": "6f9a651dd47a2c91"
+  "v": "93",
+  "sha": "bc85ca92d8a4592e"
  },
  "blame.js": {
-  "v": "4",
-  "sha": "d8afd084b4f20778"
+  "v": "5",
+  "sha": "714e412700fb3339"
  },
  "counterpick.json": {
   "v": "1",
@@ -24,8 +24,8 @@
   "sha": "e866c5556921d375"
  },
  "engine.js": {
-  "v": "38",
-  "sha": "603cda62d9d96aed"
+  "v": "39",
+  "sha": "d75ce32d1be0f12a"
  },
  "herocard3d.js": {
   "v": "4",
