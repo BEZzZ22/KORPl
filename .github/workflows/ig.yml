@@ -4,9 +4,9 @@
 # или delete (удалить все рилсы аккаунта и очистить promo/ig_posted.json).
 name: Инстаграм рилсы
 
+# Расписание выключено 28.10.2026: Инстаграм режет вход с серверов GitHub (login_required каждый час).
+# Запуск только вручную (Run workflow)
 on:
-  schedule:
-    - cron: "37 * * * *"
   workflow_dispatch:
     inputs:
       action:
