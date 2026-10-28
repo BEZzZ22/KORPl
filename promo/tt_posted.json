@@ -40,5 +40,11 @@
   "status": "PROCESSING_UPLOAD",
   "mode": "inbox",
   "at": "2026-10-27T19:07:18.466114+00:00"
+ },
+ "phases": {
+  "publish_id": "v_inbox_file~v2.7701639824226650135",
+  "status": "PROCESSING_UPLOAD",
+  "mode": "inbox",
+  "at": "2026-10-28T09:08:15.725045+00:00"
  }
 }
