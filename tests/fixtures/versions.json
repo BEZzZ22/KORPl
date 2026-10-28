@@ -1,0 +1,70 @@
+{
+ "aegis.js": {
+  "v": "5",
+  "sha": "c28d53fef7902b1b"
+ },
+ "aegis_shape.js": {
+  "v": "1",
+  "sha": "fa104be1129fe933"
+ },
+ "app.js": {
+  "v": "82",
+  "sha": "9f82eb48760b4f70"
+ },
+ "blame.js": {
+  "v": "3",
+  "sha": "287238e5d1303c0d"
+ },
+ "counterpick.json": {
+  "v": "1",
+  "sha": "74206e20e99cc707"
+ },
+ "dotamap.js": {
+  "v": "3",
+  "sha": "e866c5556921d375"
+ },
+ "engine.js": {
+  "v": "37",
+  "sha": "63b13a26a2ff1b44"
+ },
+ "herocard3d.js": {
+  "v": "2",
+  "sha": "7485274457832014"
+ },
+ "knowledge.json": {
+  "v": "12",
+  "sha": "4cafbe1e014e4309"
+ },
+ "map3d.js": {
+  "v": "2",
+  "sha": "b5d58cbe0bf3423e"
+ },
+ "medal3d.js": {
+  "v": "3",
+  "sha": "b5c2372b706eb7a1"
+ },
+ "motion.js": {
+  "v": "5",
+  "sha": "6e6354ae15c9c3b5"
+ },
+ "rank_norms.json": {
+  "v": "4",
+  "sha": "877f05546d693107"
+ },
+ "style.css": {
+  "v": "58",
+  "sha": "b076a25e562a5b43"
+ },
+ "texts.json": {
+  "v": "19",
+  "sha": "9f854f21f3319923"
+ },
+ "theme.js": {
+  "v": "3",
+  "sha": "39e5fe838d7ffd71"
+ },
+ "v2.css": {
+  "v": "8",
+  "sha": "2474360fadddaafb"
+ }
+}
