@@ -26,6 +26,7 @@ def test_yt_queue_valid():
     assert len({p["id"] for p in queue}) == len(queue)
     for p in queue:
         assert (ROOT / p["video"]).exists(), p["id"]
+        assert (ROOT / p["video"]).stat().st_size <= 30 * 2**20, p["id"]   # больше TikTok обрезает (см. promo_tt.MAX_FILE)
         assert len(p["title"]) <= 100 and "Shorts" in p["description"], p["id"]
     ats = [datetime.fromisoformat(p["at"]) for p in queue]
     assert all(b - a >= timedelta(hours=5) for a, b in zip(ats, ats[1:]))
