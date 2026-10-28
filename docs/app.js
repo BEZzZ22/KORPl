@@ -399,7 +399,8 @@ async function heroBench(heroId) {
 function toAccountId(raw) {
   const text = String(raw).trim();
   const link = /(?:profiles|players)\/(\d{1,20})(?!\d)/.exec(text);
-  const digits = link ? link[1] : text;
+  // Friend ID иногда копируют с пробелами или дефисами («123 456 789»)
+  const digits = link ? link[1] : /^[\d\s-]+$/.test(text) ? text.replace(/[\s-]/g, "") : text;
   if (!/^\d{1,20}$/.test(digits)) return null;
   const n = BigInt(digits);
   const id = n > STEAM64_OFFSET ? n - STEAM64_OFFSET : n;
