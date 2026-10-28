@@ -195,7 +195,8 @@ function interactive() {
     }
   };
   addEventListener("pointerdown", (e) => {
-    gsap.set(glow, { x: e.clientX, y: e.clientY });
+    // прыжок к пальцу — через те же quickTo: gsap.set с overwrite убивал их твины, и пятно переставало ходить за пальцем
+    gx(e.clientX, e.clientX); gy(e.clientY, e.clientY);
     gsap.to(glow, { autoAlpha: 1, scale: 1, duration: 0.4 });
     move(e);
     const el = e.target instanceof Element && e.target.closest(PRESS);

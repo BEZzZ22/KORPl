@@ -172,7 +172,11 @@ await context.route("**/*", handleRoute);
 const page = await context.newPage();
 page.setDefaultTimeout(10000);
 page.on("pageerror",(e) => errors.push(`pageerror: ${e.message}`));
-page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(`console: ${m.text()}`); });
+page.on("console", (m) => {
+  if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(`console: ${m.text()}`);
+  // предупреждения GSAP: сломанный твин (пятно за пальцем перестало ходить из-за gsap.set поверх quickTo)
+  if (m.type() === "warning" && /not eligible for reset|Invalid property|GSAP target .* not found/.test(m.text()) && !errors.some((x) => x.endsWith(m.text()))) errors.push(`gsap: ${m.text()}`);
+});
 
 const only = process.env.UI_ONLY ? new Set(process.env.UI_ONLY.split(",")) : null;
 const shots = [];
@@ -483,6 +487,27 @@ if (!only || only.has("gate")) {
     await p5.waitForSelector(".match-item", { timeout: 15000 });
   });
   await ctx5.close();
+}
+
+// Облако Телеграма не отвечает (колбэк CloudStorage не приходит): главная всё равно открывается с привязкой из localStorage
+if (!only || only.has("cloud")) {
+  const ctx7 = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: "dark", reducedMotion: "reduce" });
+  await ctx7.addInitScript((acc) => {
+    try { localStorage.setItem("account_id", String(acc)); localStorage.setItem("gate_ok", String(Date.now() + 3600_000)); } catch { /* */ }
+    const noop = () => {};
+    window.Telegram = { WebApp: { initData: "query_id=test", initDataUnsafe: {}, platform: "test", ready: noop, expand: noop, isVersionAtLeast: () => true,
+      setHeaderColor: noop, setBackgroundColor: noop, disableVerticalSwipes: noop, openTelegramLink: noop,
+      BackButton: { show: noop, hide: noop, onClick: noop }, HapticFeedback: { impactOccurred: noop, notificationOccurred: noop, selectionChanged: noop },
+      CloudStorage: { getItem: noop, setItem: noop } } };
+  }, ACCOUNT);
+  await ctx7.route("**/*", handleRoute);
+  const p7 = await ctx7.newPage();
+  p7.on("pageerror", (e) => errors.push(`cloud pageerror: ${e.message}`));
+  await step("cloud", async () => {
+    await p7.goto(`${BASE}/index.html`);
+    await p7.waitForSelector(".match-item", { timeout: 15000 });
+  });
+  await ctx7.close();
 }
 
 // Без привязки: пример разбора открывается с главной, сверху плашка «Это пример»

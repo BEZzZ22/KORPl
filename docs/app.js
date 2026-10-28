@@ -413,22 +413,33 @@ const cloud = () => Boolean(tg && tg.CloudStorage && tg.isVersionAtLeast && tg.i
 // CloudStorage пишет асинхронно: чтение сразу после записи отдавало старое значение
 // (сменённый аккаунт не менялся, привязку приходилось вводить дважды). Свежие значения держим в памяти.
 const memStore = new Map();
+// Облако Телеграма на части клиентов иногда не зовёт колбэк: без запасного пути главная вечно крутила загрузку.
+// Поэтому копия лежит и в localStorage, а облако ждём не дольше CLOUD_WAIT
+const CLOUD_WAIT = 3000;
+const localGet = (key) => { try { return localStorage.getItem(key); } catch { return null; } };
 const storage = {
   get(key) {
     if (memStore.has(key)) return Promise.resolve(memStore.get(key));
     return new Promise((resolve) => {
       if (cloud()) {
-        tg.CloudStorage.getItem(key, (err, value) => resolve(err ? null : value || null));
+        const timer = setTimeout(() => resolve(localGet(key)), CLOUD_WAIT);
+        try {
+          tg.CloudStorage.getItem(key, (err, value) => { clearTimeout(timer); resolve(err ? localGet(key) : value || null); });
+        } catch { clearTimeout(timer); resolve(localGet(key)); }
         return;
       }
-      try { resolve(localStorage.getItem(key)); } catch { resolve(null); }
+      resolve(localGet(key));
     });
   },
   set(key, value) {
     memStore.set(key, value || null);
+    try { localStorage.setItem(key, value); } catch { /* приватный режим */ }
     return new Promise((resolve) => {
-      if (cloud()) { tg.CloudStorage.setItem(key, value, () => resolve()); return; }
-      try { localStorage.setItem(key, value); } catch { /* приватный режим */ }
+      if (cloud()) {
+        const timer = setTimeout(resolve, CLOUD_WAIT);
+        try { tg.CloudStorage.setItem(key, value, () => { clearTimeout(timer); resolve(); }); } catch { clearTimeout(timer); resolve(); }
+        return;
+      }
       resolve();
     });
   },
