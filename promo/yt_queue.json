@@ -1,198 +1,413 @@
 [
- {
-  "id": "review",
-  "at": "2026-10-23T23:30:00+03:00",
-  "video": "promo/shorts/review.mp4",
-  "title": "Почему ты слил катку? Бот показывает главные ошибки #Shorts",
-  "description": "Слил катку и не понял почему? Кидаешь Match ID в бота и получаешь главные ошибки и что с ними делать.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
-  "tags": [
-   "dota 2",
-   "дота 2",
-   "разбор катки",
-   "dota2",
-   "shorts"
-  ]
- },
- {
-  "id": "repeat",
-  "at": "2026-10-24T22:03:00+03:00",
-  "video": "promo/shorts/repeat.mp4",
-  "title": "Что повторилось в твоих смертях в Dota 2 #Shorts",
-  "description": "Бот находит одни и те же места и ситуации, где ты умираешь снова и снова.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
-  "tags": [
-   "dota 2",
-   "дота 2",
-   "разбор катки",
-   "dota2",
-   "shorts"
-  ]
- },
- {
-  "id": "lane",
-  "at": "2026-10-25T11:55:00+03:00",
-  "video": "promo/shorts/lane.mp4",
-  "title": "Линия против оппонента: где ты проиграл в Dota 2 #Shorts",
-  "description": "Крипы, золото и опыт по минутам: видно, когда именно ты проигрываешь линию.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
-  "tags": [
-   "dota 2",
-   "дота 2",
-   "разбор катки",
-   "dota2",
-   "shorts"
-  ]
- },
- {
-  "id": "guessrank",
-  "at": "2026-10-26T18:07:00+03:00",
-  "video": "promo/shorts/guessrank.mp4",
-  "title": "Угадай ранг по трём уликам: 17 смертей за катку #Shorts",
-  "description": "17 смертей, 10 из них от одного Anti-Mage, Glimmer Cape так и не собран. Угадай ранг, пиши версию в комменты, ответ в конце.\n\nКинь Match ID боту и получи разбор своей катки бесплатно.\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
-  "tags": [
-   "dota 2",
-   "дота 2",
-   "разбор катки",
-   "dota2",
-   "shorts"
-  ]
- },
- {
-  "id": "versus",
-  "at": "2026-10-27T19:12:00+03:00",
-  "video": "promo/shorts/versus.mp4",
-  "title": "Drow на Страже против про: сравнил тайминги предметов #Shorts",
-  "description": "Power Treads, Butterfly и BKB: когда их собирает игрок на Страже и когда про. Бот нашёл главную ошибку билда.\n\nКинь Match ID боту и получи разбор своей катки бесплатно.\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
-  "tags": [
-   "dota 2",
-   "дота 2",
-   "разбор катки",
-   "dota2",
-   "shorts"
-  ]
- },
- {
-  "id": "killers",
-  "at": "2026-10-28T18:41:00+03:00",
-  "video": "promo/shorts/killers.mp4",
-  "title": "Кто убил меня больше всех? Топ за одну катку #Shorts",
-  "description": "Slark, Hoodwink, Viper и первое место, которое набило почти вдвое больше урона, чем остальные трое вместе.\n\nКинь Match ID боту и получи разбор своей катки бесплатно.\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
-  "tags": [
-   "dota 2",
-   "дота 2",
-   "разбор катки",
-   "dota2",
-   "shorts"
-  ]
- },
- {
-  "id": "myth",
-  "at": "2026-10-29T19:05:00+03:00",
-  "video": "promo/shorts/myth.mp4",
-  "title": "Миф или правда: 3 факта про керри на Страже #Shorts",
-  "description": "BKB после Butterfly, Power Treads первым делом и керри, который не ходит в файты. Проверяю каждый факт на реальной катке.\n\nКинь Match ID боту и получи разбор своей катки бесплатно.\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
-  "tags": [
-   "dota 2",
-   "дота 2",
-   "разбор катки",
-   "dota2",
-   "shorts"
-  ]
- },
- {
-  "id": "phases",
-  "at": "2026-10-30T18:33:00+03:00",
-  "video": "promo/shorts/phases.mp4",
-  "title": "В какой момент слита катка? Оценил каждую фазу #Shorts",
-  "description": "Линия, мидгейм и лейт: бот оценивает каждую фазу катки и показывает, сколько золота потеряла команда.\n\nКинь Match ID боту и получи разбор своей катки бесплатно.\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
-  "tags": [
-   "dota 2",
-   "дота 2",
-   "разбор катки",
-   "dota2",
-   "shorts"
-  ]
- },
- {
-  "id": "wards",
-  "at": "2026-10-31T17:48:00+03:00",
-  "video": "promo/shorts/wards.mp4",
-  "title": "Найди хоть один обс на половине врага #Shorts",
-  "description": "Карта вардов одной катки на Страже. Ищи обсы на вражеской половине, ответ в конце.\n\nКинь Match ID боту и получи разбор своей катки бесплатно.\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
-  "tags": [
-   "dota 2",
-   "дота 2",
-   "разбор катки",
-   "dota2",
-   "shorts"
-  ]
- },
- {
-  "id": "lanexp",
-  "at": "2026-11-01T18:20:00+03:00",
-  "video": "promo/shorts/lanexp.mp4",
-  "title": "Крипы в плюс, а опыт −523. Как так? #Shorts",
-  "description": "Линия 2 на 2 против Nyx Assassin, разбор по минутам: крипы и нетворс в плюс, а опыт уходит в минус.\n\nКинь Match ID боту и получи разбор своей катки бесплатно.\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
-  "tags": [
-   "dota 2",
-   "дота 2",
-   "разбор катки",
-   "dota2",
-   "shorts"
-  ]
- },
- {
-  "id": "zero3",
-  "at": "2026-11-02T18:25:00+03:00",
-  "video": "promo/shorts/zero3.mp4",
-  "title": "Саппорт на Страже собрал 0 из 3 главных предметов #Shorts",
-  "description": "Glimmer Cape так и не собран, Phase Boots на 15:19 вместо 8:11. Бот сравнил сборку с про на этом герое.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
-  "tags": [
-   "dota 2",
-   "дота 2",
-   "разбор катки",
-   "dota2",
-   "shorts"
-  ]
- },
- {
-  "id": "ganked",
-  "at": "2026-11-03T19:10:00+03:00",
-  "video": "promo/shorts/ganked.mp4",
-  "title": "4 смерти без единой драки: что советует бот #Shorts",
-  "description": "Тебя ловят одного? Бот находит такие смерти и говорит, что делать: считать врагов на миникарте.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
-  "tags": [
-   "dota 2",
-   "дота 2",
-   "разбор катки",
-   "dota2",
-   "shorts"
-  ]
- },
- {
-  "id": "manta",
-  "at": "2026-11-04T18:50:00+03:00",
-  "video": "promo/shorts/manta.mp4",
-  "title": "Manta позже 25:00 — минус 11% побед. А у этого Drow её не было #Shorts",
-  "description": "Бот показывает, какие предметы решают катку и как падает винрейт, если собрать их поздно.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
-  "tags": [
-   "dota 2",
-   "дота 2",
-   "разбор катки",
-   "dota2",
-   "shorts"
-  ]
- },
- {
-  "id": "fightquiz",
-  "at": "2026-11-05T19:30:00+03:00",
-  "video": "promo/shorts/fightquiz.mp4",
-  "title": "4 смерти в драках. Сколько из них на половине врага? #Shorts",
-  "description": "Карта смертей из разбора: где ты умираешь в драках и что это значит.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
-  "tags": [
-   "dota 2",
-   "дота 2",
-   "разбор катки",
-   "dota2",
-   "shorts"
-  ]
- }
+  {
+    "id": "review",
+    "at": "2026-10-23T23:30:00+03:00",
+    "video": "promo/shorts/review.mp4",
+    "title": "Почему ты слил катку? Бот показывает главные ошибки #Shorts",
+    "description": "Слил катку и не понял почему? Кидаешь Match ID в бота и получаешь главные ошибки и что с ними делать.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "разбор катки",
+      "dota2",
+      "shorts"
+    ]
+  },
+  {
+    "id": "repeat",
+    "at": "2026-10-24T22:03:00+03:00",
+    "video": "promo/shorts/repeat.mp4",
+    "title": "Что повторилось в твоих смертях в Dota 2 #Shorts",
+    "description": "Бот находит одни и те же места и ситуации, где ты умираешь снова и снова.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "разбор катки",
+      "dota2",
+      "shorts"
+    ]
+  },
+  {
+    "id": "lane",
+    "at": "2026-10-25T11:55:00+03:00",
+    "video": "promo/shorts/lane.mp4",
+    "title": "Линия против оппонента: где ты проиграл в Dota 2 #Shorts",
+    "description": "Крипы, золото и опыт по минутам: видно, когда именно ты проигрываешь линию.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "разбор катки",
+      "dota2",
+      "shorts"
+    ]
+  },
+  {
+    "id": "guessrank",
+    "at": "2026-10-26T18:07:00+03:00",
+    "video": "promo/shorts/guessrank.mp4",
+    "title": "Угадай ранг по трём уликам: 17 смертей за катку #Shorts",
+    "description": "17 смертей, 10 из них от одного Anti-Mage, Glimmer Cape так и не собран. Угадай ранг, пиши версию в комменты, ответ в конце.\n\nКинь Match ID боту и получи разбор своей катки бесплатно.\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "разбор катки",
+      "dota2",
+      "shorts"
+    ]
+  },
+  {
+    "id": "versus",
+    "at": "2026-10-27T19:12:00+03:00",
+    "video": "promo/shorts/versus.mp4",
+    "title": "Drow на Страже против про: сравнил тайминги предметов #Shorts",
+    "description": "Power Treads, Butterfly и BKB: когда их собирает игрок на Страже и когда про. Бот нашёл главную ошибку билда.\n\nКинь Match ID боту и получи разбор своей катки бесплатно.\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "разбор катки",
+      "dota2",
+      "shorts"
+    ]
+  },
+  {
+    "id": "killers",
+    "at": "2026-10-28T18:41:00+03:00",
+    "video": "promo/shorts/killers.mp4",
+    "title": "Кто убил меня больше всех? Топ за одну катку #Shorts",
+    "description": "Slark, Hoodwink, Viper и первое место, которое набило почти вдвое больше урона, чем остальные трое вместе.\n\nКинь Match ID боту и получи разбор своей катки бесплатно.\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "разбор катки",
+      "dota2",
+      "shorts"
+    ]
+  },
+  {
+    "id": "myth",
+    "at": "2026-10-29T19:05:00+03:00",
+    "video": "promo/shorts/myth.mp4",
+    "title": "Миф или правда: 3 факта про керри на Страже #Shorts",
+    "description": "BKB после Butterfly, Power Treads первым делом и керри, который не ходит в файты. Проверяю каждый факт на реальной катке.\n\nКинь Match ID боту и получи разбор своей катки бесплатно.\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "разбор катки",
+      "dota2",
+      "shorts"
+    ]
+  },
+  {
+    "id": "phases",
+    "at": "2026-10-30T18:33:00+03:00",
+    "video": "promo/shorts/phases.mp4",
+    "title": "В какой момент слита катка? Оценил каждую фазу #Shorts",
+    "description": "Линия, мидгейм и лейт: бот оценивает каждую фазу катки и показывает, сколько золота потеряла команда.\n\nКинь Match ID боту и получи разбор своей катки бесплатно.\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "разбор катки",
+      "dota2",
+      "shorts"
+    ]
+  },
+  {
+    "id": "wards",
+    "at": "2026-10-31T17:48:00+03:00",
+    "video": "promo/shorts/wards.mp4",
+    "title": "Найди хоть один обс на половине врага #Shorts",
+    "description": "Карта вардов одной катки на Страже. Ищи обсы на вражеской половине, ответ в конце.\n\nКинь Match ID боту и получи разбор своей катки бесплатно.\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "разбор катки",
+      "dota2",
+      "shorts"
+    ]
+  },
+  {
+    "id": "lanexp",
+    "at": "2026-11-01T18:20:00+03:00",
+    "video": "promo/shorts/lanexp.mp4",
+    "title": "Крипы в плюс, а опыт −523. Как так? #Shorts",
+    "description": "Линия 2 на 2 против Nyx Assassin, разбор по минутам: крипы и нетворс в плюс, а опыт уходит в минус.\n\nКинь Match ID боту и получи разбор своей катки бесплатно.\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "разбор катки",
+      "dota2",
+      "shorts"
+    ]
+  },
+  {
+    "id": "zero3",
+    "at": "2026-11-02T18:25:00+03:00",
+    "video": "promo/shorts/zero3.mp4",
+    "title": "Саппорт на Страже собрал 0 из 3 главных предметов #Shorts",
+    "description": "Glimmer Cape так и не собран, Phase Boots на 15:19 вместо 8:11. Бот сравнил сборку с про на этом герое.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "разбор катки",
+      "dota2",
+      "shorts"
+    ]
+  },
+  {
+    "id": "ganked",
+    "at": "2026-11-03T19:10:00+03:00",
+    "video": "promo/shorts/ganked.mp4",
+    "title": "4 смерти без единой драки: что советует бот #Shorts",
+    "description": "Тебя ловят одного? Бот находит такие смерти и говорит, что делать: считать врагов на миникарте.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "разбор катки",
+      "dota2",
+      "shorts"
+    ]
+  },
+  {
+    "id": "manta",
+    "at": "2026-11-04T18:50:00+03:00",
+    "video": "promo/shorts/manta.mp4",
+    "title": "Manta позже 25:00 — минус 11% побед. А у этого Drow её не было #Shorts",
+    "description": "Бот показывает, какие предметы решают катку и как падает винрейт, если собрать их поздно.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "разбор катки",
+      "dota2",
+      "shorts"
+    ]
+  },
+  {
+    "id": "fightquiz",
+    "at": "2026-11-05T19:30:00+03:00",
+    "video": "promo/shorts/fightquiz.mp4",
+    "title": "4 смерти в драках. Сколько из них на половине врага? #Shorts",
+    "description": "Карта смертей из разбора: где ты умираешь в драках и что это значит.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "разбор катки",
+      "dota2",
+      "shorts"
+    ]
+  },
+  {
+    "id": "spirit",
+    "at": "2026-11-06T12:30:00+03:00",
+    "video": "promo/shorts/spirit.mp4",
+    "title": "Spirit — единственные с тремя Аегисами. Будет четвёртый? #Shorts",
+    "description": "Бухарест 2021, Сиэтл 2023, Шанхай 2026. Финал против Team Vision 3:2, пятая карта 64 минуты.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #teamspirit #ti2026",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "dota2",
+      "shorts",
+      "team spirit",
+      "yatoro",
+      "collapse",
+      "the international"
+    ]
+  },
+  {
+    "id": "patch",
+    "at": "2026-11-06T19:30:00+03:00",
+    "video": "promo/shorts/patch.mp4",
+    "title": "Где патч 7.42? Valve молчат уже полгода #Shorts",
+    "description": "Последний патч — 7.41f от 15 сентября. Ни даты, ни анонса 7.42. Когда выйдет — пиши в комменты.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #патч",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "dota2",
+      "shorts",
+      "патч 7.42",
+      "dota 2 patch"
+    ]
+  },
+  {
+    "id": "tier",
+    "at": "2026-11-07T12:30:00+03:00",
+    "video": "promo/shorts/tier.mp4",
+    "title": "Тир-лист самых бесячих героев Доты #Shorts",
+    "description": "Наш тир-лист: от «терпимо» до «выключаю игру». Кого забыли — пиши в комменты.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #тирлист",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "dota2",
+      "shorts",
+      "тир лист",
+      "techies",
+      "meepo"
+    ]
+  },
+  {
+    "id": "horror",
+    "at": "2026-11-07T19:30:00+03:00",
+    "video": "promo/shorts/horror.mp4",
+    "title": "Страшилки для Стража. Смотреть с выключенным светом #Shorts",
+    "description": "Пять кошмаров любого Стража. А самое страшное — не знать, почему слил.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #страж",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "dota2",
+      "shorts",
+      "страж",
+      "мемы дота"
+    ]
+  },
+  {
+    "id": "champs",
+    "at": "2026-11-08T12:30:00+03:00",
+    "video": "promo/shorts/champs.mp4",
+    "title": "Все чемпионы The International с 2011 по 2026 #Shorts",
+    "description": "От Na`Vi в 2011 до Spirit в 2026. Кто брал Аегис больше одного раза — в ролике.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #ti #aegis",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "dota2",
+      "shorts",
+      "the international",
+      "чемпионы ti",
+      "аегис"
+    ]
+  },
+  {
+    "id": "guess",
+    "at": "2026-11-08T19:30:00+03:00",
+    "video": "promo/shorts/guess.mp4",
+    "title": "Угадай героя по трём предметам #Shorts",
+    "description": "Три раунда и бонус для самых умных. Сколько из четырёх угадал — пиши в комменты.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #квиз",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "dota2",
+      "shorts",
+      "угадай героя",
+      "квиз дота"
+    ]
+  },
+  {
+    "id": "habits",
+    "at": "2026-11-09T12:30:00+03:00",
+    "video": "promo/shorts/habits.mp4",
+    "title": "5 привычек, которые держат тебя в Страже #Shorts",
+    "description": "Сколько из пяти про тебя? Честно, в комменты.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #ммр",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "dota2",
+      "shorts",
+      "страж",
+      "как поднять ммр"
+    ]
+  },
+  {
+    "id": "prize",
+    "at": "2026-11-09T19:30:00+03:00",
+    "video": "promo/shorts/prize.mp4",
+    "title": "Как упал призовой The International: с $40 млн до ≈$3 млн #Shorts",
+    "description": "Рекорд 2021 года — $40 018 195. После того как Valve убрали Батл Пасс, призовой рухнул.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #ti",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "dota2",
+      "shorts",
+      "призовой ti",
+      "battle pass"
+    ]
+  },
+  {
+    "id": "dilemma",
+    "at": "2026-11-10T12:30:00+03:00",
+    "video": "promo/shorts/dilemma.mp4",
+    "title": "Выбери одно: 6 дилемм дотера #Shorts",
+    "description": "Запоминай свои буквы и пиши в комменты, например: АБАББА.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #выбор",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "dota2",
+      "shorts",
+      "дилеммы",
+      "выбери одно"
+    ]
+  },
+  {
+    "id": "mapfails",
+    "at": "2026-11-10T19:30:00+03:00",
+    "video": "promo/shorts/mapfails.mp4",
+    "title": "5 смертельных ошибок на карте в Доте #Shorts",
+    "description": "Из-за них ты и сидишь в Страже. Какая из пяти твоя — номер в комменты.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #гайд",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "dota2",
+      "shorts",
+      "ошибки дота",
+      "карта дота"
+    ]
+  },
+  {
+    "id": "support",
+    "at": "2026-11-11T12:30:00+03:00",
+    "video": "promo/shorts/support.mp4",
+    "title": "Какой ты саппорт? Тест за 20 секунд #Shorts",
+    "description": "Пять карточек — выбирай свою и отмечай своего саппорта.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #саппорт",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "dota2",
+      "shorts",
+      "саппорт",
+      "тест дота"
+    ]
+  },
+  {
+    "id": "ranks",
+    "at": "2026-11-11T19:30:00+03:00",
+    "video": "promo/shorts/ranks.mp4",
+    "title": "Все ранги Доты: от Рекрута до Титана #Shorts",
+    "description": "Титан — потолок, дальше только место в таблице лидеров. Пиши свой ранг в комменты.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #ранги",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "dota2",
+      "shorts",
+      "ранги дота",
+      "титан",
+      "медали"
+    ]
+  },
+  {
+    "id": "botshow",
+    "at": "2026-11-12T12:30:00+03:00",
+    "video": "promo/shorts/botshow.mp4",
+    "title": "Что бот найдёт в твоей катке #Shorts",
+    "description": "Оценка катки, кто слил, где ты умирал, игра по фазам, тренер и повтор на карте. Бесплатно.\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "dota2",
+      "shorts",
+      "разбор катки",
+      "бот дота"
+    ]
+  },
+  {
+    "id": "hours",
+    "at": "2026-11-12T19:30:00+03:00",
+    "video": "promo/shorts/hours.mp4",
+    "title": "10 000 часов в Доте — это сколько? #Shorts",
+    "description": "416 дней без сна или 15 000 каток по 40 минут. А у тебя сколько часов?\n\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #часы",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "dota2",
+      "shorts",
+      "10000 часов",
+      "часы в доте"
+    ]
+  }
 ]
