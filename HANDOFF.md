@@ -304,3 +304,7 @@
 ## Память и уборка за экранами
 - Компонент с rAF, датчиком наклона или слушателем на `document`/`window` должен убирать за собой, когда его экран сменили: `whenGone(el, fn)` из `aegis.js`. Датчик наклона Телеграма общий — бери его только через `gyro()`, он считает подписчиков.
 - UI-шаг `leak` гоняет круги по экранам и падает, если узлы DOM копятся. Замеряя утечки в Playwright, кликай через `page.evaluate`: locator и waitForSelector сами держат узлы и дают ложную утечку.
+
+## Статистика Shorts (28.10)
+- `tools/yt_stats.py` + `.github/workflows/yt-stats.yml`: раз в день в 09:20 МСК тянет просмотры, лайки и средний досмотр по каждому ролику из `promo/yt_posted.json` и шлёт сводку владельцу от @DotaRazbor_bot. История в `promo/yt_stats.json`.
+- Нужен токен с правами на чтение: `tools/yt_token.py` теперь просит `youtube.readonly` и `yt-analytics.readonly`. Ярику один раз: включить YouTube Analytics API в Google Cloud `dotarazborshorts`, перезапустить `yt_token.py`, заменить секрет `YT_REFRESH_TOKEN`. Пока старый токен, бот пришлёт подсказку вместо отчёта, загрузка не ломается.

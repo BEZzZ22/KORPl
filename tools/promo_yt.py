@@ -37,7 +37,7 @@ def main():
         from google.oauth2.credentials import Credentials
 
         creds = Credentials(None, refresh_token=env["YT_REFRESH_TOKEN"], client_id=env["YT_CLIENT_ID"], client_secret=env["YT_CLIENT_SECRET"],
-                            token_uri="https://oauth2.googleapis.com/token", scopes=["https://www.googleapis.com/auth/youtube.upload"])
+                            token_uri="https://oauth2.googleapis.com/token")
         creds.refresh(Request())
         print("Токен YouTube живой.")
         if "--check" in sys.argv:
