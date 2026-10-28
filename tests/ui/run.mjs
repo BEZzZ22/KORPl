@@ -138,7 +138,8 @@ await context.addInitScript(([acc, other, design]) => {
     if (!localStorage.getItem(`goal:${acc}`)) localStorage.setItem(`goal:${acc}`, JSON.stringify({ text: "Цель на следующую катку: не больше одной смерти до 10:00", check: { group: "lane_deaths", metric: "lane_deaths", op: "<=", target: 1 }, match: 1, t: 1000 }));
   } catch { /* */ }
 }, [ACCOUNT, { match: 1, hero: "Invoker", hero_id: 74, won: true, kda: "12/3/9", t: 0, payload: { hero: "Invoker", won: true, kda: "12/3/9", duration: "41:02" } }, process.env.UI_DESIGN || ""]);
-let netDown = false; // офлайн-проверка: все запросы рвутся, как без сети
+let netDown = false;
+let busyOnce = false; // офлайн-проверка: все запросы рвутся, как без сети
 async function handleRoute(route) {
   if (netDown) return route.abort("internetdisconnected");
   const url = new URL(route.request().url());
@@ -146,6 +147,8 @@ async function handleRoute(route) {
   if (url.hostname === "api.opendota.com") {
     // UI_CONSTANTS_DOWN=1: справочники OpenDota отдают 503, приложение должно взять их с зеркала
     if (process.env.UI_CONSTANTS_DOWN && url.pathname.startsWith("/api/constants/")) return route.fulfill({ status: 503, body: "" });
+    // шаг «busy»: OpenDota под нагрузкой один раз отвечает 429
+    if (busyOnce && url.pathname.endsWith("/recentMatches")) { busyOnce = false; return route.fulfill({ status: 429, headers: { "Access-Control-Allow-Origin": "*" }, body: "{}" }); }
     const data = opendota(url);
     return data === null ? route.fulfill({ status: 404, body: "{}" }) : route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(data) });
   }
@@ -243,6 +246,15 @@ await step("deeplink", async () => {
   await p5.waitForSelector(".hero-head", { timeout: 20000 });
   if (asked.length !== 1) throw new Error(`матч запрошен ${asked.length} раз вместо одного`);
   await p5.close();
+});
+// OpenDota ответила 429: приложение повторяет запрос и всё равно показывает катки
+await step("busy", async () => {
+  busyOnce = true;
+  const p6 = await context.newPage();
+  await p6.goto(`${BASE}/index.html`);
+  await p6.waitForSelector(".match-item", { timeout: 20000 });
+  if (busyOnce) throw new Error("429 не случился — шаг ничего не проверил");
+  await p6.close();
 });
 await step("goal", async () => {
   // задача с прошлой катки проверена по этой: у Tusk две смерти до 10:00 — не вышло

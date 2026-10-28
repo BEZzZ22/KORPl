@@ -308,14 +308,24 @@ function glassBar(bar, itemSelector, { live, onPick }) {
   return { place, current: () => active };
 }
 
-async function api(path, { method = "GET", timeout = 20000 } = {}) {
+async function api(path, { method = "GET", timeout = 20000, retry = method === "GET" } = {}) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeout);
+  const t0 = Date.now();
+  let status = 0;
   try {
     const res = await fetch(API + path, { method, signal: ctrl.signal });
+    status = res.status;
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`OpenDota ответила ${res.status}`);
     return await res.json();
+  } catch (e) {
+    // под нагрузкой OpenDota быстро отвечает 429/502/503: один повтор через пару секунд обычно проходит.
+    // Таймаут не повторяем — человек и так ждал
+    const busy = status === 429 || status === 502 || status === 503 || status === 504;
+    if (!retry || !busy || Date.now() - t0 > timeout / 2) throw e;
+    await new Promise((r) => setTimeout(r, 1500 + Math.random() * 1000));
+    return api(path, { method, timeout, retry: false });
   } finally {
     clearTimeout(timer);
   }
@@ -326,7 +336,7 @@ async function api(path, { method = "GET", timeout = 20000 } = {}) {
 const CONSTANTS_MIRROR = "https://raw.githubusercontent.com/odota/dotaconstants/master/build";
 async function constants(name, timeout = 20000) {
   try {
-    const data = await api(`/constants/${name}`, { timeout: timeout / 2 });
+    const data = await api(`/constants/${name}`, { timeout: timeout / 2, retry: false });
     if (data && typeof data === "object") return data;
   } catch {}
   const ctrl = new AbortController();
