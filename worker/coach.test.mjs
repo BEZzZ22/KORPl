@@ -649,6 +649,21 @@ test("rateGuard: лимит в минуту с IP, дальше бан 5 мин�
   assert.equal(await rateGuard(env, "198.51.100.8", t), null);
 });
 
+test("rateGuard: чистый IP сверяется с KV не чаще раза в минуту", async () => {
+  let reads = 0;
+  const kv = new Map();
+  const env = { RATE_PER_MIN: "100", COACH_KV: { get: async (k) => { reads++; return kv.has(k) ? JSON.parse(kv.get(k)) : null; }, put: async (k, v) => { kv.set(k, v); } } };
+  const ip = "198.51.100.9";
+  const t0 = 1_000_000_000_000;
+  for (let i = 0; i < 5; i++) assert.equal(await rateGuard(env, ip, t0 + i * 1000), null);
+  assert.equal(reads, 1);
+  // бан, поставленный другим изолятом, виден после перепроверки
+  kv.set(`ban:${ip}`, JSON.stringify({ strikes: 1, until: t0 + 600_000, last: t0 + 10_000 }));
+  assert.equal(await rateGuard(env, ip, t0 + 30_000), null);
+  assert.match((await rateGuard(env, ip, t0 + 70_000)).text, /Подожди/);
+  assert.equal(reads, 2);
+});
+
 test("fetch: частота запросов с IP выше лимита — 429 с баном на любом пути", async (t) => {
   t.after(restore);
   mockFetch({ groq: Array.from({ length: 3 }, () => groqOk(good)) });
