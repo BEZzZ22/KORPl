@@ -44,7 +44,10 @@ async function networkFirst(req, cacheName, wait = 0, event = null) {
 async function staleWhileRevalidate(req, cacheName) {
   const cache = await caches.open(cacheName);
   const hit = await cache.match(req);
-  const fresh = fetch(req).then((res) => { if (res.ok) cache.put(req, res.clone()); return res; });
+  const fresh = fetch(req).then((res) => {
+    if (res.ok) cache.put(req, res.clone()).then(() => !hit && dropOldVersions(cache, req)).catch(() => {});
+    return res;
+  });
   if (hit) { fresh.catch(() => {}); return hit; }
   return fresh;
 }
@@ -59,12 +62,31 @@ async function telegramScript(req, event) {
   return fresh;
 }
 
+// Новая ?v= — новый адрес, старые копии того же файла больше не понадобятся: без чистки кэш рос с каждым выпуском
+async function dropOldVersions(cache, req) {
+  const url = new URL(req.url);
+  if (url.origin !== self.location.origin || !/[?&]v=/.test(url.search)) return;
+  for (const k of await cache.keys()) {
+    const u = new URL(k.url);
+    if (u.pathname === url.pathname && u.search !== url.search) await cache.delete(k);
+  }
+}
+
+// Храним только последние keep адресов с этим префиксом: позиции реплеев не меняются, но копятся
+async function trim(cache, prefix, keep) {
+  const keys = (await cache.keys()).filter((k) => k.url.startsWith(prefix));
+  for (const old of keys.slice(0, Math.max(0, keys.length - keep))) await cache.delete(old);
+}
+
 async function cacheFirstOk(req, cacheName) {
   const cache = await caches.open(cacheName);
   const hit = await cache.match(req);
   if (hit) return hit;
   const res = await fetch(req);
-  if (res.ok) await cache.put(req, res.clone());
+  if (res.ok) {
+    await cache.put(req, res.clone());
+    await trim(cache, "https://raw.githubusercontent.com/BEZzZ22/KORPl/replays/", MATCHES_KEEP);
+  }
   return res;
 }
 

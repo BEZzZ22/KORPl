@@ -618,6 +618,18 @@ if (!only || only.has("offline")) {
     // второй заход уже под контролем service worker: он складывает ответы в кэш
     await p2.reload();
     await p2.waitForSelector(".match-item", { timeout: 15000 });
+    // новая ?v= вытесняет из кэша прошлую копию того же файла
+    const left = await p2.evaluate(async () => {
+      await fetch("about.html?v=900");
+      await fetch("about.html?v=901");
+      for (let i = 0; i < 20; i++) {
+        const keys = (await (await caches.open("app-v3")).keys()).map((k) => k.url).filter((u) => u.includes("about.html"));
+        if (keys.length === 1) return keys;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      return (await (await caches.open("app-v3")).keys()).map((k) => k.url).filter((u) => u.includes("about.html"));
+    });
+    if (left.length !== 1 || !left[0].endsWith("v=901")) throw new Error(`в кэше копии about.html: ${left.join(", ")}`);
     netDown = true;
     await ctx2.setOffline(true);
     await p2.reload();
