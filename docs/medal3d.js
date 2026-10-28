@@ -3,7 +3,7 @@
 // из которого поднимаются искры. Сканлайны и лёгкое мерцание, цвет — свой у каждого ранга.
 // Крутится пальцем с инерцией, сам покачивается, наклон телефона поворачивает её.
 // Тап — глитч: быстрый оборот, вспышка и выброс частиц. Рисуется на canvas 2D, без WebGL.
-import { gyro } from "./aegis.js?v=5";
+import { gyro, whenGone } from "./aegis.js?v=6";
 
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
 // неоновый цвет ранга: оттенок как у значка ранга, но яркий
@@ -372,10 +372,18 @@ export function rankMedal3d(tier, { reduced = false, haptic = () => {}, tick = (
   // вне экрана и в свёрнутом приложении не рисуем: кадр стоит денег батарее
   const io = new IntersectionObserver((es) => { visible = es.some((e) => e.isIntersecting); if (visible) kick(); });
   io.observe(root);
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) kick(); });
+  const onVis = () => { if (!document.hidden) kick(); };
+  document.addEventListener("visibilitychange", onVis);
+  let stopGyro = () => {};
+  whenGone(root, () => {
+    io.disconnect();
+    document.removeEventListener("visibilitychange", onVis);
+    stopGyro();
+    if (raf) cancelAnimationFrame(raf);
+  });
 
   if (!reduced) {
-    const stop = gyro((beta, gamma) => {
+    const stop = stopGyro = gyro((beta, gamma) => {
       if (!root.isConnected) { stop(); return; }
       tiltY = Math.max(-30, Math.min(30, gamma * 0.9)) * DEG;
       tiltX = Math.max(-22, Math.min(22, -beta * 0.6)) * DEG;

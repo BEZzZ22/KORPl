@@ -1,15 +1,15 @@
 {
  "aegis.js": {
-  "v": "5",
-  "sha": "c28d53fef7902b1b"
+  "v": "6",
+  "sha": "74694e0a6f16bc15"
  },
  "aegis_shape.js": {
   "v": "1",
   "sha": "fa104be1129fe933"
  },
  "app.js": {
-  "v": "89",
-  "sha": "942ee16151067585"
+  "v": "90",
+  "sha": "5ba768394d91a6a0"
  },
  "blame.js": {
   "v": "4",
@@ -28,20 +28,20 @@
   "sha": "603cda62d9d96aed"
  },
  "herocard3d.js": {
-  "v": "2",
-  "sha": "7485274457832014"
+  "v": "3",
+  "sha": "9b5974c917fb4640"
  },
  "knowledge.json": {
   "v": "12",
   "sha": "4cafbe1e014e4309"
  },
  "map3d.js": {
-  "v": "2",
-  "sha": "b5d58cbe0bf3423e"
+  "v": "3",
+  "sha": "a5b4008f322990ca"
  },
  "medal3d.js": {
-  "v": "3",
-  "sha": "b5c2372b706eb7a1"
+  "v": "4",
+  "sha": "60a8a6a008a5cabf"
  },
  "motion.js": {
   "v": "6",

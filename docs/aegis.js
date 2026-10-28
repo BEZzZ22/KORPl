@@ -49,14 +49,34 @@ export function gyro(onTilt) {
     const deg = 180 / Math.PI;
     const on = () => feed(tg.DeviceOrientation.beta * deg, tg.DeviceOrientation.gamma * deg);
     try {
-      tg.DeviceOrientation.start({ refresh_rate: 50 });
+      // датчик один на всё приложение: щит, медаль и карточка героя слушают его вместе,
+      // и ушедший с экрана не должен выключать его остальным
+      if (!tgGyroUsers) tg.DeviceOrientation.start({ refresh_rate: 50 });
+      tgGyroUsers++;
       tg.onEvent("deviceOrientationChanged", on);
-      return () => { tg.offEvent("deviceOrientationChanged", on); try { tg.DeviceOrientation.stop(); } catch { /* уже остановлен */ } };
+      let off = false;
+      return () => {
+        if (off) return;
+        off = true;
+        tg.offEvent("deviceOrientationChanged", on);
+        if (--tgGyroUsers === 0) try { tg.DeviceOrientation.stop(); } catch { /* уже остановлен */ }
+      };
     } catch { /* старый клиент — пробуем браузер */ }
   }
   const on = (e) => feed(e.beta, e.gamma);
   window.addEventListener("deviceorientation", on);
   return () => window.removeEventListener("deviceorientation", on);
+}
+let tgGyroUsers = 0;
+
+// Экран перерисовали — элемент ушёл из DOM: fn снимает слушателей документа, датчик и наблюдателей,
+// иначе они держат в памяти весь старый экран. Ждём, пока элемент хоть раз окажется в DOM
+export function whenGone(el, fn) {
+  let shown = false;
+  const t = setInterval(() => {
+    if (el.isConnected) shown = true;
+    else if (shown) { clearInterval(t); fn(); }
+  }, 2000);
 }
 
 // ---------- кватернионы [x, y, z, w]: поворот без «шарнирного замка», крутится в любую сторону ----------

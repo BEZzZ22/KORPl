@@ -260,6 +260,36 @@ await step("busy", async () => {
   if (busyOnce) throw new Error("429 не случился — шаг ничего не проверил");
   await p6.close();
 });
+// Переходы главная → профиль → разбор по кругу: старые экраны не должны копиться в памяти
+// (медаль и 3D-карта держали их слушателем документа). Клики через evaluate: хэндлы Playwright сами держат узлы
+await step("leak", async () => {
+  const pl = await context.newPage();
+  const cdp = await context.newCDPSession(pl);
+  await cdp.send("Performance.enable");
+  const nodes = async () => {
+    await cdp.send("HeapProfiler.collectGarbage");
+    const m = await cdp.send("Performance.getMetrics");
+    return m.metrics.find((x) => x.name === "Nodes").value;
+  };
+  const click = (sel, text) => pl.evaluate(([s, t]) => [...document.querySelectorAll(s)].find((x) => !t || x.textContent.trim() === t).click(), [sel, text]);
+  const wait = (sel) => pl.waitForFunction((s) => !!document.querySelector(s), sel, { timeout: 20000 }).then((h) => h.dispose());
+  await pl.goto(`${BASE}/index.html`);
+  await wait(".fresh-match");
+  const seen = [];
+  for (let i = 0; i < 5; i++) {
+    await click(".tabbar button", "Профиль");
+    await pl.waitForTimeout(2300);
+    await click(".tabbar button", "Главная");
+    await wait(".fresh-match");
+    await click(".fresh-match");
+    await wait(".hero-head");
+    await pl.waitForTimeout(2300);
+    seen.push(await nodes());
+  }
+  await pl.close();
+  if (seen[4] - seen[0] > 300) throw new Error(`узлы DOM копятся при переходах: ${seen.join(" → ")}`);
+});
+
 await step("goal", async () => {
   // задача с прошлой катки проверена по этой: у Tusk две смерти до 10:00 — не вышло
   const text = await page.locator(".goal-result").innerText();
