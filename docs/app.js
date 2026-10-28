@@ -731,26 +731,9 @@ async function profileScreen() {
       );
     })),
     weakHeroesBlock(heroes),
-    designSwitch(),
     h("button", { class: "ghost", onclick: () => { storage.set("account_id", ""); navRoot("home", homeScreen); } }, "Сменить аккаунт"),
   );
   tilt(app.querySelector(".profile-card") && app.querySelector(".profile-card").parentElement);
-}
-
-// Дизайн «Новый» или «Классика»: выбор читает theme.js до отрисовки, поэтому после смены — перезагрузка
-function designSwitch() {
-  const pickDesign = (value) => () => {
-    if ((value === "v2") === V2) return;
-    haptic();
-    step(value === "v2" ? "design_v2" : "design_classic");
-    try { localStorage.setItem("design", value); } catch { return; }
-    location.reload();
-  };
-  const seg = (value, label) => h("button", { type: "button", class: "seg", "aria-pressed": String((value === "v2") === V2), onclick: pickDesign(value) }, label);
-  return h("div", { class: "design-switch" },
-    h("h2", {}, "Дизайн"),
-    h("div", { class: "seg-row" }, seg("v2", "Новый"), seg("classic", "Классика")),
-    h("p", { class: "small muted" }, V2 ? "Чистый тёмный стиль с анимацией." : "Привычная «ночная карта»."));
 }
 
 // Тренд по последним играм: свежие 10 против предыдущих 10 (по данным recentMatches)
