@@ -172,7 +172,11 @@ await context.route("**/*", handleRoute);
 const page = await context.newPage();
 page.setDefaultTimeout(10000);
 page.on("pageerror",(e) => errors.push(`pageerror: ${e.message}`));
-page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(`console: ${m.text()}`); });
+page.on("console", (m) => {
+  if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(`console: ${m.text()}`);
+  // предупреждения GSAP: сломанный твин (пятно за пальцем перестало ходить из-за gsap.set поверх quickTo)
+  if (m.type() === "warning" && /not eligible for reset|Invalid property|GSAP target .* not found/.test(m.text()) && !errors.some((x) => x.endsWith(m.text()))) errors.push(`gsap: ${m.text()}`);
+});
 
 const only = process.env.UI_ONLY ? new Set(process.env.UI_ONLY.split(",")) : null;
 const shots = [];
