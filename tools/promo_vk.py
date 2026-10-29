@@ -1,8 +1,9 @@
-"""Shorts в VK Клипы сообщества по той же очереди promo/yt_queue.json.
-Секреты: VK_CLIENT_ID (приложение VK ID), VK_REFRESH_TOKEN и VK_DEVICE_ID (один раз, tools/vk_token.py), VK_GROUP_ID (число,
-id сообщества без минуса), PROMO_TOKEN_KEY (tools/promo_tokens.py). Токен — от админа сообщества.
+"""Shorts в VK Клипы по той же очереди promo/yt_queue.json.
+Секреты: VK_CLIENT_ID (приложение VK ID), VK_REFRESH_TOKEN и VK_DEVICE_ID (один раз, tools/vk_token.py), PROMO_TOKEN_KEY
+(tools/promo_tokens.py). VK_GROUP_ID (число, id сообщества без минуса) — по желанию: без него клипы идут на страницу
+аккаунта, чей токен, с ним — в сообщество (токен тогда от его админа).
 Клип грузится через shortVideo.create. Метод в документации VK не описан, поэтому если он откажет, ролик уходит обычным видео
-сообщества (video.save, документирован) с постом на стене — прогон пишет, каким путём ушло.
+(video.save, документирован) с постом на стене — прогон пишет, каким путём ушло.
 Не больше одного ролика за прогон и не чаще раза в 5 часов. Что вышло — promo/vk_posted.json.
 Запуск: python tools/promo_vk.py [--dry | --check]  (--check: только обновить токен)"""
 import json
@@ -52,10 +53,15 @@ def text(post):
     return title, f"{title}\n\nРазбор твоей катки в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#dota2 #дота2 #доташка"
 
 
+def owner(group):
+    """Без id сообщества VK кладёт ролик на страницу самого аккаунта."""
+    return {"group_id": group} if group else {}
+
+
 def as_clip(token, group, path, desc):
     import requests
 
-    slot = call(token, "shortVideo.create", v="5.282", group_id=group, file_size=path.stat().st_size, description=desc, wallpost=1)
+    slot = call(token, "shortVideo.create", v="5.282", **owner(group), file_size=path.stat().st_size, description=desc, wallpost=1)
     with path.open("rb") as f:
         resp = requests.post(slot["upload_url"], files={"file": (path.name, f, "video/mp4")}, timeout=600)
     if resp.status_code != 200 or "error" in resp.text[:200].lower():
@@ -66,7 +72,7 @@ def as_clip(token, group, path, desc):
 def as_video(token, group, path, title, desc):
     import requests
 
-    slot = call(token, "video.save", group_id=group, name=title, description=desc, wallpost=1, repeat=1)
+    slot = call(token, "video.save", **owner(group), name=title, description=desc, wallpost=1, repeat=1)
     with path.open("rb") as f:
         resp = requests.post(slot["upload_url"], files={"video_file": (path.name, f, "video/mp4")}, timeout=600)
     if resp.status_code != 200 or "error" in resp.json():
@@ -76,9 +82,9 @@ def as_video(token, group, path, title, desc):
 
 def main():
     dry = "--dry" in sys.argv
-    env = {k: os.environ.get(k, "") for k in ("VK_CLIENT_ID", "VK_REFRESH_TOKEN", "VK_DEVICE_ID", "VK_GROUP_ID", "PROMO_TOKEN_KEY")}
+    env = {k: os.environ.get(k, "") for k in ("VK_CLIENT_ID", "VK_REFRESH_TOKEN", "VK_DEVICE_ID", "PROMO_TOKEN_KEY")}
     if not dry and not all(env.values()):
-        print("Нет VK_CLIENT_ID, VK_REFRESH_TOKEN, VK_DEVICE_ID, VK_GROUP_ID или PROMO_TOKEN_KEY: в VK не грузим, пропускаю.")
+        print("Нет VK_CLIENT_ID, VK_REFRESH_TOKEN, VK_DEVICE_ID или PROMO_TOKEN_KEY: в VK не грузим, пропускаю.")
         return
     if "--check" in sys.argv:
         refresh(env)
@@ -97,11 +103,11 @@ def main():
         return
     # токен обновляем только когда есть что грузить: каждый раз он новый и коммитится в репо
     token = refresh(env)
-    group, path = env["VK_GROUP_ID"].lstrip("-"), ROOT / post["video"]
+    group, path = os.environ.get("VK_GROUP_ID", "").lstrip("-"), ROOT / post["video"]
     try:
         ref, how = as_clip(token, group, path, desc), "clip"
     except VkError as e:
-        print(f"Клипом не вышло ({e}), гружу обычным видео сообщества.")
+        print(f"Клипом не вышло ({e}), гружу обычным видео.")
         ref, how = as_video(token, group, path, title, desc), "video"
     posted[post["id"]] = {"ref": ref, "how": how, "at": datetime.now(timezone.utc).isoformat()}
     POSTED.write_text(json.dumps(posted, ensure_ascii=False, indent=1), encoding="utf-8")

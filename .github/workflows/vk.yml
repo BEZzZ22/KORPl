@@ -1,5 +1,6 @@
 # Shorts в VK Клипы сообщества по расписанию из promo/yt_queue.json, см. tools/promo_vk.py.
-# Секреты: VK_CLIENT_ID, VK_REFRESH_TOKEN, VK_DEVICE_ID, VK_GROUP_ID, PROMO_TOKEN_KEY. Без них прогон ничего не делает.
+# Секреты: VK_CLIENT_ID, VK_REFRESH_TOKEN, VK_DEVICE_ID, PROMO_TOKEN_KEY. Без них прогон ничего не делает.
+# VK_GROUP_ID — по желанию: без него клипы идут на страницу аккаунта, с ним — в сообщество.
 # Refresh-токен одноразовый: свежий шифруется PROMO_TOKEN_KEY и коммитится в promo/tokens/vk.enc даже при красном прогоне.
 name: VK Клипы
 
