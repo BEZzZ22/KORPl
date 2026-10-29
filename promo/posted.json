@@ -19,5 +19,6 @@
  "killers": 24,
  "farm_tip": 25,
  "midweek": 26,
- "matchid": 27
+ "matchid": 27,
+ "phases": 28
 }
