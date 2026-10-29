@@ -309,3 +309,7 @@
 ## Статистика Shorts (28.10)
 - `tools/yt_stats.py` + `.github/workflows/yt-stats.yml`: раз в день в 09:20 МСК тянет просмотры, лайки и средний досмотр по каждому ролику из `promo/yt_posted.json` и шлёт сводку владельцу от @DotaRazbor_bot. История в `promo/yt_stats.json`.
 - Нужен токен с правами на чтение: `tools/yt_token.py` теперь просит `youtube.readonly` и `yt-analytics.readonly`. Ярику один раз: включить YouTube Analytics API в Google Cloud `dotarazborshorts`, перезапустить `yt_token.py`, заменить секрет `YT_REFRESH_TOKEN`. Пока старый токен, бот пришлёт подсказку вместо отчёта, загрузка не ломается.
+
+## Запасной путь к OpenDota (29.10)
+- Приложение ходит в OpenDota напрямую (`api()` в `docs/app.js`). При 429/5xx, таймауте или ошибке сети GET повторяется через воркер: `GET /od/<путь>` (`proxyOpenDota` в `worker/coach.js`), с белым списком путей, одним повтором и кэшем Cloudflare. Основным путём воркер не делаем: лимит OpenDota считается по IP, а у воркера IP общие на всех.
+- Платный ключ OpenDota: положить секрет `OPENDOTA_KEY` в репозиторий, и деплой воркера сам переложит его. Воркер добавляет его к запросам запасного пути.
