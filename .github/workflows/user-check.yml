@@ -1,4 +1,4 @@
-# Почему юзер застрял: по нику из отчёта смотрит его счётчики в KV воркера и что OpenDota отдаёт по привязанному аккаунту.
+# Почему юзер застрял: по нику из отчёта смотрит его счётчики в базе воркера (D1) и что OpenDota отдаёт по привязанному аккаунту.
 # Репо публичный, логи видны всем: печатаются только числа и флаги, без имён и id.
 name: Проверка юзера
 
@@ -27,15 +27,17 @@ jobs:
           node-version: 22
       - name: Проверка
         run: |
-          kv() { npx --yes wrangler@4 kv "$@" --namespace-id "$NS" --remote 2>/dev/null; }
-          kv key list --prefix seen: > seen.json
-          id=$(python3 -c 'import json,os; w=os.environ["WHO"].lstrip("@").lower(); print(next((k["name"][5:] for k in json.load(open("seen.json")) if (k.get("metadata") or {}).get("u","").lower()==w), ""))')
+          # с 29.10 данные воркера в D1 (база dotacoach)
+          d1() { npx --yes wrangler@4 d1 execute dotacoach --remote --json --command "$1" 2>/dev/null; }
+          d1 "SELECT k AS name, meta FROM kv WHERE k LIKE 'seen:%'" > seen.json
+          id=$(python3 -c 'import json,os; w=os.environ["WHO"].lstrip("@").lower(); rows=json.load(open("seen.json"))[0]["results"]; print(next((r["name"][5:] for r in rows if (json.loads(r.get("meta") or "{}")).get("u","").lower()==w), ""))')
           [ -z "$id" ] && { echo "Ник не найден среди seen:"; exit 0; }
+          case "$id" in *[!0-9]*) echo "Странный id"; exit 1 ;; esac
           echo "Счётчики по дням:"
-          kv key list --prefix act: | python3 -c 'import json,sys; id=sys.argv[1]; [print(" ", k["name"].split(":")[1], json.dumps(k.get("metadata"), ensure_ascii=False)) for k in json.load(sys.stdin) if k["name"].endswith(":"+id)]' "$id"
-          kv key get "user:$id" > user.json || true
+          d1 "SELECT k AS name, meta FROM kv WHERE k LIKE 'act:%:$id' ORDER BY k" | python3 -c 'import json,sys; [print(" ", r["name"].split(":")[1], r["meta"]) for r in json.load(sys.stdin)[0]["results"]]'
+          d1 "SELECT v FROM kv WHERE k = 'user:$id'" | python3 -c 'import json,sys; r=json.load(sys.stdin)[0]["results"]; print(r[0]["v"] if r else "")' > user.json || true
           acc=$(python3 -c 'import json; d=json.load(open("user.json")); print(d.get("account_id") or "")' 2>/dev/null || true)
-          echo "Профиль в KV: $([ -s user.json ] && echo есть || echo нет), аккаунт привязан: $([ -n "$acc" ] && echo да || echo нет)"
+          echo "Профиль: $([ -s user.json ] && echo есть || echo нет), аккаунт привязан: $([ -n "$acc" ] && echo да || echo нет)"
           python3 -c 'import json; d=json.load(open("user.json")); print("  разборов в истории:", len(d.get("progress") or []), "обновлён:", d.get("updated"))' 2>/dev/null || true
           [ -z "$acc" ] && exit 0
           echo "OpenDota:"
