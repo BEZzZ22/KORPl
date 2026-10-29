@@ -23,6 +23,8 @@ const NAV_ICONS = {
 };
 
 const API = "https://api.opendota.com/api";
+// Запасной путь: OpenDota не ответила или режет — тот же запрос через воркер (он повторяет и кэширует)
+const API_PROXY = "https://dotacoach.2007rggg.workers.dev/od";
 const STEAM_CDN = "https://cdn.cloudflare.steamstatic.com";
 const STEAM_MIRROR = "https://cdn.akamai.steamstatic.com";
 const STEAM64_OFFSET = 76561197960265728n;
@@ -323,9 +325,27 @@ async function api(path, { method = "GET", timeout = 20000, retry = method === "
     // под нагрузкой OpenDota быстро отвечает 429/502/503: один повтор через пару секунд обычно проходит.
     // Таймаут не повторяем — человек и так ждал
     const busy = status === 429 || status === 502 || status === 503 || status === 504;
-    if (!retry || !busy || Date.now() - t0 > timeout / 2) throw e;
+    if (!retry || !busy || Date.now() - t0 > timeout / 2) {
+      if (method !== "GET" || !retry) throw e;
+      return viaProxy(path, e);
+    }
     await new Promise((r) => setTimeout(r, 1500 + Math.random() * 1000));
-    return api(path, { method, timeout, retry: false });
+    return api(path, { method, timeout, retry: false }).catch((e2) => viaProxy(path, e2));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function viaProxy(path, original) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 20000);
+  try {
+    const res = await fetch(API_PROXY + path, { signal: ctrl.signal });
+    if (res.status === 404) return null;
+    if (!res.ok) throw original;
+    return await res.json();
+  } catch {
+    throw original;
   } finally {
     clearTimeout(timer);
   }

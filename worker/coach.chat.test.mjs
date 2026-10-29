@@ -1,7 +1,7 @@
 // Тесты Claude, чата, сравнения, KV (кэш, расход), уведомлений и карточек: node --test worker/
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker, { buildPrompt, normalize, ask, chat, cleanChat, compare, telegramUser, checkWatches, usageStats, loreFor } from "./coach.js";
+import worker, { buildPrompt, normalize, ask, chat, cleanChat, compare, telegramUser, checkWatches, usageStats, loreFor, proxyOpenDota, odTtl } from "./coach.js";
 
 test("loreFor: лор только на вопрос про историю; герой из вопроса, иначе свой", () => {
   assert.equal(loreFor("что собирать против Tiny?", "Tusk"), "");
@@ -642,4 +642,45 @@ test("fetch: у каждого вида своя суточная квота —
   mockFetch({ claude: [sse(good)] });
   const cont = await worker.fetch(req({ ...raw, kda: "1/1/2", tier: "opus", cont: true, initData: user }), e);
   assert.equal(cont.status, 200);
+});
+
+function memCache() {
+  const m = new Map();
+  return { m, async match(r) { const t = m.get(r.url); return t == null ? undefined : new Response(t); }, async put(r, res) { m.set(r.url, await res.text()); } };
+}
+
+test("OpenDota через воркер: белый список, повтор при 429, кэш и CORS", async (t) => {
+  t.after(restore);
+  const cache = memCache();
+  const u = (p) => new URL(`https://coach.example/od${p}`);
+  assert.equal((await proxyOpenDota({}, u("/live"), "1.1.1.1", ORIGIN, Date.now(), cache)).status, 404);
+  assert.equal((await proxyOpenDota({}, u("/matches/1/../../x"), "1.1.1.1", ORIGIN, Date.now(), cache)).status, 404);
+  const calls = mockFetch({ od: [new Response("", { status: 429 }), new Response(JSON.stringify({ match_id: 9052987576, version: 21 }))] });
+  const res = await proxyOpenDota({ OPENDOTA_KEY: "k" }, u("/matches/9052987576"), "1.1.1.2", ORIGIN, Date.now(), cache);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("Access-Control-Allow-Origin"), ORIGIN);
+  assert.equal((await res.json()).match_id, 9052987576);
+  // фоновые запросы прошлых тестов тоже попадают в calls, считаем только свои
+  const mine = calls.filter((c) => c.url.includes("/matches/9052987576"));
+  assert.equal(mine.length, 2);
+  assert.match(mine[1].url, /api_key=k$/);
+  // второй раз — из кэша, без запроса к OpenDota, ключ в кэш не попал
+  mockFetch({});
+  const again = await proxyOpenDota({}, u("/matches/9052987576"), "1.1.1.2", ORIGIN, Date.now(), cache);
+  assert.equal(again.headers.get("X-OD-Cache"), "hit");
+  assert.ok(![...cache.m.keys()].some((k) => k.includes("api_key")));
+  // OpenDota лежит: 502, не 200
+  mockFetch({ od: [new Response("", { status: 503 }), new Response("", { status: 503 })] });
+  assert.equal((await proxyOpenDota({}, u("/players/1/recentMatches"), "1.1.1.3", ORIGIN, Date.now(), cache)).status, 502);
+});
+
+test("OpenDota через воркер: кэш неразобранного матча короткий", () => {
+  assert.equal(odTtl("/matches/1", { version: null }), 20);
+  assert.equal(odTtl("/matches/1", { version: 21 }), 86400);
+  assert.equal(odTtl("/players/1/wl", {}), 120);
+});
+
+test("OpenDota через воркер: только со своего сайта", async () => {
+  const res = await worker.fetch(new Request("https://coach.example/od/matches/9052987576", { headers: { Origin: "https://evil.example" } }), {});
+  assert.equal(res.status, 403);
 });
