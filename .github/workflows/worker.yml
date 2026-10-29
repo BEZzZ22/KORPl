@@ -32,7 +32,7 @@ jobs:
           node-version: 22
 
       - name: Тесты воркера
-        run: node --test worker/coach.test.mjs worker/coach.chat.test.mjs worker/stats.test.mjs
+        run: node --test worker/coach.test.mjs worker/coach.chat.test.mjs worker/stats.test.mjs worker/store.test.mjs
 
       - name: Есть ли доступ к Cloudflare
         id: access
@@ -42,6 +42,25 @@ jobs:
             echo "ok=" >> "$GITHUB_OUTPUT"
           else
             echo "ok=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      # База D1 (бесплатно 100 000 записей в сутки против 1000 у KV). Нет базы — создаём; нет прав у токена
+      # (нужно «D1: Edit») — деплоим без неё, воркер работает на KV, как раньше
+      - name: База D1
+        if: steps.access.outputs.ok
+        working-directory: worker
+        run: |
+          find_id() { npx --yes wrangler@4 d1 list --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const db=JSON.parse(s).find(x=>x.name==="dotacoach");console.log(db?db.uuid:"")}catch{console.log("")}})'; }
+          id=$(find_id)
+          if [ -z "$id" ]; then
+            npx --yes wrangler@4 d1 create dotacoach > /dev/null 2>&1 || true
+            id=$(find_id)
+          fi
+          if [ -n "$id" ]; then
+            printf '\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "dotacoach"\ndatabase_id = "%s"\n' "$id" >> wrangler.toml
+            echo "D1 подключена"
+          else
+            echo "::warning::База D1 не создалась (у токена Cloudflare нет прав D1: Edit?). Воркер остаётся на KV."
           fi
 
       - name: Деплой

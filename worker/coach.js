@@ -6,6 +6,7 @@
 
 // Официальный лор героев с dota2.com (tools/fetch-lore.mjs): тренер рассказывает историю героя по нему, а не выдумывает
 import LORE from "./lore.json" with { type: "json" };
+import { withStore, migrateStep, purgeExpired } from "./store.js";
 
 const ALLOWED_ORIGINS = ["https://bezzz22.github.io"];
 const GEMINI_MODEL = "gemini-flash-lite-latest";
@@ -744,6 +745,7 @@ export async function usageStats(env, now = Date.now()) {
   return { claude_tokens_30d: claude, quota_spent_30d: spent, quota_total: CLAUDE_QUOTA, quota_left_pct: Math.max(0, Math.round((1 - spent / CLAUDE_QUOTA) * 1000) / 10), days };
 }
 
+const INIT_MAX_AGE = 7 * 86400;
 // Проверка initData Телеграма по подписи от токена бота: без неё id пользователя можно подделать
 export async function telegramUser(initData, botToken, now = Date.now()) {
   if (!initData || !botToken) return null;
@@ -758,7 +760,8 @@ export async function telegramUser(initData, botToken, now = Date.now()) {
   const secret = await hmac(enc.encode("WebAppData"), botToken);
   const sign = [...await hmac(secret, check)].map((b) => b.toString(16).padStart(2, "0")).join("");
   if (sign !== hash) return null;
-  if (now / 1000 - Number(params.get("auth_date") || 0) > 86400) return null;
+  // неделя, а не сутки: на десктопе приложение держат открытым днями, и подписка с синком молча получали отказ
+  if (now / 1000 - Number(params.get("auth_date") || 0) > INIT_MAX_AGE) return null;
   try { return JSON.parse(params.get("user") || "null"); } catch { return null; }
 }
 
@@ -1607,8 +1610,22 @@ export async function proxyOpenDota(env, url, ip, origin, now = Date.now(), cach
   return new Response(text, { status: 200, headers: { "Content-Type": "application/json", ...cors(origin) } });
 }
 
+// Чей запрос для антиддоса: tg<id> по подписанной initData, иначе IP
+async function guardKey(request, env) {
+  const ip = request.headers.get("CF-Connecting-IP") || "anon";
+  if (request.method !== "POST" || !env.BOT_TOKEN) return ip;
+  try {
+    const text = await request.clone().text();
+    if (text.length > MAX_CARD_BODY || !text.includes("initData")) return ip;
+    const raw = JSON.parse(text);
+    const user = raw && raw.initData ? await telegramUser(raw.initData, env.BOT_TOKEN) : null;
+    return user && user.id ? `tg${user.id}` : ip;
+  } catch { return ip; }
+}
+
 export default {
   async fetch(request, env, ctx) {
+    env = withStore(env);
     const origin = request.headers.get("Origin") || "";
     // апдейты бота от Телеграма: проверяем секрет вебхука, отвечаем сразу, отчёт шлём в фоне
     if (request.method === "POST" && new URL(request.url).pathname === "/tg") {
@@ -1622,9 +1639,10 @@ export default {
       if (!ALLOWED_ORIGINS.includes(origin)) return reply(403, { error: "Нельзя." }, origin);
       return proxyOpenDota(env, new URL(request.url), request.headers.get("CF-Connecting-IP") || "anon", origin);
     }
-    // антиддос: любой запрос с одного IP считается, при превышении лестница банов (5 мин, 30 мин, 12 ч)
+    // антиддос: любой запрос с одного IP считается, при превышении лестница банов (5 мин, 30 мин, 12 ч).
+    // Запрос из Телеграма считаем по человеку: у мобильных операторов один IP на сотни людей
     if (request.method !== "OPTIONS") {
-      const ban = await rateGuard(env, request.headers.get("CF-Connecting-IP") || "anon");
+      const ban = await rateGuard(env, await guardKey(request, env));
       if (ban) return reply(429, { error: ban.text, retry_after: Math.ceil(ban.wait / 1000) }, origin);
     }
     if (request.method === "GET") {
@@ -1663,10 +1681,14 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
+    env = withStore(env);
     if (event && event.cron === REPORT_CRON) {
       ctx.waitUntil(dailyReport(env));
       return;
     }
-    ctx.waitUntil(Promise.all([checkWatches(env), checkReplays(env), reportOnRequest(env), ensureWebhook(env)]));
+    const now = Date.now();
+    const chores = [migrateStep(env, now).catch((e) => console.log(`перенос из KV: ${e && e.message || e}`))];
+    if (new Date(now).getUTCMinutes() < 3) chores.push(purgeExpired(env, now).catch(() => 0));
+    ctx.waitUntil(Promise.all([checkWatches(env), checkReplays(env), reportOnRequest(env), ensureWebhook(env), ...chores]));
   },
 };
