@@ -550,6 +550,73 @@ test("реплеи: с GH_TOKEN заявка сразу запускает workf
   assert.equal(await kickReplays({ COACH_KV: fakeKV() }), false);
 });
 
+test("реплеи: заявка, стёртая из снимка гонкой, возвращается кроном и доходит до сообщения", async (t) => {
+  t.after(restore);
+  const kv = fakeKV();
+  const e = { COACH_KV: kv, BOT_TOKEN: "x" };
+  const t0 = Date.now();
+  await queueReplay(e, 1111111, 7, t0);
+  await queueReplay(e, 2222222, 8, t0 + 1000);
+  // крон по устаревшему чтению записал снимок без второй заявки
+  kv.m.set("replay_queue", JSON.stringify([{ match: 1111111, user: 7, t: t0 }]));
+  mockFetch({ gh: [404, 404, 404, 404].map((s) => new Response("", { status: s })) });
+  await checkReplays(e, t0 + 60000);
+  assert.deepEqual(JSON.parse(kv.m.get("replay_queue")).map((x) => x.match).sort(), [1111111, 2222222]);
+  // разобрался — игрок получает сообщение, ключ снят
+  const calls = mockFetch({ gh: [new Response("", { status: 404 }), new Response("", { status: 404 }), new Response("", { status: 200 })], tg: [new Response("{}")] });
+  assert.equal(await checkReplays(e, t0 + 120000), 1);
+  assert.equal(calls.find((c) => c.who === "tg").body.chat_id, 8);
+  assert.ok(!kv.m.has("rq:2222222:8") && kv.m.has("rq:1111111:7"));
+});
+
+test("реплеи: сутки в очереди — пишем игроку, а не молчим; без заявок крон не тратит list", async (t) => {
+  t.after(restore);
+  const kv = fakeKV();
+  const e = { COACH_KV: kv, BOT_TOKEN: "x" };
+  const t0 = Date.now() - 25 * 3600 * 1000;
+  await queueReplay(e, 3333333, 9, t0);
+  const calls = mockFetch({ tg: [new Response("{}")] });
+  assert.equal(await checkReplays(e), 1);
+  assert.match(calls[0].body.text, /не успели разобрать/);
+  assert.ok(!kv.m.has("rq:3333333:9"));
+  let lists = 0;
+  const list = kv.list;
+  kv.list = async (o) => { lists++; return list(o); };
+  mockFetch({});
+  assert.equal(await checkReplays(e), 0);
+  assert.equal(lists, 0);
+});
+
+test("реплеи: записи старого снимка переезжают в ключи", async (t) => {
+  t.after(restore);
+  const kv = fakeKV();
+  const e = { COACH_KV: kv };
+  kv.m.set("replay_queue", JSON.stringify([{ match: 4444444, user: 3, t: Date.now() }]));
+  mockFetch({ gh: [new Response("", { status: 404 }), new Response("", { status: 404 })] });
+  await checkReplays(e);
+  assert.ok(kv.m.has("rq:4444444:3"));
+  assert.equal(JSON.parse(kv.m.get("replay_queue")).length, 1);
+});
+
+test("уведомления: давно не было подписок — крон не тратит list, новая подписка снова включает проверку", async (t) => {
+  t.after(restore);
+  const kv = fakeKV();
+  const e = { ...env, COACH_KV: kv, BOT_TOKEN: "x" };
+  let lists = 0;
+  const list = kv.list;
+  kv.list = async (o) => { lists++; return list(o); };
+  mockFetch({});
+  assert.equal(await checkWatches(e), 0);
+  assert.equal(lists, 1);
+  assert.equal(await checkWatches(e), 0);
+  assert.equal(lists, 1);
+  const init = await signInit({ auth_date: String(Math.floor(Date.now() / 1000)), user: JSON.stringify({ id: 6 }) }, "x");
+  assert.equal((await worker.fetch(req({ mode: "watch", match_id: 7000009, initData: init }), e)).status, 200);
+  mockFetch({ od: [new Response(JSON.stringify({ players: [{ lh_t: [1] }] }))], tg: [new Response("{}")] });
+  assert.equal(await checkWatches(e), 1);
+  assert.equal(lists, 2);
+});
+
 test("chat: запасной ответил, Opus молчит — ждём Opus не дольше CHAT_PATIENCE", async (t) => {
   t.after(restore);
   const hang = (init) => new Promise((_, rej) => init.signal.addEventListener("abort", () => rej(Object.assign(new Error("aborted"), { name: "AbortError" }))));
