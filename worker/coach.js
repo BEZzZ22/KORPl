@@ -1213,8 +1213,8 @@ export async function dailyReport(env, now = Date.now()) {
 }
 
 // ---------- бот: команда «отчёт» от владельца ----------
-// Апдейты бота приходят вебхуком на /tg (крон сам ставит его один раз). Отвечаем только владельцу в личке,
-// остальным бот молчит, как и раньше. «отчёт» — за сегодня до текущей минуты, «отчёт вчера», «отчёт 26.10»
+// Апдейты бота приходят вебхуком на /tg (крон сам ставит его один раз). Отчёт — только владельцу в личке,
+// остальным приветствие с кнопкой приложения. «отчёт» — за сегодня до текущей минуты, «отчёт вчера», «отчёт 26.10»
 const WORKER_URL = "https://dotacoach.2007rggg.workers.dev";
 const WEBHOOK_VERSION = "1";
 async function webhookSecret(token) {
@@ -1244,11 +1244,30 @@ export function reportCommandDay(text, now = Date.now()) {
   return mskDay(now);
 }
 
+// Новичок жмёт /start и видит тишину — думает, что бот сдох. Отвечаем приветствием с кнопкой приложения;
+// на прочий текст — подсказкой, не чаще раза в час на человека
+const WELCOME_TEXT = "Привет! Разбор твоих каток живёт в приложении. Жми «Открыть разбор» ниже или кнопку «Приложение» слева от поля ввода: "
+  + "привяжи Steam или Friend ID, выбери матч и получишь разбор с ошибками по таймкодам, лайном, смертями и сборкой под катку.";
+const HINT_TEXT = "В чате я не отвечаю, всё в приложении: жми «Открыть разбор» ниже или кнопку «Приложение» слева от поля ввода.";
+const HINT_TTL = 3600;
+const appButton = { inline_keyboard: [[{ text: "Открыть разбор", web_app: { url: APP_URL } }]] };
+
+async function greet(env, msg) {
+  const start = /^\/start(?:@\w+)?(?:\s|$)/i.test(String(msg.text || "").trim());
+  if (!start) {
+    const key = `hint:${msg.from.id}`;
+    if (await env.COACH_KV.get(key)) return null;
+    await env.COACH_KV.put(key, "1", { expirationTtl: HINT_TTL });
+  }
+  const ok = await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: start ? WELCOME_TEXT : HINT_TEXT, reply_markup: appButton }).catch(() => false);
+  return { greeted: ok ? 1 : 0 };
+}
+
 export async function handleBotUpdate(env, update, now = Date.now()) {
   const msg = update && update.message;
-  if (!msg || !msg.from || !msg.chat || msg.chat.type !== "private" || !isOwner(env, msg.from.id)) return null;
-  const day = reportCommandDay(msg.text, now);
-  if (!day) return null;
+  if (!msg || !msg.from || !msg.chat || msg.chat.type !== "private") return null;
+  const day = isOwner(env, msg.from.id) ? reportCommandDay(msg.text, now) : null;
+  if (!day) return greet(env, msg);
   try { return await sendReport(env, now, day, [msg.chat.id]); }
   catch (e) {
     await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: `Отчёт не собрался: ${clip(e && e.message || e, 200)}` }).catch(() => false);
