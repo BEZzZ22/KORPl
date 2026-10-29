@@ -157,14 +157,32 @@ test("«отчёт» в личке работает только у владел
   globalThis.fetch = async (url, init) => { sent.push(JSON.parse(init.body)); return { ok: true, text: async () => "{}" }; };
   const msg = (id, text, type = "private") => ({ message: { from: { id }, chat: { id, type }, text } });
   try {
-    assert.equal(await handleBotUpdate(env, msg(7, "отчёт"), at("2026-10-28", 7)), null);
     assert.equal(await handleBotUpdate(env, msg(5, "отчёт", "supergroup"), at("2026-10-28", 7)), null);
-    assert.equal(await handleBotUpdate(env, msg(5, "как дела"), at("2026-10-28", 7)), null);
     assert.equal((await handleBotUpdate(env, msg(5, "отчёт"), at("2026-10-28", 7))).sent, 1);
   } finally { globalThis.fetch = real; }
   assert.equal(sent.length, 1);
   assert.equal(sent[0].chat_id, 5);
   assert.match(sent[0].text, /^Отчёт за 28\.10, сегодня на 07:00 МСК/);
+});
+
+test("новичку на /start — приветствие с кнопкой, на прочее — подсказка раз в час", async () => {
+  const kv = memKV(), sent = [];
+  const env = { COACH_KV: kv, BOT_TOKEN: "x", OWNER_TG_IDS: "5" };
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { sent.push(JSON.parse(init.body)); return { ok: true, text: async () => "{}" }; };
+  const msg = (id, text, type = "private") => ({ message: { from: { id }, chat: { id, type }, text } });
+  try {
+    assert.equal((await handleBotUpdate(env, msg(7, "/start"))).greeted, 1);
+    assert.equal((await handleBotUpdate(env, msg(7, "/start ref_tt"))).greeted, 1);
+    assert.equal((await handleBotUpdate(env, msg(7, "отчёт"))).greeted, 1);
+    assert.equal(await handleBotUpdate(env, msg(7, "1111111")), null);
+    assert.equal(await handleBotUpdate(env, msg(7, "/start", "group")), null);
+  } finally { globalThis.fetch = real; }
+  assert.equal(sent.length, 3);
+  assert.ok(sent.every((m) => m.chat_id === 7 && m.reply_markup.inline_keyboard[0][0].web_app.url));
+  assert.match(sent[0].text, /^Привет!/);
+  assert.match(sent[2].text, /^В чате я не отвечаю/);
+  assert.ok(!sent.some((m) => /^Отчёт/.test(m.text)));
 });
 
 test("вебхук без секрета не пускает", async () => {
