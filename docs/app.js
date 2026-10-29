@@ -1213,6 +1213,11 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false) 
     if (stale(seq)) return;
   } catch {
     if (stale(seq)) return;
+    // ждём разбор реплея: один сбой OpenDota не повод бросать ожидание, просто опрашиваем дальше
+    if (attempt > 0 && attempt < PARSE_POLL_MAX) {
+      pollTimer = setTimeout(() => matchScreen(matchId, slot, accountId, attempt + 1, demo), PARSE_POLL_MS);
+      return;
+    }
     errorScreen("OpenDota не отвечает.", () => go(matchScreen, matchId, slot, accountId, 0, demo));
     return;
   }
