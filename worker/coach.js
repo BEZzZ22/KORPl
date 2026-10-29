@@ -762,15 +762,18 @@ export async function telegramUser(initData, botToken, now = Date.now()) {
   try { return JSON.parse(params.get("user") || "null"); } catch { return null; }
 }
 
+// Подписка — отдельный ключ watch:<tg id>:<матч>. Раньше был один список watchlist, и крон, переписывая его
+// по устаревшему чтению (KV согласуется до минуты), стирал свежие подписки — уведомление не приходило
 const WATCH_KEY = "watchlist";
+const WATCH_PREFIX = "watch:";
 const WATCH_TTL = 3 * 3600 * 1000; // реплей обычно разбирается за минуты, дольше 3 часов не ждём
+const WATCH_REASK = 20 * 60 * 1000; // не разобрался за 20 минут — просим OpenDota ещё раз
+const WATCH_MATCHES_PER_RUN = 20;
 
-async function addWatch(env, match, user) {
-  const list = (await env.COACH_KV.get(WATCH_KEY, "json")) || [];
-  if (list.some((w) => w.match === match && w.user === user)) return;
-  if (list.length >= 200) list.splice(0, list.length - 199);
-  list.push({ match, user, t: Date.now() });
-  await env.COACH_KV.put(WATCH_KEY, JSON.stringify(list));
+async function addWatch(env, match, user, now = Date.now()) {
+  const key = `${WATCH_PREFIX}${user}:${match}`;
+  if (await env.COACH_KV.get(key)) return;
+  await env.COACH_KV.put(key, "1", { metadata: { t: now }, expirationTtl: Math.ceil(WATCH_TTL / 1000) + 3600 });
 }
 
 async function sendTelegram(env, method, body) {
@@ -780,32 +783,55 @@ async function sendTelegram(env, method, body) {
   return res.ok;
 }
 
-// Крон: у кого реплей разобрался, пишем в личку с кнопкой открыть разбор
+// Крон: у кого реплей разобрался, пишем в личку с кнопкой открыть разбор. Не дождались — тоже пишем, а не молчим
 export async function checkWatches(env, now = Date.now()) {
   if (!env.COACH_KV || !env.BOT_TOKEN) return 0;
-  const list = (await env.COACH_KV.get(WATCH_KEY, "json")) || [];
-  if (!list.length) return 0;
-  const keep = [];
+  const legacy = (await env.COACH_KV.get(WATCH_KEY, "json")) || [];
+  if (legacy.length) {
+    for (const w of legacy) await addWatch(env, w.match, w.user, w.t);
+    await env.COACH_KV.delete(WATCH_KEY);
+  }
   const parsed = new Map();
   let sent = 0;
-  for (const w of list) {
-    if (now - w.t > WATCH_TTL) continue;
-    if (!parsed.has(w.match)) {
-      try {
-        const res = await fetch(`https://api.opendota.com/api/matches/${w.match}`, { signal: AbortSignal.timeout(15000) });
-        const m = res.ok ? await res.json() : null;
-        parsed.set(w.match, Boolean(m && m.players && m.players.length && m.players[0].lh_t != null));
-      } catch { parsed.set(w.match, false); }
+  for (const k of await listAll(env, WATCH_PREFIX)) {
+    const [user, match] = k.name.slice(WATCH_PREFIX.length).split(":").map(Number);
+    const meta = k.metadata || {};
+    const age = now - (Number(meta.t) || now);
+    if (!user || !match) { await env.COACH_KV.delete(k.name); continue; }
+    if (age > WATCH_TTL) {
+      await env.COACH_KV.delete(k.name);
+      if (await sendTelegram(env, "sendMessage", {
+        chat_id: user,
+        text: `Реплей матча ${match} так и не разобрался за 3 часа: OpenDota не смогла его обработать. Открой матч ещё раз позже или выбери другую катку.`,
+        reply_markup: { inline_keyboard: [[{ text: "Открыть приложение", web_app: { url: APP_URL } }]] },
+      }).catch(() => false)) sent++;
+      continue;
     }
-    if (!parsed.get(w.match)) { keep.push(w); continue; }
+    if (!parsed.has(match)) {
+      if (parsed.size >= WATCH_MATCHES_PER_RUN) continue;
+      let ok = null; // null — OpenDota не ответила, спросим на следующем кроне
+      try {
+        const res = await fetch(`https://api.opendota.com/api/matches/${match}`, { signal: AbortSignal.timeout(15000) });
+        const m = res.ok ? await res.json() : null;
+        if (m) ok = Boolean(m.players && m.players.length && m.players[0].lh_t != null);
+        else console.log(`watch: OpenDota ${res.status} по матчу ${match}`);
+      } catch (e) { console.log(`watch: OpenDota недоступна: ${e && e.message || e}`); }
+      parsed.set(match, ok);
+    }
+    if (parsed.get(match) === false && age > WATCH_REASK && !meta.re) {
+      await fetch(`https://api.opendota.com/api/request/${match}`, { method: "POST", signal: AbortSignal.timeout(10000) }).catch(() => null);
+      await env.COACH_KV.put(k.name, "1", { metadata: { ...meta, re: 1 }, expirationTtl: Math.ceil((WATCH_TTL - age) / 1000) + 3600 });
+    }
+    if (!parsed.get(match)) continue;
     const ok = await sendTelegram(env, "sendMessage", {
-      chat_id: w.user,
-      text: `Реплей матча ${w.match} разобран. Разбор и тренер готовы.`,
-      reply_markup: { inline_keyboard: [[{ text: "Открыть разбор", web_app: { url: `${APP_URL}?match=${w.match}` } }]] },
+      chat_id: user,
+      text: `Реплей матча ${match} разобран. Разбор и тренер готовы.`,
+      reply_markup: { inline_keyboard: [[{ text: "Открыть разбор", web_app: { url: `${APP_URL}?match=${match}` } }]] },
     }).catch(() => false);
+    if (!ok) console.log(`watch: Телеграм не принял сообщение по матчу ${match}`);
+    await env.COACH_KV.delete(k.name);
     if (ok) sent++;
   }
-  if (keep.length !== list.length) await env.COACH_KV.put(WATCH_KEY, JSON.stringify(keep));
   return sent;
 }
 
