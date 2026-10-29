@@ -40,5 +40,11 @@
   "status": "SEND_TO_USER_INBOX",
   "mode": "inbox",
   "at": "2026-10-28T13:43:35.930888+00:00"
+ },
+ "phases": {
+  "publish_id": "v_inbox_file~v2.7701991131646560278",
+  "status": "SEND_TO_USER_INBOX",
+  "mode": "inbox",
+  "at": "2026-10-29T07:40:18.951958+00:00"
  }
 }
