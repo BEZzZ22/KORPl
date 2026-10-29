@@ -266,8 +266,26 @@ test("telegramUser: подпись проверяется, подделка и �
   assert.equal((await telegramUser(init, "123:abc", now)).id, 42);
   assert.equal(await telegramUser(init, "123:другой", now), null);
   assert.equal(await telegramUser(init.replace("42", "43"), "123:abc", now), null);
-  assert.equal(await telegramUser(init, "123:abc", now + 2 * 86400000), null);
+  // вход живёт неделю: приложение на десктопе держат открытым днями
+  assert.equal((await telegramUser(init, "123:abc", now + 2 * 86400000)).id, 42);
+  assert.equal(await telegramUser(init, "123:abc", now + 8 * 86400000), null);
   assert.equal(await telegramUser("", "123:abc"), null);
+});
+
+test("антиддос: из Телеграма лимит считается по человеку, а не по общему IP оператора", async () => {
+  const e = { ...env, COACH_KV: fakeKV(), BOT_TOKEN: "123:abc", RATE_PER_MIN: "3" };
+  const ip = "203.0.113.77";
+  const auth = String(Math.floor(Date.now() / 1000));
+  // четверо разных людей за одним IP — никого не банят
+  for (let id = 1; id <= 4; id++) {
+    const init = await signInit({ auth_date: auth, user: JSON.stringify({ id: 900 + id }) }, "123:abc");
+    assert.notEqual((await worker.fetch(req({ mode: "feedback", initData: init, match_id: 1, kind: "x", text: "y" }, ip), e)).status, 429);
+  }
+  // один человек частит — бан ему
+  const init = await signInit({ auth_date: auth, user: JSON.stringify({ id: 990 }) }, "123:abc");
+  const codes = [];
+  for (let i = 0; i < 4; i++) codes.push((await worker.fetch(req({ mode: "feedback", initData: init, match_id: 1, kind: "x", text: "y" }, ip), e)).status);
+  assert.equal(codes[3], 429);
 });
 
 test("уведомления: подписка из приложения и сообщение, когда реплей разобран", async (t) => {
