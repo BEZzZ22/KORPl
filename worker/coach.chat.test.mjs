@@ -62,9 +62,11 @@ function mockFetch(queues) {
 
 // KV в памяти с тем же интерфейсом, что у Cloudflare
 function fakeKV() {
-  const m = new Map();
+  const m = new Map(), meta = new Map();
   return {
     m,
+    meta,
+    async list({ prefix }) { return { keys: [...m.keys()].filter((k) => k.startsWith(prefix)).map((name) => ({ name, metadata: meta.get(name) })), list_complete: true }; },
     async get(k, type) {
       if (!m.has(k)) return null;
       const v = m.get(k);
@@ -72,8 +74,8 @@ function fakeKV() {
       if (type === "arrayBuffer") return v;
       return v;
     },
-    async put(k, v) { m.set(k, v); },
-    async delete(k) { m.delete(k); },
+    async put(k, v, opts = {}) { m.set(k, v); meta.set(k, opts.metadata); },
+    async delete(k) { m.delete(k); meta.delete(k); },
   };
 }
 
@@ -275,27 +277,56 @@ test("уведомления: подписка из приложения и со
   const init = await signInit({ auth_date: String(Math.floor(Date.now() / 1000)), user: JSON.stringify({ id: 42 }) }, "123:abc");
   assert.equal((await worker.fetch(req({ mode: "watch", match_id: 9052987576, initData: init }), e)).status, 200);
   assert.equal((await worker.fetch(req({ mode: "watch", match_id: 9052987576, initData: "user=x&hash=00" }), e)).status, 403);
+  assert.ok(kv.m.has("watch:42:9052987576"));
   // реплей ещё не разобран: сообщение не уходит, подписка остаётся
   mockFetch({ od: [new Response(JSON.stringify({ players: [{ lh_t: null }] }))] });
   assert.equal(await checkWatches(e), 0);
-  assert.equal(JSON.parse(kv.m.get("watchlist")).length, 1);
+  assert.ok(kv.m.has("watch:42:9052987576"));
+  // OpenDota не ответила: подписка тоже остаётся
+  mockFetch({ od: [new Response("", { status: 429 })] });
+  assert.equal(await checkWatches(e), 0);
+  assert.ok(kv.m.has("watch:42:9052987576"));
   // разобран: сообщение с кнопкой, подписка снята
   const calls = mockFetch({ od: [new Response(JSON.stringify({ players: [{ lh_t: [0, 1] }] }))], tg: [new Response("{}")] });
   assert.equal(await checkWatches(e), 1);
   const msg = calls.find((c) => c.who === "tg").body;
   assert.equal(msg.chat_id, 42);
   assert.match(msg.reply_markup.inline_keyboard[0][0].web_app.url, /\?match=9052987576$/);
-  assert.equal(JSON.parse(kv.m.get("watchlist")).length, 0);
+  assert.ok(!kv.m.has("watch:42:9052987576"));
 });
 
-test("уведомления: старые подписки отбрасываются без запросов", async (t) => {
+test("уведомления: подписка не теряется, если крон пишет по устаревшему списку", async (t) => {
   t.after(restore);
   const kv = fakeKV();
-  kv.m.set("watchlist", JSON.stringify([{ match: 1234567, user: 1, t: Date.now() - 4 * 3600 * 1000 }]));
-  const calls = mockFetch({});
-  assert.equal(await checkWatches({ COACH_KV: kv, BOT_TOKEN: "x" }), 0);
-  assert.equal(calls.length, 0);
-  assert.equal(JSON.parse(kv.m.get("watchlist")).length, 0);
+  const e = { COACH_KV: kv, BOT_TOKEN: "x" };
+  // старый формат переезжает в отдельные ключи
+  kv.m.set("watchlist", JSON.stringify([{ match: 7000001, user: 1, t: Date.now() }]));
+  mockFetch({ od: [new Response(JSON.stringify({ players: [{ lh_t: [1] }] }))], tg: [new Response("{}")] });
+  assert.equal(await checkWatches(e), 1);
+  assert.ok(!kv.m.has("watchlist"));
+  // две подписки, одна разобрана: вторая остаётся
+  const init = await signInit({ auth_date: String(Math.floor(Date.now() / 1000)), user: JSON.stringify({ id: 5 }) }, "x");
+  for (const id of [7000002, 7000003]) assert.equal((await worker.fetch(req({ mode: "watch", match_id: id, initData: init }), { ...env, ...e })).status, 200);
+  mockFetch({ od: [new Response(JSON.stringify({ players: [{ lh_t: [1] }] })), new Response(JSON.stringify({ players: [{ lh_t: null }] }))], tg: [new Response("{}")] });
+  assert.equal(await checkWatches(e), 1);
+  assert.ok(!kv.m.has("watch:5:7000002") && kv.m.has("watch:5:7000003"));
+});
+
+test("уведомления: не дождались за 3 часа — пишем, а не молчим; через 20 минут просим OpenDota ещё раз", async (t) => {
+  t.after(restore);
+  const kv = fakeKV();
+  const now = Date.now();
+  await kv.put("watch:1:1234567", "1", { metadata: { t: now - 4 * 3600 * 1000 } });
+  await kv.put("watch:2:7654321", "1", { metadata: { t: now - 30 * 60 * 1000 } });
+  const calls = mockFetch({ tg: [new Response("{}")], od: [new Response(JSON.stringify({ players: [{ lh_t: null }] })), new Response("{}")] });
+  assert.equal(await checkWatches({ COACH_KV: kv, BOT_TOKEN: "x" }, now), 1);
+  assert.match(calls.find((c) => c.who === "tg").body.text, /так и не разобрался/);
+  assert.ok(!kv.m.has("watch:1:1234567"));
+  assert.ok(calls.some((c) => c.url.endsWith("/request/7654321")));
+  assert.equal(kv.meta.get("watch:2:7654321").re, 1);
+  // повторно не просим
+  mockFetch({ od: [new Response(JSON.stringify({ players: [{ lh_t: null }] }))] });
+  assert.equal(await checkWatches({ COACH_KV: kv, BOT_TOKEN: "x" }, now), 0);
 });
 
 test("карточка: PNG сохраняется и отдаётся по ссылке, не-PNG отклоняется", async () => {

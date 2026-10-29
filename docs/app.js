@@ -1234,7 +1234,7 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false) 
       h("div", { class: "spinner" }),
       h("p", { class: "display" }, "Реплей разбирается"),
       h("p", { class: "small muted" }, "Обычно 1–5 минут. Страница обновится сама."),
-      watched.has(matchId) && h("p", { class: "small muted" }, "Можешь закрыть приложение: бот напишет в Телеграм, когда разбор будет готов."),
+      watchOk.has(matchId) && h("p", { class: "small muted" }, "Можешь закрыть приложение: бот напишет в Телеграм, когда разбор будет готов."),
     ));
     pollTimer = setTimeout(() => matchScreen(matchId, slot, accountId, attempt + 1, demo), PARSE_POLL_MS);
     return;
@@ -1276,11 +1276,13 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false) 
 const rawOf = new WeakMap();
 
 // Подписка на уведомление: воркер проверит подпись Телеграма и напишет в личку, когда реплей разберётся
-const watched = new Set();
+// «бот напишет» обещаем только после ответа воркера, что подписка записана
+const watched = new Set(), watchOk = new Set();
 function watchParse(matchId) {
   if (!COACH_URL || !tg || !tg.initData || watched.has(matchId)) return;
   watched.add(matchId);
-  postCoach({ mode: "watch", match_id: matchId, initData: tg.initData }).catch(() => watched.delete(matchId));
+  postCoach({ mode: "watch", match_id: matchId, initData: tg.initData })
+    .then(() => watchOk.add(matchId), () => watched.delete(matchId));
 }
 
 // Разбираем только свои игры: либо аккаунт не привязан, либо тебя нет в матче
