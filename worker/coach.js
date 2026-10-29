@@ -1508,6 +1508,53 @@ async function handlePost(request, env, ctx, origin) {
   } finally { later(addUsage(env, meter)); }
 }
 
+// ---------- запасной путь к OpenDota ----------
+// Приложение ходит в OpenDota напрямую с телефона (у каждого свой IP и свой бесплатный лимит). Если OpenDota
+// не ответила или режет, повтор идёт сюда: воркер спрашивает сам, с одним повтором, и кэширует ответ у Cloudflare.
+// Основным путём это не делаем: лимит OpenDota по IP, а у воркера IP общие на всех
+const OD_API = "https://api.opendota.com/api";
+const OD_PATH = /^\/(?:matches\/\d{6,12}|players\/\d{1,12}(?:\/(?:heroes|wl|matches|recentMatches))?|heroes\/\d{1,4}\/(?:itemPopularity|matchups)|benchmarks|scenarios\/itemTimings|constants\/[a-z_]{1,32})$/;
+const OD_PER_MIN = 60;
+const odStamps = new Map();
+
+// Сколько держать ответ в кэше: разобранный матч не меняется, неразобранный ждём, профиль обновляется после игры
+export function odTtl(path, body) {
+  if (path.startsWith("/matches/")) return body && body.version != null ? 86400 : 20;
+  if (path.startsWith("/players/")) return 120;
+  return 6 * 3600;
+}
+
+export async function proxyOpenDota(env, url, ip, origin, now = Date.now(), cache = globalThis.caches && caches.default) {
+  const path = url.pathname.slice(3);
+  if (!OD_PATH.test(path)) return reply(404, { error: "Нет такого пути." }, origin);
+  const recent = (odStamps.get(ip) || []).filter((t) => now - t < 60_000);
+  if (recent.length >= OD_PER_MIN) return reply(429, { error: "Слишком много запросов." }, origin);
+  recent.push(now);
+  odStamps.set(ip, recent);
+  if (odStamps.size > 5000) odStamps.clear();
+  const target = `${OD_API}${path}${url.search}`;
+  const key = new Request(target);
+  const hit = cache && await cache.match(key).catch(() => null);
+  if (hit) return new Response(hit.body, { status: 200, headers: { "Content-Type": "application/json", ...cors(origin), "X-OD-Cache": "hit" } });
+  const withKey = env.OPENDOTA_KEY ? `${target}${url.search ? "&" : "?"}api_key=${encodeURIComponent(env.OPENDOTA_KEY)}` : target;
+  let res = null;
+  for (let i = 0; i < 2 && !(res && (res.ok || res.status === 404)); i++) {
+    if (i) await new Promise((r) => setTimeout(r, 1000));
+    res = await fetch(withKey, { signal: AbortSignal.timeout(15000) }).catch(() => null);
+  }
+  if (!res || !(res.ok || res.status === 404)) {
+    console.log(`od ${path}: ${res ? res.status : "сеть"}`);
+    return reply(502, { error: "OpenDota не отвечает." }, origin);
+  }
+  if (res.status === 404) return reply(404, null, origin);
+  const text = await res.text();
+  let body = null;
+  try { body = JSON.parse(text); } catch { return reply(502, { error: "OpenDota ответила не JSON." }, origin); }
+  const ttl = odTtl(path, body);
+  if (cache) await cache.put(key, new Response(text, { headers: { "Content-Type": "application/json", "Cache-Control": `public, max-age=${ttl}` } })).catch(() => {});
+  return new Response(text, { status: 200, headers: { "Content-Type": "application/json", ...cors(origin) } });
+}
+
 export default {
   async fetch(request, env, ctx) {
     const origin = request.headers.get("Origin") || "";
@@ -1517,6 +1564,11 @@ export default {
       const update = await request.json().catch(() => null);
       if (env.COACH_KV) ctx.waitUntil(handleBotUpdate(env, update));
       return new Response("ok");
+    }
+    // запасной путь к OpenDota: свой лимит без банов, чтобы сбой OpenDota не забанил человека и у тренера
+    if (request.method === "GET" && new URL(request.url).pathname.startsWith("/od/")) {
+      if (!ALLOWED_ORIGINS.includes(origin)) return reply(403, { error: "Нельзя." }, origin);
+      return proxyOpenDota(env, new URL(request.url), request.headers.get("CF-Connecting-IP") || "anon", origin);
     }
     // антиддос: любой запрос с одного IP считается, при превышении лестница банов (5 мин, 30 мин, 12 ч)
     if (request.method !== "OPTIONS") {
