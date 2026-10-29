@@ -769,11 +769,15 @@ const WATCH_PREFIX = "watch:";
 const WATCH_TTL = 3 * 3600 * 1000; // реплей обычно разбирается за минуты, дольше 3 часов не ждём
 const WATCH_REASK = 20 * 60 * 1000; // не разобрался за 20 минут — просим OpenDota ещё раз
 const WATCH_MATCHES_PER_RUN = 20;
+// Время последней подписки. Крон идёт раз в 3 минуты, а list на бесплатном KV — 1000 в сутки на всё:
+// когда подписок давно не было, список не запрашиваем. Ключ пишут все, но любой из них — «недавно», гонка не страшна
+const WATCH_LAST = "watch_last";
 
 async function addWatch(env, match, user, now = Date.now()) {
   const key = `${WATCH_PREFIX}${user}:${match}`;
   if (await env.COACH_KV.get(key)) return;
   await env.COACH_KV.put(key, "1", { metadata: { t: now }, expirationTtl: Math.ceil(WATCH_TTL / 1000) + 3600 });
+  await env.COACH_KV.put(WATCH_LAST, String(now), { expirationTtl: 7 * 86400 });
 }
 
 async function sendTelegram(env, method, body) {
@@ -791,9 +795,14 @@ export async function checkWatches(env, now = Date.now()) {
     for (const w of legacy) await addWatch(env, w.match, w.user, w.t);
     await env.COACH_KV.delete(WATCH_KEY);
   }
+  // подписки живут WATCH_TTL плюс час на сообщение «не дождались»; ключа нет — проверяем по-старому
+  const last = await env.COACH_KV.get(WATCH_LAST);
+  if (last !== null && now - Number(last) > WATCH_TTL + 2 * 3600 * 1000) return 0;
   const parsed = new Map();
   let sent = 0;
-  for (const k of await listAll(env, WATCH_PREFIX)) {
+  const keys = await listAll(env, WATCH_PREFIX);
+  if (!keys.length && last === null) await env.COACH_KV.put(WATCH_LAST, "0", { expirationTtl: 7 * 86400 });
+  for (const k of keys) {
     const [user, match] = k.name.slice(WATCH_PREFIX.length).split(":").map(Number);
     const meta = k.metadata || {};
     const age = now - (Number(meta.t) || now);
@@ -870,9 +879,15 @@ export function mergeUser(stored, incoming) {
 
 // ---------- разбор реплеев: очередь для GitHub Actions ----------
 
-// Результат кладёт workflow .github/workflows/replays.yml в ветку replays
+// Результат кладёт workflow .github/workflows/replays.yml в ветку replays.
+// Заявка — отдельный ключ rq:<матч>:<tg id или 0>, как у подписок: раньше был только общий список replay_queue,
+// и крон, переписывая его по устаревшему чтению, мог стереть свежую заявку. replay_queue остался снимком
+// для GET /replay-queue (его дёргает Actions раз в минуту, list на каждый запрос не по карману бесплатному KV);
+// снимок пересобирает крон из ключей rq:, поэтому потерянная в нём запись возвращается через 3 минуты
 const REPLAY_RAW = "https://raw.githubusercontent.com/BEZzZ22/KORPl/replays/r";
 const REPLAY_QUEUE = "replay_queue";
+const REPLAY_PREFIX = "rq:";
+const REPLAY_LAST = "rq_last";        // время последней заявки: без свежих заявок и пустом снимке крон не тратит list
 const REPLAY_TTL = 24 * 3600 * 1000;
 
 async function replayQueue(env, now = Date.now()) {
@@ -904,6 +919,12 @@ export async function queueReplay(env, match, user = null, now = Date.now()) {
   // готовый разбор отдаём сразу; после ошибки повторная заявка снова ставит матч в очередь
   if (status === "done") return status;
   if (status) await env.COACH_KV.delete(`replay:${match}`);
+  const key = `${REPLAY_PREFIX}${match}:${user || 0}`;
+  if (!(await env.COACH_KV.get(key))) {
+    await env.COACH_KV.put(key, "1", { metadata: { t: now }, expirationTtl: Math.ceil(REPLAY_TTL / 1000) + 3 * 3600 });
+    await env.COACH_KV.put(REPLAY_LAST, String(now), { expirationTtl: 7 * 86400 });
+  }
+  // в снимок — сразу, чтобы Actions увидел заявку на ближайшей минуте, а не после крона
   const list = await replayQueue(env, now);
   if (!list.some((x) => x.match === match && x.user === user)) {
     list.push({ match, user, t: now });
@@ -913,14 +934,49 @@ export async function queueReplay(env, match, user = null, now = Date.now()) {
   return "queued";
 }
 
+// Заявки из ключей rq: (их источник правды). Записи старого снимка без ключа переносятся один раз
+async function replayEntries(env, now) {
+  const snap = await replayQueue(env, now);
+  const last = Number(await env.COACH_KV.get(REPLAY_LAST)) || 0;
+  const migrated = await env.COACH_KV.get("rq_migrated");
+  if (migrated && !snap.length && now - last > 10 * 60 * 1000) return [];
+  if (!migrated) {
+    for (const x of snap) {
+      await env.COACH_KV.put(`${REPLAY_PREFIX}${x.match}:${x.user || 0}`, "1", { metadata: { t: x.t }, expirationTtl: Math.ceil(REPLAY_TTL / 1000) + 3 * 3600 });
+    }
+    await env.COACH_KV.put("rq_migrated", "1");
+  }
+  const out = [];
+  for (const k of await listAll(env, REPLAY_PREFIX)) {
+    const [match, user] = k.name.slice(REPLAY_PREFIX.length).split(":").map(Number);
+    if (!match) { await env.COACH_KV.delete(k.name); continue; }
+    out.push({ key: k.name, match, user: user || null, t: Number(k.metadata && k.metadata.t) || now });
+  }
+  // KV list видит новый ключ с задержкой до минуты: заявка из снимка, которой ещё нет в списке, остаётся
+  for (const x of snap) {
+    if (!out.some((y) => y.match === x.match && y.user === x.user)) out.push({ key: `${REPLAY_PREFIX}${x.match}:${x.user || 0}`, ...x });
+  }
+  return out;
+}
+
 // Крон: что из очереди уже разобрано (или не получилось) — снимаем и пишем игроку
 export async function checkReplays(env, now = Date.now()) {
   if (!env.COACH_KV) return 0;
-  const list = await replayQueue(env, now);
+  const list = await replayEntries(env, now);
   if (!list.length) return 0;
   const keep = [], status = new Map();
-  let changed = false, sent = 0;
+  let sent = 0;
+  const tell = async (x, body) => {
+    if (!x.user || !env.BOT_TOKEN) return;
+    if (await sendTelegram(env, "sendMessage", { chat_id: x.user, ...body }).catch(() => false)) sent++;
+  };
   for (const x of list) {
+    // сутки в очереди — Actions так и не дошёл: говорим, а не молчим
+    if (now - x.t >= REPLAY_TTL) {
+      await env.COACH_KV.delete(x.key);
+      await tell(x, { text: `Реплей матча ${x.match} не успели разобрать за сутки. Закажи разбор ещё раз в приложении.`, reply_markup: { inline_keyboard: [[{ text: "Открыть матч", web_app: { url: `${APP_URL}?match=${x.match}` } }]] } });
+      continue;
+    }
     if (!status.has(x.match) && status.size < 10) {
       const has = async (name) => (await fetch(`${REPLAY_RAW}/${name}`, { method: "HEAD", signal: AbortSignal.timeout(10000) }).catch(() => null))?.ok;
       // у ошибки берём время (t): ошибка старше заявки — это прошлый раз, workflow попробует снова
@@ -928,25 +984,21 @@ export async function checkReplays(env, now = Date.now()) {
         const res = await fetch(`${REPLAY_RAW}/${x.match}.err.json`, { signal: AbortSignal.timeout(10000) }).catch(() => null);
         if (!res || !res.ok) return null;
         const body = await res.json().catch(() => ({}));
-        return { s: "error", t: Number(body && body.t) || 0 };
+        return { s: "error", t: Number(body && body.t) || 0, why: clip(body && body.error, 200) };
       };
       status.set(x.match, (await has(`${x.match}.json`)) ? { s: "done" } : await err());
     }
     const st = status.get(x.match);
     const s = st && !(st.s === "error" && st.t && st.t * 1000 < x.t) ? st.s : null;
     if (!s) { keep.push(x); continue; }
-    changed = true;
     await env.COACH_KV.put(`replay:${x.match}`, s, { expirationTtl: 30 * 86400 });
-    if (x.user && env.BOT_TOKEN) {
-      const ok = await sendTelegram(env, "sendMessage", {
-        chat_id: x.user,
-        text: s === "done" ? `Реплей матча ${x.match} разобран по позициям: где ты стоял, кто был рядом в каждой смерти.` : `Реплей матча ${x.match} разобрать не получилось: Valve хранит реплеи около двух недель.`,
-        ...(s === "done" ? { reply_markup: { inline_keyboard: [[{ text: "Открыть карту", web_app: { url: `${APP_URL}?match=${x.match}` } }]] } } : {}),
-      }).catch(() => false);
-      if (ok) sent++;
-    }
+    await env.COACH_KV.delete(x.key);
+    await tell(x, s === "done"
+      ? { text: `Реплей матча ${x.match} разобран по позициям: где ты стоял, кто был рядом в каждой смерти.`, reply_markup: { inline_keyboard: [[{ text: "Открыть карту", web_app: { url: `${APP_URL}?match=${x.match}` } }]] } }
+      : { text: `Реплей матча ${x.match} разобрать не получилось${st.why ? `: ${st.why}` : ""}. Обычный разбор матча в приложении работает и без него.` });
   }
-  if (changed || keep.length !== list.length) await env.COACH_KV.put(REPLAY_QUEUE, JSON.stringify(keep));
+  const snap = JSON.stringify(keep.map(({ match, user, t }) => ({ match, user, t })));
+  if (snap !== JSON.stringify(await replayQueue(env, now))) await env.COACH_KV.put(REPLAY_QUEUE, snap);
   // запуск мог потеряться или упасть: пока очередь не пуста, повторяем раз в 15 минут
   if (keep.length) await kickReplays(env, now, 15 * 60 * 1000);
   return sent;
@@ -1052,7 +1104,7 @@ const EVENT_LABELS = {
 };
 const STEP_LABELS = {
   home: "главная", home_list: "список игр", home_empty: "«матчей не видно»", match: "открыл матч", link_bad_empty: "пустой ID", link_bad_vanity: "ссылка с ником", link_bad_url: "не та ссылка", link_bad_num: "не те цифры", link_bad_text: "ввёл ник", empty_retry: "жмёт «Проверить снова»", empty_found: "матчи нашлись", match_parsing: "ждёт разбор реплея",
-  analysis: "разбор", not_yours: "чужой матч", link: "привязал аккаунт", link_bad: "неверный ID", link_unknown: "OpenDota не знает аккаунт",
+  analysis: "разбор", not_yours: "чужой матч", link: "привязал аккаунт", link_bad: "неверный ID", link_unknown: "OpenDota не знает аккаунт", link_anyway: "привязал неизвестный ID", write_ok: "разрешил сообщения бота", write_no: "запретил сообщения бота",
   profile: "профиль", hero_stats: "статы героя", draft: "драфт", coach: "тренер", chat: "вопрос тренеру", compare: "сравнение",
   replay: "реплей", share: "поделился", blame: "«кто слил»", share_blame: "поделился итогом", demo: "пример разбора", disagree_blame: "не согласен", err_opendota: "ОШИБКА OpenDota", err_no_match: "ОШИБКА нет матча", err_replay: "ОШИБКА реплей",
   err_parse: "ОШИБКА разбора", err_boot: "ОШИБКА загрузки", err_other: "ОШИБКА",

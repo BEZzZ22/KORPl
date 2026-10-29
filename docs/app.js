@@ -372,9 +372,22 @@ async function constants(name, timeout = 20000) {
 
 // Скиллы и предметы: свои урезанные справочники (tools/fetch-constants.mjs, раз в неделю): 110 КБ сжатого вместо 370 КБ
 // у OpenDota. Нет файла или он битый — полный у OpenDota
+// Свой файл с таймаутом: fetch без него на плохой сети висит минутами, и человек видит вечную загрузку
+async function fetchJson(url, timeout = 20000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeout);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal });
+    if (!res.ok) throw new Error(`${url}: ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function localDict(name, min) {
   try {
-    const res = await fetch(`${name}.json`);
+    const res = await fetch(`${name}.json`, { signal: AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined });
     const data = res.ok ? await res.json() : null;
     if (data && Object.keys(data).length > min) return data;
   } catch {}
@@ -597,7 +610,10 @@ async function homeScreen() {
     list.replaceChildren(...[fresh, ...matches.slice(fresh ? 1 : 0, 15).map((m) => matchListItem(m, account))].filter(Boolean));
   } catch {
     step("err_opendota");
-    list.replaceChildren(h("p", { class: "error" }, "OpenDota не отвечает. Попробуй позже."));
+    // раньше тут был тупик: только текст, и человек закрывал приложение
+    list.replaceChildren(h("div", { class: "center" },
+      h("p", { class: "error" }, "OpenDota не отвечает. Обычно это на минуту."),
+      h("button", { type: "button", onclick: () => navRoot("home", homeScreen) }, "Попробовать ещё раз")));
   }
 }
 
@@ -657,6 +673,14 @@ function hiddenMatchesCard(account) {
 function accountForm() {
   const input = h("input", { inputmode: "numeric", placeholder: "Friend ID или ссылка на профиль", "aria-label": "Friend ID" });
   const status = h("div", { class: "small muted" }, "Friend ID есть в Доте в профиле под ником. Подойдёт и ссылка на Steam, Dotabuff, OpenDota или Stratz.");
+  const bind = async (id, seq = null) => {
+    await storage.set("account_id", String(id));
+    step("link");
+    if (seq !== null && stale(seq)) return;
+    haptic("medium");
+    if (section === "profile") navRoot("profile", profileScreen);
+    else navRoot("home", homeScreen);
+  };
   const save = async () => {
     const id = toAccountId(input.value);
     if (!id) {
@@ -676,13 +700,16 @@ function accountForm() {
     try {
       const player = await api(`/players/${id}`);
       if (stale(seq)) return;
-      if (!player || !player.profile) { step("link_unknown"); status.textContent = "OpenDota не знает такой аккаунт."; return; }
-      await storage.set("account_id", String(id));
-      step("link");
-      if (stale(seq)) return;
-      haptic("medium");
-      if (section === "profile") navRoot("profile", profileScreen);
-      else navRoot("home", homeScreen);
+      if (!player || !player.profile) {
+        // Аккаунт со скрытыми данными матчей OpenDota не видит ни в одной игре, поэтому «не знает» его.
+        // Раньше здесь был тупик; теперь можно привязать как есть и получить шаги, как открыть матчи
+        step("link_unknown");
+        status.replaceChildren(
+          "OpenDota пока не знает этот аккаунт. Проверь цифры: Friend ID в Доте в профиле, под ником. Если ID верный, скорее всего, в Доте скрыты данные матчей — привяжи, и я покажу, как их открыть.",
+          h("button", { type: "button", class: "ghost", onclick: () => { step("link_anyway"); bind(id); } }, "Это мой ID, привязать"));
+        return;
+      }
+      await bind(id, seq);
     } catch {
       step("err_opendota");
       status.textContent = "OpenDota не отвечает. Попробуй ещё раз.";
@@ -1260,6 +1287,7 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false) 
       h("p", { class: "display" }, "Реплей разбирается"),
       h("p", { class: "small muted" }, "Обычно 1–5 минут. Страница обновится сама."),
       watchOk.has(matchId) && h("p", { class: "small muted" }, "Можешь закрыть приложение: бот напишет в Телеграм, когда разбор будет готов."),
+      watchNo.has(matchId) && h("p", { class: "small muted" }, "Сообщения от бота ты не разрешил, поэтому он не напишет. Оставь приложение открытым или загляни сюда через пару минут."),
     ));
     pollTimer = setTimeout(() => matchScreen(matchId, slot, accountId, attempt + 1, demo), PARSE_POLL_MS);
     return;
@@ -1302,12 +1330,36 @@ const rawOf = new WeakMap();
 
 // Подписка на уведомление: воркер проверит подпись Телеграма и напишет в личку, когда реплей разберётся
 // «бот напишет» обещаем только после ответа воркера, что подписка записана
-const watched = new Set(), watchOk = new Set();
+const watched = new Set(), watchOk = new Set(), watchNo = new Set();
 function watchParse(matchId) {
   if (!COACH_URL || !tg || !tg.initData || watched.has(matchId)) return;
   watched.add(matchId);
-  postCoach({ mode: "watch", match_id: matchId, initData: tg.initData })
-    .then(() => watchOk.add(matchId), () => watched.delete(matchId));
+  canMessage().then((can) => {
+    if (!can) { watchNo.add(matchId); return; }
+    postCoach({ mode: "watch", match_id: matchId, initData: tg.initData })
+      .then(() => watchOk.add(matchId), () => watched.delete(matchId));
+  });
+}
+
+// Бот пишет в личку, только если человек ему это разрешил. Кто открыл приложение по ссылке (?startapp из «Поделиться»)
+// и ни разу не жал «Старт» у бота, не получил бы ни «разбор готов», ни «карта готова»: Телеграм молча не пропустит.
+// Спрашиваем один раз за запуск, в момент, когда сообщение понадобилось
+let writeAsk = null;
+function canMessage() {
+  const u = tg && tg.initDataUnsafe && tg.initDataUnsafe.user;
+  if (!u || u.allows_write_to_pm) return Promise.resolve(true);
+  // старый клиент: спросить нечем, оставляем как было
+  if (!(tg.requestWriteAccess && tg.isVersionAtLeast && tg.isVersionAtLeast("6.9"))) return Promise.resolve(true);
+  if (!writeAsk) {
+    writeAsk = new Promise((done) => {
+      // клиент может так и не ответить: тогда через минуту подписываемся, как раньше
+      const late = setTimeout(() => done(true), 60000);
+      try {
+        tg.requestWriteAccess((ok) => { clearTimeout(late); step(ok ? "write_ok" : "write_no"); done(Boolean(ok)); });
+      } catch { clearTimeout(late); done(true); }
+    });
+  }
+  return writeAsk;
 }
 
 // Разбираем только свои игры: либо аккаунт не привязан, либо тебя нет в матче
@@ -2714,10 +2766,11 @@ function replayCta(a, intro) {
     haptic("medium");
     step("replay");
     try {
+      const can = tg && tg.initData ? await canMessage() : false;
       const data = await postCoach({ mode: "replay", match_id: a.facts.match_id, initData: (tg && tg.initData) || "" });
       status.textContent = data.status === "done"
         ? "Реплей уже разобран: открой матч заново."
-        : tg && tg.initData ? "В очереди. Бот напишет, когда будет готово." : "В очереди. Загляни сюда через полчаса.";
+        : can ? "В очереди. Бот напишет, когда будет готово." : "В очереди. Загляни сюда через полчаса.";
     } catch (e) {
       btn.disabled = false;
       status.textContent = coachError(e);
@@ -3515,7 +3568,7 @@ async function boot() {
     const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
       constants("heroes"), localDict("items", 200), localDict("abilities", 1000),
       constants("item_ids"),
-      fetch("knowledge.json?v=12").then((r) => r.json()), fetch("texts.json?v=19").then((r) => r.json()),
+      fetchJson("knowledge.json?v=12"), fetchJson("texts.json?v=19"),
     ]);
     dictionary = createDictionary({ heroes, items, abilities });
     itemIds = ids;
