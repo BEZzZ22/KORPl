@@ -7,6 +7,7 @@
 // Официальный лор героев с dota2.com (tools/fetch-lore.mjs): тренер рассказывает историю героя по нему, а не выдумывает
 import LORE from "./lore.json" with { type: "json" };
 import { withStore, migrateStep, purgeExpired } from "./store.js";
+import { kickShorts } from "./kick.js";
 import { spendUnit, spendChat, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT, loginUser, roboLink, roboResult, robokassaOn, payUrl, tokenUser } from "./pay.js";
 
 const ALLOWED_ORIGINS = ["https://bezzz22.github.io"];
@@ -1828,6 +1829,7 @@ export default {
     const now = Date.now();
     const chores = [migrateStep(env, now).catch((e) => console.log(`перенос из KV: ${e && e.message || e}`))];
     if (new Date(now).getUTCMinutes() < 3) chores.push(purgeExpired(env, now).catch(() => 0));
+    if (new Date(now).getUTCMinutes() % 15 < 3) chores.push(kickShorts(env, now).catch((e) => console.log(`пинок Shorts: ${e && e.message || e}`)));
     ctx.waitUntil(Promise.all([checkWatches(env), checkReplays(env), reportOnRequest(env), ensureWebhook(env), ...chores]));
   },
 };
