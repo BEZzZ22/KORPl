@@ -2,13 +2,13 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan, skillPlan,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
-} from "./engine.js?v=39";
+} from "./engine.js?v=40";
 import { aegisBadge, openShowcase } from "./aegis.js?v=9";
-import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=3";
-import { matchVerdicts } from "./blame.js?v=5";
+import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=4";
+import { matchVerdicts } from "./blame.js?v=6";
 import { rankMedal3d } from "./medal3d.js?v=6";
 import { heroCard3d } from "./herocard3d.js?v=5";
-import { tacticalTable } from "./map3d.js?v=6";
+import { tacticalTable } from "./map3d.js?v=7";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -310,6 +310,14 @@ function glassBar(bar, itemSelector, { live, onPick }) {
   return { place, current: () => active };
 }
 
+// Списки OpenDota (катки, герои, тайминги): вместо массива иногда приходит {error: …} с кодом 200 или чужой ответ
+// запасного пути — тогда .slice/.filter роняли экран. Не тот вид ответа считаем ошибкой: человек видит «Повторить»
+const LIST_PATH = /\/(?:recentMatches|matchups)$|\/players\/\d+\/(?:matches|heroes)(?:\?|$)|^\/scenarios\//;
+function shaped(path, data) {
+  if (data != null && LIST_PATH.test(path) && !Array.isArray(data)) throw new Error("OpenDota ответила не списком");
+  return data;
+}
+
 async function api(path, { method = "GET", timeout = 20000, retry = method === "GET" } = {}) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeout);
@@ -320,7 +328,7 @@ async function api(path, { method = "GET", timeout = 20000, retry = method === "
     status = res.status;
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`OpenDota ответила ${res.status}`);
-    return await res.json();
+    return shaped(path, await res.json());
   } catch (e) {
     // под нагрузкой OpenDota быстро отвечает 429/502/503: один повтор через пару секунд обычно проходит.
     // Таймаут не повторяем — человек и так ждал
@@ -343,7 +351,7 @@ async function viaProxy(path, original) {
     const res = await fetch(API_PROXY + path, { signal: ctrl.signal });
     if (res.status === 404) return null;
     if (!res.ok) throw original;
-    return await res.json();
+    return shaped(path, await res.json());
   } catch {
     throw original;
   } finally {
@@ -1681,9 +1689,24 @@ const OPUS_RETRY = 30 * 60000; // не чаще раза в полчаса пр�
 const MEMORY_SIZE = 10; // прошлых разборов в памяти тренера
 const COMPARE_SIZE = 8; // каток, с которыми можно сравнить
 
+// localStorage у WebView ~5 МБ: кэши матчей по героям (hs:, hm:) за месяцы его забивают, и тогда молча
+// перестают сохраняться разборы тренера и чат. Переполнилось — выкидываем эти кэши (их можно скачать заново) и пишем ещё раз
+function pruneCaches() {
+  try {
+    const drop = [];
+    for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (/^(hs|hm):/.test(k || "")) drop.push(k); }
+    drop.forEach((k) => localStorage.removeItem(k));
+    return drop.length > 0;
+  } catch { return false; }
+}
 const safeLocal = {
   get(key) { try { return localStorage.getItem(key); } catch { return null; } },
-  set(key, value) { try { localStorage.setItem(key, value); } catch { /* приватный режим */ } },
+  set(key, value) {
+    try { localStorage.setItem(key, value); } catch {
+      // приватный режим или переполнение
+      if (pruneCaches()) try { localStorage.setItem(key, value); } catch { /* всё равно не влезло */ }
+    }
+  },
 };
 const localJson = (key, fallback) => { try { return JSON.parse(safeLocal.get(key) || "null") ?? fallback; } catch { return fallback; } };
 
@@ -1757,6 +1780,17 @@ function paywallBlock(onPaid, text = "Бесплатные разборы тре
       status.textContent = coachError(e);
     }
   };
+  const packBtn = (p) => {
+    const btn = h("button", { class: `paywall-pack${p.days ? " best" : ""}`, type: "button" },
+      h("b", {}, p.days ? "Месяц тренера" : `${p.credits} ${plural(p.credits, "разбор", "разбора", "разборов")}`),
+      h("span", { class: "paywall-sub" }, p.days ? "до 10 разборов в сутки" : "не сгорают"),
+      h("span", { class: "paywall-price" }, `${p.stars} ⭐`));
+    btn.onclick = () => { haptic(); buy(p, btn); };
+    return btn;
+  };
+  const packBox = h("div", { class: "paywall-packs" }, ...packs.map(packBtn));
+  // кошелёк не успел прийти (сеть моргнула) — без пакетов купить было нечего: дотягиваем
+  if (!packs.length) getWallet(true).then((w) => { if (w && w.packs && !packBox.children.length) packBox.append(...w.packs.map(packBtn)); });
   // картой или СБП: страница оплаты на сайте во внешнем браузере, вход уже выполнен (ссылка с токеном на сутки)
   const card = walletState && walletState.cards && h("button", { class: "paywall-card", type: "button" }, "Картой или СБП (₽)");
   if (card) card.onclick = async () => {
@@ -1776,14 +1810,7 @@ function paywallBlock(onPaid, text = "Бесплатные разборы тре
   return h("div", { class: "paywall" },
     h("p", { class: "paywall-title" }, text),
     h("p", { class: "small muted" }, "Разбор катки, карта и «Кто слил» остаются бесплатными. Платный только ИИ-тренер: разбор моментов, задачи, чат и сравнение каток."),
-    h("div", { class: "paywall-packs" }, ...packs.map((p) => {
-      const btn = h("button", { class: `paywall-pack${p.days ? " best" : ""}`, type: "button" },
-        h("b", {}, p.days ? "Месяц тренера" : `${p.credits} ${plural(p.credits, "разбор", "разбора", "разборов")}`),
-        h("span", { class: "paywall-sub" }, p.days ? "до 10 разборов в сутки" : "не сгорают"),
-        h("span", { class: "paywall-price" }, `${p.stars} ⭐`));
-      btn.onclick = () => { haptic(); buy(p, btn); };
-      return btn;
-    })),
+    packBox,
     card,
     status,
     h("p", { class: "small muted" }, "Вопросы по оплате — боту, команда /paysupport."));
@@ -2105,7 +2132,9 @@ function chatBlock(a) {
     haptic("light");
     step("chat");
     try {
-      const data = await postCoach({ mode: "chat", summary: coachPayload(a), coach: safeLocal.get(coachKey(a)) || "", history: before, question: q, initData: (tg && tg.initData) || "" });
+      // сервер всё равно режет реплики до 700 знаков и разбор до 1600: длинная переписка не должна упираться в 413
+      const data = await postCoach({ mode: "chat", summary: coachPayload(a), coach: (safeLocal.get(coachKey(a)) || "").slice(0, 2000),
+        history: before.map((m) => ({ role: m.role, text: String(m.text || "").slice(0, 900) })), question: q, initData: (tg && tg.initData) || "" });
       if (!data.text) throw Object.assign(new Error("Тренер сейчас недоступен."), { fromCoach: true });
       if (data.wallet) walletState = { ...walletState, ...data.wallet };
       note.textContent = Number.isInteger(data.left) && data.left < 5 ? chatLeftText(data.left) : "";

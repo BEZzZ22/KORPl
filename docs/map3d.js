@@ -1,7 +1,7 @@
 // Тактический стол (дизайн «Новый»): карта Доты лежит в 3D, смерти стоят на ней красными столбами
 // (несколько смертей в одном месте — столб выше), обсы — золотыми. Пальцем стол крутится с инерцией
 // и наклоняется, без пальца медленно поворачивается сам. Тап по столбу — что там случилось.
-import { mapX, mapY, terrainUrl } from "./dotamap.js?v=3";
+import { mapX, mapY, terrainUrl } from "./dotamap.js?v=4";
 import { whenGone } from "./aegis.js?v=9";
 
 function d(cls, ...children) {
@@ -95,13 +95,14 @@ export function tacticalTable({ deaths = [], wards = [], reduced = false, haptic
     held = true; moved = 0; v = 0;
     lastX = e.clientX; lastY = e.clientY; lastT = performance.now();
     view.classList.add("held");
-    // палец уехал за край стола — поворот всё равно идёт, пока не отпустили
-    try { view.setPointerCapture(e.pointerId); } catch { /* не критично */ }
   });
   view.addEventListener("pointermove", (e) => {
     if (!held) return;
     const now = performance.now(), dx = e.clientX - lastX, dy = e.clientY - lastY;
     moved += Math.abs(dx) + Math.abs(dy);
+    // палец уехал за край стола — поворот всё равно идёт, пока не отпустили. Захват только когда это уже поворот:
+    // с захватом сразу клик мышью уходит столу, а не столбу, и тап по столбу молчит
+    if (moved > 8 && !view.hasPointerCapture(e.pointerId)) try { view.setPointerCapture(e.pointerId); } catch { /* не критично */ }
     // горизонталь крутит, вертикаль наклоняет
     spin -= dx * 0.5;
     tilt = Math.max(15, Math.min(68, tilt - dy * 0.25));

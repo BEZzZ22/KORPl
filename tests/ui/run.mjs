@@ -159,6 +159,11 @@ async function handleRoute(route) {
     const data = opendota(url);
     return data === null ? route.fulfill({ status: 404, body: "{}" }) : route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(data) });
   }
+  // запасной путь к OpenDota через воркер (/od/...) отвечает тем же, что OpenDota
+  if (url.hostname.endsWith("workers.dev") && url.pathname.startsWith("/od/")) {
+    const data = opendota(new URL(`https://api.opendota.com/api${url.pathname.slice(3)}${url.search}`));
+    return data === null ? route.fulfill({ status: 404, headers: { "Access-Control-Allow-Origin": "*" }, body: "{}" }) : route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(data) });
+  }
   if (url.hostname.endsWith("workers.dev")) {
     if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*", "Access-Control-Allow-Methods": "POST" } });
     const { __status, ...out } = coach(route.request().postData());
@@ -421,6 +426,16 @@ for (const [i, name] of ["blame", "phases", "deaths", "map", "build", "charts"].
       const sec = (c) => c.split(":").reduce((m, x) => m * 60 + Number(x), 0);
       if (!(sec(atDrag) > sec(atTap) + 300)) throw new Error(`протяжка по шкале: ${atTap} → ${atDrag}`);
       if (!(await page.locator(".tab.active").first().innerText()).includes("Карт")) throw new Error("протяжка по шкале увела на другую вкладку");
+      // тактический стол: тап мышью по столбу показывает, что там было (захват пальца раньше уводил клик столу)
+      if (await page.$(".m3d .m3d-pin.death")) {
+        const pin = await page.evaluate(() => {
+          const el = document.querySelector(".m3d .m3d-pin.death .m3d-cap"); el.scrollIntoView({ block: "center" });
+          const b = el.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+        });
+        await page.mouse.click(pin.x, pin.y);
+        const info = await page.locator(".m3d-info").innerText();
+        if (!/Смерт|смерти|Обс/.test(info)) throw new Error(`тап по столбу не показал, что там: «${info}»`);
+      }
       // слежение за героем: карта приближается
       await page.evaluate(() => document.querySelector(".live-map").seek(1000));
       await page.locator(".lm-follow").click();
@@ -655,6 +670,75 @@ if (!only || only.has("demo")) {
     shots.push(file);
   });
   await ctx6.close();
+}
+
+// UI_MONKEY=<число действий>: «обезьяна» тыкает куда попало — кнопки, вкладки, свайпы, «Назад», 3D-объекты —
+// с анимациями и сбоями сети (часть ответов OpenDota 500 или с задержкой). Ловит падения JS и пустой экран
+if (process.env.UI_MONKEY) {
+  const N = Number(process.env.UI_MONKEY) || 300;
+  let seed = Number(process.env.UI_SEED) || 7;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+  const ctx7 = await browser.newContext({ viewport: { width: 375, height: 667 }, deviceScaleFactor: 3, hasTouch: true, isMobile: true, locale: "ru-RU",
+    serviceWorkers: "block", colorScheme: "dark", reducedMotion: "no-preference" });
+  await ctx7.addInitScript((acc) => { try { localStorage.setItem("account_id", String(acc)); localStorage.setItem("gate_ok", String(Date.now() + 864e5)); } catch { /* */ } }, ACCOUNT);
+  await ctx7.route("**/*", async (route) => {
+    const u = new URL(route.request().url());
+    if (u.hostname === "api.opendota.com" && !u.pathname.startsWith("/api/constants/")) {
+      const r = rnd();
+      if (r < 0.08) return route.fulfill({ status: 500, headers: { "Access-Control-Allow-Origin": "*" }, body: "" });
+      // OpenDota иногда отдаёт {error} с кодом 200 вместо списка
+      if (r < 0.11) return route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify({ error: "rate limited" }) });
+      if (r < 0.16) await new Promise((res) => setTimeout(res, 1500));
+    }
+    return handleRoute(route);
+  });
+  const p7 = await ctx7.newPage();
+  const log = [];
+  p7.on("pageerror", (e) => errors.push(`monkey pageerror: ${e.message} (после: ${log.slice(-6).join(" → ")})`));
+  p7.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource|ERR_FAILED|status of 500/.test(m.text())) errors.push(`monkey console: ${m.text()} (после: ${log.slice(-6).join(" → ")})`); });
+  await step("monkey", async () => {
+    await p7.goto(`${BASE}/index.html`);
+    await p7.waitForSelector(".match-item", { timeout: 20000 });
+    for (let i = 0; i < N; i++) {
+      const r = rnd();
+      const did = await p7.evaluate(([r, r2]) => {
+        const vis = (e) => { const b = e.getBoundingClientRect(); return b.width > 4 && b.height > 4 && b.bottom > 0 && b.top < innerHeight * 3; };
+        const pool = [...document.querySelectorAll("button:not([disabled]), a[href]:not([href^=http]):not([target]), [role=button], [role=tab], .match-item, .tab, summary, .aegis, .m3d, .hc")]
+          .filter(vis).filter((e) => !/Закрыть приложение|Оплатить|Купить|звёзд/i.test(e.textContent || ""));
+        if (r < 0.06) { history.back(); return "back"; }
+        if (r < 0.12) { window.scrollTo(0, r2 * document.body.scrollHeight); return "scroll"; }
+        if (!pool.length) return "пусто";
+        const el = pool[Math.floor(r2 * pool.length)];
+        el.scrollIntoView({ block: "center" });
+        const b = el.getBoundingClientRect();
+        return { name: `${el.tagName.toLowerCase()}.${String(el.className.baseVal ?? el.className).split(" ")[0]}:${(el.textContent || "").trim().slice(0, 18)}`, x: b.left + b.width / 2, y: b.top + b.height / 2 };
+      }, [r, rnd()]).catch(() => "переход");
+      log.push(typeof did === "string" ? did : did.name);
+      if (typeof did === "object") {
+        const r3 = rnd(), { x, y } = did;
+        // тап, свайп или долгое нажатие по выбранному элементу — по координатам, как пальцем
+        try {
+          if (r3 < 0.7) await p7.mouse.click(x, y);
+          else if (r3 < 0.9) { await p7.mouse.move(x, y); await p7.mouse.down(); await p7.mouse.move(x + (rnd() - 0.5) * 300, y + (rnd() - 0.5) * 100, { steps: 6 }); await p7.mouse.up(); }
+          else { await p7.mouse.move(x, y); await p7.mouse.down(); await p7.waitForTimeout(700); await p7.mouse.up(); }
+        } catch { /* элемент ушёл */ }
+      }
+      await p7.waitForTimeout(60 + rnd() * 300);
+      // ушли со страницы приложения (about.html и т. п.) — назад в приложение
+      if (!/index\.html/.test(p7.url())) { log.push(`ушёл на ${p7.url().split("/").pop()}`); await p7.goto(`${BASE}/index.html`).catch(() => {}); await p7.waitForTimeout(800); }
+      // экран не должен остаться пустым
+      if (i % 25 === 24) {
+        await p7.waitForLoadState().catch(() => {});
+        const len = await p7.evaluate(() => document.querySelector("#app") ? document.querySelector("#app").innerText.trim().length : 0).catch(() => 99);
+        if (len < 5) throw new Error(`пустой экран после: ${log.slice(-6).join(" → ")}`);
+        // окно витрины/диалога закрываем, чтобы обезьяна не залипла в нём навсегда
+        await p7.evaluate(() => { for (const b of document.querySelectorAll(".showcase .sc-head button")) b.click(); }).catch(() => {});
+      }
+    }
+    const nodes = await p7.evaluate(() => document.getElementsByTagName("*").length);
+    console.log(`обезьяна: ${N} действий, узлов DOM в конце ${nodes}`);
+  });
+  await ctx7.close();
 }
 
 // Офлайн: с живым service worker открыть приложение, потом без сети — главная должна открыться из кэша
