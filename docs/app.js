@@ -1757,6 +1757,22 @@ function paywallBlock(onPaid, text = "Бесплатные разборы тре
       status.textContent = coachError(e);
     }
   };
+  // картой или СБП: страница оплаты на сайте во внешнем браузере, вход уже выполнен (ссылка с токеном на сутки)
+  const card = walletState && walletState.cards && h("button", { class: "paywall-card", type: "button" }, "Картой или СБП (₽)");
+  if (card) card.onclick = async () => {
+    haptic();
+    step("buy_card");
+    card.disabled = true;
+    try {
+      const { url } = await postCoach({ mode: "pay_link", initData: tg.initData }, 15000);
+      if (tg.openLink) tg.openLink(url); else window.open(url, "_blank", "noopener");
+      status.textContent = "Оплата открылась в браузере. После оплаты вернись сюда и нажми «Разобрать с тренером».";
+    } catch (e) {
+      status.textContent = coachError(e);
+    } finally {
+      card.disabled = false;
+    }
+  };
   return h("div", { class: "paywall" },
     h("p", { class: "paywall-title" }, text),
     h("p", { class: "small muted" }, "Разбор катки, карта и «Кто слил» остаются бесплатными. Платный только ИИ-тренер: разбор моментов, задачи, чат и сравнение каток."),
@@ -1768,8 +1784,9 @@ function paywallBlock(onPaid, text = "Бесплатные разборы тре
       btn.onclick = () => { haptic(); buy(p, btn); };
       return btn;
     })),
+    card,
     status,
-    h("p", { class: "small muted" }, "Оплата звёздами Телеграма. Вопросы по оплате — боту, команда /paysupport."));
+    h("p", { class: "small muted" }, "Вопросы по оплате — боту, команда /paysupport."));
 }
 // 402 от воркера: кошелёк в ответе, показываем покупку
 function isPaywall(e) {

@@ -891,3 +891,28 @@ test("Робокасса: вход через Telegram Login, ссылка с п
   const after = await (await worker.fetch(req({ mode: "web_wallet", login }), e)).json();
   assert.equal(after.credits, 10);
 });
+
+test("оплата картой из бота: ссылка с токеном на сутки, страница входит по нему, /pay даёт кнопку", async (t) => {
+  t.after(restore);
+  const { handleBotUpdate } = await import("./coach.js");
+  const { payUrl, tokenUser } = await import("./pay.js");
+  const now = Date.now();
+  const url = await payUrl("123:abc", { id: 8, first_name: "Ax", username: "axel" }, now);
+  const token = url.split("#t=")[1];
+  assert.equal((await tokenUser(token, "123:abc", now)).id, 8);
+  assert.equal(await tokenUser(token, "999:zzz", now), null);
+  assert.equal(await tokenUser(token.replace(/^8\./, "9."), "123:abc", now), null);
+  assert.equal(await tokenUser(token, "123:abc", now + 2 * 86400000), null);
+  const kv = fakeKV();
+  const e = { ...env, COACH_KV: kv, BOT_TOKEN: "123:abc", RATE_PER_MIN: "1000", ROBOKASSA_LOGIN: "shop", ROBOKASSA_PASS1: "p1", ROBOKASSA_PASS2: "p2" };
+  mockFetch({});
+  const w = await (await worker.fetch(req({ mode: "web_wallet", token }), e)).json();
+  assert.equal(w.cards, true);
+  const init = await signInit({ auth_date: String(Math.floor(now / 1000)), user: JSON.stringify({ id: 8, first_name: "Ax" }) }, "123:abc");
+  const link = await (await worker.fetch(req({ mode: "pay_link", initData: init }), e)).json();
+  assert.match(link.url, /pay\.html#t=8\./);
+  const calls = mockFetch({ tg: [new Response("{}")] });
+  await handleBotUpdate(e, { message: { chat: { id: 8, type: "private" }, from: { id: 8, first_name: "Ax" }, text: "/pay" } });
+  assert.equal(calls[0].body.reply_markup.inline_keyboard[0][0].text, "Картой или СБП");
+  assert.match(calls[0].body.text, /79 ₽/);
+});

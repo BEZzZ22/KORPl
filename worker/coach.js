@@ -7,7 +7,7 @@
 // Официальный лор героев с dota2.com (tools/fetch-lore.mjs): тренер рассказывает историю героя по нему, а не выдумывает
 import LORE from "./lore.json" with { type: "json" };
 import { withStore, migrateStep, purgeExpired } from "./store.js";
-import { spendUnit, spendChat, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT, loginUser, roboLink, roboResult, robokassaOn } from "./pay.js";
+import { spendUnit, spendChat, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT, loginUser, roboLink, roboResult, robokassaOn, payUrl, tokenUser } from "./pay.js";
 
 const ALLOWED_ORIGINS = ["https://bezzz22.github.io"];
 const GEMINI_MODEL = "gemini-flash-lite-latest";
@@ -1136,7 +1136,7 @@ const EVENT_LABELS = {
 const STEP_LABELS = {
   home: "главная", home_list: "список игр", home_empty: "«матчей не видно»", match: "открыл матч", link_bad_empty: "пустой ID", link_bad_vanity: "ссылка с ником", link_bad_url: "не та ссылка", link_bad_num: "не те цифры", link_bad_text: "ввёл ник", empty_retry: "жмёт «Проверить снова»", empty_found: "матчи нашлись", match_parsing: "ждёт разбор реплея",
   analysis: "разбор", not_yours: "чужой матч", link: "привязал аккаунт", link_bad: "неверный ID", link_unknown: "OpenDota не знает аккаунт", link_anyway: "привязал неизвестный ID", write_ok: "разрешил сообщения бота", write_no: "запретил сообщения бота",
-  profile: "профиль", hero_stats: "статы героя", draft: "драфт", coach: "тренер", chat: "вопрос тренеру", compare: "сравнение", buy: "открыл оплату", paywall: "упёрся в оплату",
+  profile: "профиль", hero_stats: "статы героя", draft: "драфт", coach: "тренер", chat: "вопрос тренеру", compare: "сравнение", buy: "открыл оплату", buy_card: "оплата картой", paywall: "упёрся в оплату",
   replay: "реплей", share: "поделился", blame: "«кто слил»", share_blame: "поделился итогом", demo: "пример разбора", disagree_blame: "не согласен", err_opendota: "ОШИБКА OpenDota", err_no_match: "ОШИБКА нет матча", err_replay: "ОШИБКА реплей",
   err_parse: "ОШИБКА разбора", err_boot: "ОШИБКА загрузки", err_other: "ОШИБКА",
   design_v2: "новый дизайн", design_classic: "классика",
@@ -1398,6 +1398,13 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
     await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: /^\/terms/i.test(cmd) ? TERMS_TEXT : PAYSUPPORT_TEXT }).catch(() => false);
     return { info: 1 };
   }
+  if (/^\/pay(?:@\w+)?$/i.test(cmd)) {
+    const card = robokassaOn(env) && { text: "Картой или СБП", url: await payUrl(env.BOT_TOKEN, msg.from, now) };
+    const text = `Тренер: ${PACKS.p10.credits} разборов — ${PACKS.p10.stars} звёзд или ${PACKS.p10.rub} ₽, месяц — ${PACKS.month.stars} звёзд или ${PACKS.month.rub} ₽. Звёздами — в приложении, на экране тренера`
+      + (card ? ", картой или через СБП — по кнопке ниже (ссылка на сутки)." : ".");
+    await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text, reply_markup: { inline_keyboard: [...(card ? [[card]] : []), ...appButton.inline_keyboard] } }).catch(() => false);
+    return { pay: 1 };
+  }
   const back = isOwner(env, msg.from.id) && /^\/refund(?:@\w+)?\s+(\S+)$/i.exec(cmd);
   if (back) {
     const text = await refund(env, (m, b) => tgCall(env, m, b), back[1], now);
@@ -1547,13 +1554,15 @@ async function handlePost(request, env, ctx, origin) {
   }
 
   // Кошелёк тренера и покупка: счёт на звёзды, приложение открывает его через Telegram.WebApp.openInvoice
-  if (mode === "wallet" || mode === "buy") {
+  if (mode === "wallet" || mode === "buy" || mode === "pay_link") {
     if (!paywallOn(env)) return reply(200, { off: true }, origin);
     const user = await telegramUser(raw.initData, env.BOT_TOKEN);
     if (!user || !user.id) return reply(403, { error: NO_TG_TEXT }, origin);
     const limited = throttle(String(user.id), Date.now(), 60, "pay", 20000);
     if (limited) return reply(429, { error: limited }, origin);
-    if (mode === "wallet") return reply(200, { ...walletView(await getWallet(env, user.id)), owner: isOwner(env, user.id) }, origin);
+    if (mode === "wallet") return reply(200, { ...walletView(await getWallet(env, user.id)), owner: isOwner(env, user.id), cards: robokassaOn(env) }, origin);
+    // оплата картой из приложения: страница на сайте, вход уже выполнен (решение Ярика 30.10 — и в боте тоже)
+    if (mode === "pay_link") return robokassaOn(env) ? reply(200, { url: await payUrl(env.BOT_TOKEN, user) }, origin) : reply(503, { error: "Оплата картой ещё не подключена." }, origin);
     if (!PACKS[raw.pack]) return reply(400, { error: "Нет такого пакета." }, origin);
     const link = await invoiceLink((m, b) => tgCall(env, m, b), raw.pack, user.id);
     return link ? reply(200, { link }, origin) : reply(502, { error: "Телеграм не выдал счёт. Попробуй ещё раз." }, origin);
@@ -1562,7 +1571,7 @@ async function handlePost(request, env, ctx, origin) {
   // Сайт (docs/pay.html): вход через Telegram Login Widget, оплата картой или СБП через Робокассу
   if (mode === "web_wallet" || mode === "web_buy") {
     if (!paywallOn(env)) return reply(200, { off: true }, origin);
-    const user = await loginUser(raw.login, env.BOT_TOKEN);
+    const user = raw.token ? await tokenUser(raw.token, env.BOT_TOKEN) : await loginUser(raw.login, env.BOT_TOKEN);
     if (!user || !user.id) return reply(403, { error: "Войди через Телеграм ещё раз." }, origin);
     const limited = throttle(String(user.id), Date.now(), 60, "pay", 20000);
     if (limited) return reply(429, { error: limited }, origin);
