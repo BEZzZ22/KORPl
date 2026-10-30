@@ -730,6 +730,59 @@ class Killers(Cut):
         put(img, layer, W / 2, 660, 1 + 0.03 * math.sin(k * 40) * k)
 
 
+class Killers2(Killers):
+    """Исправленный «Кто убил»: всё по одной катке Drow (12/6/1), без чужих героев."""
+    name = "killers2"
+    stills = {"viper": ("killers", 1.5), "hood": ("deathmap", 2.5), "slark": ("deathmap", 9.6), "bkb": ("killers", 5)}
+    portraits = {"viper": ("viper", (81, 151, 249, 246)), "hood": ("hood", (80, 194, 249, 287)), "slark": ("slark", (64, 221, 240, 319))}
+    scroll = ("killers", 0.5, 8)
+    chords, seed = 1, 21
+    ROWS = [(2.0, "slark", "Slark", 2050, 2), (5.0, "hood", "Hoodwink", 5089, 2)]
+    TOP = 5833
+
+    def setup(self):
+        self.hook_head = Headline("Кто убил меня больше всех?", "Black", 108, WHITE)
+        self.hook_sub = Headline("топ за одну катку Drow Ranger", "SemiBold", 54, MUTED)
+        self.top_name = line_layer("VIPER", "Black", 170, RED)
+        self.even = Caption("6 смертей за катку. У каждого ровно по 2", 58, self.accent, per_word=0.12)
+        self.twist_head = Headline("BKB был. Не спас", "Black", 110, WHITE)
+        self.twist_sub = Caption("Viper Strike пробивает BKB, а диспел его не снимает", 48, RED)
+        self.cuts = [2.0, self.build]
+        self.hits = [(5.0, 0.35), (8.0, 0.3)]
+        self.ticks = accel_ticks(self.build, self.land)
+        self.clicks = [r[0] for r in self.ROWS]
+
+    def scene(self, img, t):
+        if t < 2.0:
+            self.scroll_bg(img, t)
+            self.hook_head.draw(img, W / 2, 820, t * 1.3)
+            self.hook_sub.draw(img, W / 2, 1080, t - 0.6)
+        elif t < self.drop:
+            put(img, label("Кто убивал", self.accent), W / 2, 330)
+            slots = {0: 1240, 1: 1000}
+            for i, (t0, face, name, dmg, deaths) in enumerate(self.ROWS):
+                if t >= t0:
+                    self.row(img, slots[i], 3 - i, self.faces[face], name, dmg, deaths, t - t0, hl=(t0 <= t < t0 + 3 and t < self.build))
+            if 8.0 <= t < self.build + 0.4:
+                self.even.draw(img, 1520, t - 8.0)
+            if t >= self.build:
+                k = (t - self.build) / (self.land - self.build)
+                self.mystery(img, self.TOP * clamp01(k) ** 2.2, k)
+        elif t < self.twist:
+            k = t - self.drop
+            face = self.faces["viper"].resize((300, 300))
+            put(img, glow_layer(face, RED, 40, 0.8), W / 2, 470, 1.3 - 0.3 * expo(k / 0.3))
+            put(img, face, W / 2, 470, 1.3 - 0.3 * expo(k / 0.3))
+            put(img, self.top_name, W / 2, 730, 1.3 - 0.3 * expo(k / 0.28))
+            put(img, line_layer("5 833 урона · 2 смерти", "Black", 60, WHITE), W / 2, 860, alpha=clamp01((k - 0.3) / 0.2))
+            self.proof(img, t, self.drop + 0.4, "viper", (40, 110, 870, 360), (270, 150, 730, 245), cy=1300, width=820, color=RED)
+        else:
+            k = t - self.twist
+            self.twist_head.draw(img, W / 2, 420, k)
+            self.twist_sub.draw(img, 600, k - 0.5)
+            self.proof(img, t, self.twist + 0.3, "bkb", (30, 290, 870, 560), (60, 355, 620, 545), cy=1180, width=860, color=RED)
+
+
 # ---------- 4. Миф или правда ----------
 class Myth(Cut):
     name = "myth"
@@ -1354,7 +1407,7 @@ class FightMap(Quiz):
             self.twist_cap.draw(img, 1620, k - 1.0)
 
 
-VIDEOS = {c.name: c for c in (GuessRank, Versus, Killers, Myth, Phases, Wards, Lane, Zero3, Ganked, Manta, FightMap)}
+VIDEOS = {c.name: c for c in (GuessRank, Versus, Killers, Myth, Phases, Wards, Lane, Zero3, Ganked, Manta, FightMap, Killers2)}
 
 
 # ---------- звук ----------

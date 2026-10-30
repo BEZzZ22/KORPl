@@ -81,7 +81,8 @@
       "разбор катки",
       "dota2",
       "shorts"
-    ]
+    ],
+    "retired": "смешаны две катки, заменён на killers2"
   },
   {
     "id": "myth",
@@ -131,6 +132,20 @@
     "video": "promo/shorts/lanexp.mp4",
     "title": "Крипы в плюс, а опыт −523. Как так? #Shorts",
     "description": "Линия 2 на 2 против Nyx Assassin, разбор по минутам: крипы и нетворс в плюс, а опыт уходит в минус.\n\nКинь Match ID боту и получи разбор своей катки бесплатно.\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
+    "tags": [
+      "dota 2",
+      "дота 2",
+      "разбор катки",
+      "dota2",
+      "shorts"
+    ]
+  },
+  {
+    "id": "killers2",
+    "at": "2026-11-02T12:30:00+03:00",
+    "video": "promo/shorts/killers2.mp4",
+    "title": "Кто убил меня больше всех? И почему BKB не спас #Shorts",
+    "description": "Одна катка за Drow Ranger, 6 смертей: Slark, Hoodwink и Viper, у каждого по 2. Но урона Viper набил больше всех, и BKB против него не помог.\n\nКинь Match ID боту и получи разбор своей катки бесплатно.\nБот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#Shorts #dota2 #дота2 #доташка #разбор",
     "tags": [
       "dota 2",
       "дота 2",

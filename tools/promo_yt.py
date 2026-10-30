@@ -21,7 +21,7 @@ def due(queue, posted, now=None):
     last = max((datetime.fromisoformat(v["at"]) for v in posted.values() if isinstance(v, dict) and v.get("at")), default=None)
     if last and now - last < MIN_GAP and not os.environ.get("PROMO_FORCE"):
         return []
-    ready = [p for p in queue if p["id"] not in posted and datetime.fromisoformat(p["at"]) <= now]
+    ready = [p for p in queue if p["id"] not in posted and not p.get("retired") and datetime.fromisoformat(p["at"]) <= now]
     ready.sort(key=lambda p: datetime.fromisoformat(p["at"]))
     return ready[:1]
 

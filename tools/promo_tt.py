@@ -34,7 +34,7 @@ def due(queue, posted, now=None):
     last = max((datetime.fromisoformat(v["at"]) for v in posted.values() if isinstance(v, dict) and v.get("at")), default=None)
     if last and now - last < gap - timedelta(minutes=10) and not force:   # запас на сдвиг крона
         return []
-    return [p for p in queue if p["id"] not in posted and (ROOT / p["video"]).exists()][:1]
+    return [p for p in queue if p["id"] not in posted and not p.get("retired") and (ROOT / p["video"]).exists()][:1]
 
 
 def refresh(env):
