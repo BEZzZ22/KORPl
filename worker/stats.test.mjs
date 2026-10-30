@@ -175,13 +175,26 @@ test("новичку на /start — приветствие с кнопкой, �
     assert.equal((await handleBotUpdate(env, msg(7, "/start"))).greeted, 1);
     assert.equal((await handleBotUpdate(env, msg(7, "/start ref_tt"))).greeted, 1);
     assert.equal((await handleBotUpdate(env, msg(7, "отчёт"))).greeted, 1);
-    assert.equal(await handleBotUpdate(env, msg(7, "1111111")), null);
+    assert.deepEqual(await handleBotUpdate(env, msg(7, "1111111")), { forwarded: 1 });
     assert.equal(await handleBotUpdate(env, msg(7, "/start", "group")), null);
   } finally { globalThis.fetch = real; }
-  assert.equal(sent.length, 3);
-  assert.ok(sent.every((m) => m.chat_id === 7 && m.reply_markup.inline_keyboard[0][0].web_app.url));
-  assert.match(sent[0].text, /^Привет!/);
-  assert.match(sent[2].text, /^В чате я не отвечаю/);
+  // письма человека ушли владельцу (id 5) с его id, подсказка — человеку
+  const toOwner = sent.filter((m) => m.chat_id === 5);
+  assert.equal(toOwner.length, 2);
+  assert.match(toOwner[1].text, /\(id 7\):\n\n1111111/);
+  const toUser = sent.filter((m) => m.chat_id === 7);
+  assert.equal(toUser.length, 3);
+  assert.ok(toUser.every((m) => m.reply_markup.inline_keyboard[0][0].web_app.url));
+  assert.match(toUser[0].text, /^Привет!/);
+  assert.match(toUser[2].text, /передам разработчику/);
+  // владелец отвечает реплаем — уходит человеку
+  sent.length = 0;
+  globalThis.fetch = async (url, init) => { sent.push(JSON.parse(init.body)); return { ok: true, text: async () => "{}" }; };
+  try {
+    const reply = { message: { from: { id: 5 }, chat: { id: 5, type: "private" }, text: "Звёзды вернул", reply_to_message: { text: toOwner[1].text } } };
+    assert.equal((await handleBotUpdate(env, reply)).answered, 1);
+  } finally { globalThis.fetch = real; }
+  assert.deepEqual(sent.map((m) => [m.chat_id, m.text]), [[7, "Звёзды вернул"], [5, "Отправил."]]);
   assert.ok(!sent.some((m) => /^Отчёт/.test(m.text)));
 });
 

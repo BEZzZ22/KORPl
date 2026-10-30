@@ -49,7 +49,18 @@ jobs:
           until=$(( $(date +%s) + 340 * 60 ))
           while [ "$(date +%s)" -lt "$until" ]; do
             curl -sf --max-time 30 https://dotacoach.2007rggg.workers.dev/replay-queue -o queue.json || echo '{"matches":[]}' > queue.json
-            ids=$(node -e 'const q=JSON.parse(require("fs").readFileSync("queue.json","utf8"));console.log((q.matches||[]).filter(Number.isInteger).slice(0,4).join(" "))')
+            # берём 4 матча, которые ещё ждут разбора: уже разобранные и со свежей ошибкой воркер снимет сам,
+            # и они не должны занимать места новых заявок. Битый ответ очереди — просто пустая очередь (шаг идёт с bash -e)
+            ids=$(node -e '
+              const fs = require("fs");
+              let q = {}; try { q = JSON.parse(fs.readFileSync("queue.json", "utf8")); } catch {}
+              const since = q.since || {};
+              const fresh = (id) => {
+                if (fs.existsSync(`out/r/${id}.json`)) return false;
+                try { const e = JSON.parse(fs.readFileSync(`out/r/${id}.err.json`, "utf8")); return Boolean(e.t && e.t < (since[id] || 0)); } catch { return true; }
+              };
+              console.log((Array.isArray(q.matches) ? q.matches : []).filter(Number.isInteger).filter(fresh).slice(0, 4).join(" "));
+            ' || true)
             if [ -z "$ids" ]; then sleep 60; continue; fi
             echo "$(date -u +%H:%M) очередь: $ids"
             git -C out pull -q --rebase origin replays || true
@@ -102,7 +113,8 @@ jobs:
             git -C out add r
             if ! git -C out diff --cached --quiet; then
               git -C out commit -q -m "Реплеи: $ids"
-              git -C out push -q origin HEAD:replays || { git -C out pull -q --rebase origin replays && git -C out push -q origin HEAD:replays; }
+              # пуш не прошёл и после повторов — не роняем дежурство: коммит уйдёт со следующим кругом
+              for i in 1 2 3; do git -C out push -q origin HEAD:replays && break; sleep $((i * 5)); git -C out pull -q --rebase origin replays || true; done
             fi
             # матч снимается с очереди кроном воркера (раз в 3 минуты): не берём его по второму кругу
             sleep 60

@@ -482,6 +482,11 @@ test("fetch: sync — только с подписью Телеграма, да�
   const r2 = await (await worker.fetch(req({ mode: "sync", initData: init, data: { progress: [{ match: 2, t: 2 }] } }), e)).json();
   assert.deepEqual(r2.data.progress.map((x) => x.match), [2, 1]);
   assert.ok(kv.m.has("user:77"));
+  // смурф: своя история, мейн не трогает; вернулся на мейн — его история на месте
+  const smurf = await (await worker.fetch(req({ mode: "sync", initData: init, data: { account_id: 5, progress: [{ match: 9, t: 9 }] } }), e)).json();
+  assert.deepEqual(smurf.data.progress.map((x) => x.match), [9]);
+  const main = await (await worker.fetch(req({ mode: "sync", initData: init, data: { account_id: 801280038, progress: [] } }), e)).json();
+  assert.deepEqual(main.data.progress.map((x) => x.match), [2, 1]);
   assert.equal((await worker.fetch(req({ mode: "sync", initData: "user=1&hash=00", data: {} }), e)).status, 403);
 });
 
@@ -889,7 +894,17 @@ test("Робокасса: вход через Telegram Login, ссылка с п
   const inv = q.get("InvId");
   const result = (sig, sum = "79.00") => worker.fetch(new Request("https://coach.example/robokassa", { method: "POST", body: new URLSearchParams({ OutSum: sum, InvId: inv, SignatureValue: sig }) }), e, { waitUntil() {} });
   assert.equal((await result("bad")).status, 400);
-  assert.equal((await result(md5(`1.00:${inv}:p2`), "1.00")).status, 400); // сумма не та
+  // сумма не та, подпись верна: не зачисляем, зовём владельца, Робокассе — OK (иначе повторы)
+  const owner = { ...e, OWNER_TG_IDS: "7" };
+  const waits = [];
+  const sent = mockFetch({ tg: [new Response("{}")] });
+  const odd = await worker.fetch(new Request("https://coach.example/robokassa", { method: "POST", body: new URLSearchParams({ OutSum: "1.00", InvId: inv, SignatureValue: md5(`1.00:${inv}:p2`) }) }), owner, { waitUntil(p) { waits.push(p); } });
+  assert.equal(await odd.text(), `OK${inv}`);
+  await Promise.all(waits);
+  assert.equal(sent[0].body.chat_id, 7);
+  assert.match(sent[0].body.text, /зачислить не вышло/);
+  assert.equal((await (await worker.fetch(req({ mode: "web_wallet", login }), e)).json()).credits, 0);
+  mockFetch({});
   const ok = await result(md5(`79.00:${inv}:p2`).toUpperCase());
   assert.equal(await ok.text(), `OK${inv}`);
   assert.equal(await (await result(md5(`79.00:${inv}:p2`))).text(), `OK${inv}`); // повтор

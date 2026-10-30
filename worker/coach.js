@@ -1273,7 +1273,7 @@ export async function buildReport(env, now = Date.now(), day = mskDay(now - 8640
   }
   // Профили из синхронизации (были и до счётчиков): сколько людей привязали аккаунт.
   // Тех, кого счётчики ещё не видели, называем по getChat у бота
-  const profiles = (await listAll(env, "user:")).map((k) => k.name.slice(5)).filter((id) => !isOwner(env, id));
+  const profiles = (await listAll(env, "user:")).map((k) => k.name.slice(5)).filter((id) => !id.includes(":") && !isOwner(env, id));
   lines.push("", `Профилей с привязанным аккаунтом: ${profiles.length}`);
   const old = profiles.filter((id) => !seen.has(id));
   if (old.length && env.BOT_TOKEN) {
@@ -1373,9 +1373,31 @@ export function reportCommandDay(text, now = Date.now()) {
 // на прочий текст — подсказкой, не чаще раза в час на человека
 const WELCOME_TEXT = "Привет! Разбор твоих каток живёт в приложении. Жми «Открыть разбор» ниже или кнопку «Приложение» слева от поля ввода: "
   + "привяжи Steam или Friend ID, выбери матч и получишь разбор с ошибками по таймкодам, лайном, смертями и сборкой под катку.";
-const HINT_TEXT = "В чате я не отвечаю, всё в приложении: жми «Открыть разбор» ниже или кнопку «Приложение» слева от поля ввода.";
+const HINT_TEXT = "Разбор каток — в приложении: жми «Открыть разбор» ниже или кнопку «Приложение» слева от поля ввода. "
+  + "Вопрос, жалобу или проблему с оплатой можно написать прямо сюда — передам разработчику.";
 const HINT_TTL = 3600;
 const appButton = { inline_keyboard: [[{ text: "Открыть разбор", web_app: { url: APP_URL } }]] };
+
+// Письмо в бота от человека — владельцу. /paysupport обещает ответ «в этом чате», а раньше всё, кроме команд,
+// молча пропадало. Владелец отвечает реплаем на пересланное — ответ уходит человеку от имени бота
+const FWD_PER_DAY = 20;
+const FWD_ID = /\(id (\d{1,20})\)/;
+async function forwardToOwner(env, msg, now = Date.now()) {
+  const owners = String(env.OWNER_TG_IDS || "").split(",").map((x) => x.trim()).filter(Boolean);
+  if (!owners.length || /^\/start(?:@\w+)?(?:\s|$)/i.test(String(msg.text || "").trim())) return false;
+  const key = `fwd:${mskDay(now)}:${msg.from.id}`;
+  const n = Number(await env.COACH_KV.get(key)) || 0;
+  if (n >= FWD_PER_DAY) return false;
+  await env.COACH_KV.put(key, String(n + 1), { expirationTtl: 2 * 86400 });
+  const who = [msg.from.first_name, msg.from.last_name].filter(Boolean).join(" ") || "без имени";
+  const head = `Письмо в бота от ${who}${msg.from.username ? ` @${msg.from.username}` : ""} (id ${msg.from.id})`;
+  const text = msg.text ? `${head}:\n\n${clip(msg.text, 3500)}\n\nОтветь реплаем — уйдёт ему от бота.` : `${head}, вложение ниже. Ответь реплаем на это сообщение — уйдёт ему от бота.`;
+  for (const owner of owners) {
+    await sendTelegram(env, "sendMessage", { chat_id: Number(owner), text }).catch(() => false);
+    if (!msg.text) await sendTelegram(env, "copyMessage", { chat_id: Number(owner), from_chat_id: msg.chat.id, message_id: msg.message_id }).catch(() => false);
+  }
+  return true;
+}
 
 async function greet(env, msg) {
   const start = /^\/start(?:@\w+)?(?:\s|$)/i.test(String(msg.text || "").trim());
@@ -1447,8 +1469,19 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
     await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text }).catch(() => false);
     return { refund: text };
   }
+  // владелец ответил реплаем на пересланное письмо
+  const to = isOwner(env, msg.from.id) && msg.reply_to_message && FWD_ID.exec(String(msg.reply_to_message.text || ""));
+  if (to && msg.text) {
+    const ok = await sendTelegram(env, "sendMessage", { chat_id: Number(to[1]), text: msg.text }).catch(() => false);
+    await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: ok ? "Отправил." : "Не ушло: человек, похоже, остановил бота." }).catch(() => false);
+    return { answered: ok ? 1 : 0 };
+  }
   const day = isOwner(env, msg.from.id) ? reportCommandDay(msg.text, now) : null;
-  if (!day) return greet(env, msg);
+  if (!day) {
+    const fwd = !isOwner(env, msg.from.id) && await forwardToOwner(env, msg, now);
+    const got = await greet(env, msg);
+    return fwd ? { ...(got || {}), forwarded: 1 } : got;
+  }
   try { return await sendReport(env, now, day, [msg.chat.id]); }
   catch (e) {
     await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: `Отчёт не собрался: ${clip(e && e.message || e, 200)}` }).catch(() => false);
@@ -1530,8 +1563,16 @@ async function handlePost(request, env, ctx, origin) {
     if (!user || !user.id) return reply(403, { error: noTg(raw, "Открой приложение из Телеграма.") }, origin);
     const limited = throttle(String(user.id), Date.now(), 60, "sync", 20000);
     if (limited) return reply(429, { error: limited }, origin);
-    const key = `user:${user.id}`;
-    const merged = mergeUser(await env.COACH_KV.get(key, "json"), raw.data);
+    // Профиль — на аккаунт Доты: у кого мейн и смурф, история, задачи и память тренера одного аккаунта
+    // раньше сливались в другой. Первый привязанный живёт в user:<tg id>, остальные — рядом, user:<tg id>:a<аккаунт>
+    let key = `user:${user.id}`;
+    let stored = await env.COACH_KV.get(key, "json");
+    const acc = Number(raw.data && raw.data.account_id) || 0;
+    if (acc && stored && Number(stored.account_id) && Number(stored.account_id) !== acc) {
+      key = `user:${user.id}:a${acc}`;
+      stored = await env.COACH_KV.get(key, "json");
+    }
+    const merged = mergeUser(stored, raw.data);
     await env.COACH_KV.put(key, JSON.stringify(merged));
     return reply(200, { data: merged }, origin);
   }
@@ -1790,6 +1831,14 @@ export default {
       const form = await request.formData().catch(() => null);
       const got = form && await roboResult(env, form);
       if (!got) return new Response("bad sign", { status: 400 });
+      if (got.orphan) {
+        const o = got.orphan, who = o.order ? `, заказ на ${o.order.u} (${o.order.p})` : ", заказа в базе нет";
+        console.log(`Робокасса: оплата без заказа, счёт ${o.inv}`);
+        const text = `Оплата картой пришла, а зачислить не вышло: счёт ${o.inv}, ${o.sum} ₽${who}. Проверь в кабинете Робокассы и выдай пакет или верни деньги.`;
+        const ids = String(env.OWNER_TG_IDS || "").split(",").map((x) => x.trim()).filter(Boolean);
+        if (env.BOT_TOKEN) ctx.waitUntil(Promise.all(ids.map((id) => sendTelegram(env, "sendMessage", { chat_id: Number(id), text }).catch(() => false))));
+        return new Response(got.ok);
+      }
       if (got.pack && env.BOT_TOKEN) ctx.waitUntil(sendTelegram(env, "sendMessage", { chat_id: Number(got.user), text: thanksText(got.pack, got.wallet), reply_markup: appButton }).catch(() => false));
       return new Response(got.ok);
     }

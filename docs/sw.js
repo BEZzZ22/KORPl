@@ -3,6 +3,7 @@
 const APP = "app-v3";
 const DATA = "opendota-v2";
 const MATCHES_KEEP = 40;
+const PLAYERS_KEEP = 150;
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) => {
@@ -18,7 +19,12 @@ async function networkFirst(req, cacheName, wait = 0, event = null) {
   const cache = await caches.open(cacheName);
   const net = (async () => {
     const res = await fetch(req);
-    if (res.ok) { cache.put(req, res.clone()); return res; }
+    if (res.ok) {
+      const put = cache.put(req, res.clone());
+      // ответы OpenDota по игрокам (история, друзья, пики) на каждый новый адрес: без чистки кэш рос без предела
+      if (cacheName === DATA) put.then(() => trim(cache, "https://api.opendota.com/api/players/", PLAYERS_KEEP)).catch(() => {});
+      return res;
+    }
     // OpenDota отвечает 429/5xx при нагрузке: старая копия лучше ошибки
     return (await cache.match(req)) || res;
   })();
