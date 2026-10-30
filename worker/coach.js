@@ -1273,7 +1273,7 @@ export async function buildReport(env, now = Date.now(), day = mskDay(now - 8640
   }
   // Профили из синхронизации (были и до счётчиков): сколько людей привязали аккаунт.
   // Тех, кого счётчики ещё не видели, называем по getChat у бота
-  const profiles = (await listAll(env, "user:")).map((k) => k.name.slice(5)).filter((id) => !isOwner(env, id));
+  const profiles = (await listAll(env, "user:")).map((k) => k.name.slice(5)).filter((id) => !id.includes(":") && !isOwner(env, id));
   lines.push("", `Профилей с привязанным аккаунтом: ${profiles.length}`);
   const old = profiles.filter((id) => !seen.has(id));
   if (old.length && env.BOT_TOKEN) {
@@ -1530,8 +1530,16 @@ async function handlePost(request, env, ctx, origin) {
     if (!user || !user.id) return reply(403, { error: noTg(raw, "Открой приложение из Телеграма.") }, origin);
     const limited = throttle(String(user.id), Date.now(), 60, "sync", 20000);
     if (limited) return reply(429, { error: limited }, origin);
-    const key = `user:${user.id}`;
-    const merged = mergeUser(await env.COACH_KV.get(key, "json"), raw.data);
+    // Профиль — на аккаунт Доты: у кого мейн и смурф, история, задачи и память тренера одного аккаунта
+    // раньше сливались в другой. Первый привязанный живёт в user:<tg id>, остальные — рядом, user:<tg id>:a<аккаунт>
+    let key = `user:${user.id}`;
+    let stored = await env.COACH_KV.get(key, "json");
+    const acc = Number(raw.data && raw.data.account_id) || 0;
+    if (acc && stored && Number(stored.account_id) && Number(stored.account_id) !== acc) {
+      key = `user:${user.id}:a${acc}`;
+      stored = await env.COACH_KV.get(key, "json");
+    }
+    const merged = mergeUser(stored, raw.data);
     await env.COACH_KV.put(key, JSON.stringify(merged));
     return reply(200, { data: merged }, origin);
   }

@@ -482,6 +482,11 @@ test("fetch: sync — только с подписью Телеграма, да�
   const r2 = await (await worker.fetch(req({ mode: "sync", initData: init, data: { progress: [{ match: 2, t: 2 }] } }), e)).json();
   assert.deepEqual(r2.data.progress.map((x) => x.match), [2, 1]);
   assert.ok(kv.m.has("user:77"));
+  // смурф: своя история, мейн не трогает; вернулся на мейн — его история на месте
+  const smurf = await (await worker.fetch(req({ mode: "sync", initData: init, data: { account_id: 5, progress: [{ match: 9, t: 9 }] } }), e)).json();
+  assert.deepEqual(smurf.data.progress.map((x) => x.match), [9]);
+  const main = await (await worker.fetch(req({ mode: "sync", initData: init, data: { account_id: 801280038, progress: [] } }), e)).json();
+  assert.deepEqual(main.data.progress.map((x) => x.match), [2, 1]);
   assert.equal((await worker.fetch(req({ mode: "sync", initData: "user=1&hash=00", data: {} }), e)).status, 403);
 });
 
