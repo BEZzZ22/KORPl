@@ -195,6 +195,9 @@ async function takeQuota(env, user, ip, kind) {
 // PAYWALL=off в переменных воркера — выключатель: тогда снова суточные лимиты, как до оплаты
 const PAYWALL_TEXT = "Бесплатные разборы тренера закончились. Возьми пакет или подписку, и тренер продолжит.";
 const NO_TG_TEXT = "Тренер работает в приложении в Телеграме: открой его через @DotaRazbor_bot.";
+// подпись Телеграма есть, но не прошла: обычно она старше недели (приложение держали открытым днями)
+const STALE_TG_TEXT = "Сессия устарела: закрой приложение и открой заново через @DotaRazbor_bot.";
+const noTg = (raw, text = NO_TG_TEXT) => (raw && raw.initData ? STALE_TG_TEXT : text);
 const paywallOn = (env) => Boolean(env.COACH_KV && env.BOT_TOKEN) && env.PAYWALL !== "off";
 async function unitOf(prefix, match, fallback) {
   return Number.isInteger(Number(match)) && Number(match) > 1e6 ? `${prefix}${Number(match)}` : `${prefix}h${(await sha256(JSON.stringify(fallback))).slice(0, 16)}`;
@@ -202,7 +205,7 @@ async function unitOf(prefix, match, fallback) {
 // Вернёт { refund, left? } — можно отвечать; или { status, body } — отказ
 async function payFor(env, raw, kind, unit, { onlyOpen = false } = {}) {
   const user = await telegramUser(raw.initData, env.BOT_TOKEN);
-  if (!user || !user.id) return { status: 403, body: { error: NO_TG_TEXT } };
+  if (!user || !user.id) return { status: 403, body: { error: noTg(raw) } };
   if (isOwner(env, user.id)) return { refund: async () => {} };
   // продолжение (Opus дописывает уже открытый разбор): катка закрыта (открытие истекло) — не списываем молча
   if (onlyOpen && !(await isOpen(env, user.id, unit))) return { status: 402, body: { error: PAYWALL_TEXT, paywall: true, wallet: walletView(await getWallet(env, user.id)) } };
@@ -1519,7 +1522,7 @@ async function handlePost(request, env, ctx, origin) {
     if (!env.COACH_KV || !env.BOT_TOKEN) return reply(500, { error: "Синхронизация не настроена." }, origin);
     if (body.length > MAX_SYNC_BODY) return reply(413, { error: "Слишком много данных." }, origin);
     const user = await telegramUser(raw.initData, env.BOT_TOKEN);
-    if (!user || !user.id) return reply(403, { error: "Открой приложение из Телеграма." }, origin);
+    if (!user || !user.id) return reply(403, { error: noTg(raw, "Открой приложение из Телеграма.") }, origin);
     const limited = throttle(String(user.id), Date.now(), 60, "sync", 20000);
     if (limited) return reply(429, { error: limited }, origin);
     const key = `user:${user.id}`;
@@ -1533,7 +1536,7 @@ async function handlePost(request, env, ctx, origin) {
     if (!env.COACH_KV || !env.BOT_TOKEN) return reply(200, { ok: false }, origin);
     if (body.length > MAX_BODY) return reply(413, { error: "Слишком много данных." }, origin);
     const user = await telegramUser(raw.initData, env.BOT_TOKEN);
-    if (!user || !user.id) return reply(403, { error: "Открой приложение из Телеграма." }, origin);
+    if (!user || !user.id) return reply(403, { error: noTg(raw, "Открой приложение из Телеграма.") }, origin);
     const limited = throttle(String(user.id), Date.now(), 120, "track", 50000);
     if (limited) return reply(429, { error: limited }, origin);
     await trackUser(env, user, raw);
@@ -1545,7 +1548,7 @@ async function handlePost(request, env, ctx, origin) {
   if (mode === "gate") {
     if (!env.BOT_TOKEN) return reply(200, { ok: true, unknown: true }, origin);
     const user = await telegramUser(raw.initData, env.BOT_TOKEN);
-    if (!user || !user.id) return reply(403, { error: "Открой приложение из Телеграма." }, origin);
+    if (!user || !user.id) return reply(403, { error: noTg(raw, "Открой приложение из Телеграма.") }, origin);
     if (isOwner(env, user.id)) return reply(200, { ok: true, channel: true, chat: true, ...COMMUNITY.links }, origin);
     const limited = throttle(String(user.id), Date.now(), 120, "gate", 100000);
     if (limited) return reply(200, { ok: true, unknown: true }, origin);
@@ -1556,7 +1559,7 @@ async function handlePost(request, env, ctx, origin) {
   if (mode === "feedback") {
     if (!env.COACH_KV || !env.BOT_TOKEN) return reply(200, { ok: false }, origin);
     const user = await telegramUser(raw.initData, env.BOT_TOKEN);
-    if (!user || !user.id) return reply(403, { error: "Открой приложение из Телеграма." }, origin);
+    if (!user || !user.id) return reply(403, { error: noTg(raw, "Открой приложение из Телеграма.") }, origin);
     const limited = throttle(String(user.id), Date.now(), 20, "feedback", 2000);
     if (limited) return reply(429, { error: limited }, origin);
     await saveFeedback(env, user, raw);
@@ -1579,7 +1582,7 @@ async function handlePost(request, env, ctx, origin) {
     if (!env.COACH_KV || !env.BOT_TOKEN) return reply(500, { error: "Уведомления не настроены." }, origin);
     const user = await telegramUser(raw.initData, env.BOT_TOKEN);
     const match = Number(raw.match_id);
-    if (!user || !user.id) return reply(403, { error: "Открой приложение из Телеграма." }, origin);
+    if (!user || !user.id) return reply(403, { error: noTg(raw, "Открой приложение из Телеграма.") }, origin);
     if (!Number.isInteger(match) || match < 1e6) return reply(400, { error: "Нет матча." }, origin);
     const limited = throttle(String(user.id), Date.now(), 20, "watch", 3000);
     if (limited) return reply(429, { error: limited }, origin);
@@ -1591,7 +1594,7 @@ async function handlePost(request, env, ctx, origin) {
   if (mode === "wallet" || mode === "buy" || mode === "pay_link") {
     if (!paywallOn(env)) return reply(200, { off: true }, origin);
     const user = await telegramUser(raw.initData, env.BOT_TOKEN);
-    if (!user || !user.id) return reply(403, { error: NO_TG_TEXT }, origin);
+    if (!user || !user.id) return reply(403, { error: noTg(raw) }, origin);
     const limited = throttle(String(user.id), Date.now(), 60, "pay", 20000);
     if (limited) return reply(429, { error: limited }, origin);
     if (mode === "wallet") return reply(200, { ...walletView(await getWallet(env, user.id)), owner: isOwner(env, user.id), cards: robokassaOn(env) }, origin);
@@ -1828,7 +1831,12 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(origin) });
     if (request.method !== "POST") return reply(405, { error: "Только POST." }, origin);
     if (!ALLOWED_ORIGINS.includes(origin)) return reply(403, { error: "Нельзя." }, origin);
-    return handlePost(request, env, ctx, origin);
+    // упало внутри (база недоступна и т. п.): ответ с CORS, иначе приложение видит «нет сети» вместо причины
+    try { return await handlePost(request, env, ctx, origin); }
+    catch (e) {
+      console.log(`POST упал: ${e && e.message || e}`);
+      return reply(503, { error: "Сервер на минуту прилёг. Попробуй ещё раз." }, origin);
+    }
   },
 
   async scheduled(event, env, ctx) {
