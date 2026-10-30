@@ -393,6 +393,10 @@ async function fetchJson(url, timeout = 20000) {
   }
 }
 
+// Свои тексты и база знаний: без них приложение не стартует, а мобильная сеть рвёт отдельный запрос.
+// Один повтор через секунду вместо экрана ошибки
+const ownJson = (url) => fetchJson(url).catch(() => new Promise((r) => setTimeout(r, 1000)).then(() => fetchJson(url)));
+
 async function localDict(name, min) {
   try {
     const res = await fetch(`${name}.json`, { signal: AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined });
@@ -531,6 +535,8 @@ function tabButton(tab, label) {
 }
 
 function goTab(tab) {
+  // справочники не загрузились (экран ошибки): вкладка — это ещё одна попытка, а не экран без данных
+  if (!dictionary) { if (document.querySelector("#app .error")) boot(); return; }
   if (tab === "home") navRoot("home", homeScreen);
   else if (tab === "profile") navRoot("profile", profileScreen);
   else if (tab === "match") lastAnalysis ? navRoot("match", analysisScreen, lastAnalysis) : navRoot("match", matchEmpty);
@@ -3690,14 +3696,14 @@ async function boot() {
     const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
       constants("heroes"), localDict("items", 200), localDict("abilities", 1000),
       constants("item_ids"),
-      fetchJson("knowledge.json?v=12"), fetchJson("texts.json?v=19"),
+      ownJson("knowledge.json?v=12"), ownJson("texts.json?v=19"),
     ]);
     dictionary = createDictionary({ heroes, items, abilities });
     itemIds = ids;
     knowledge = kb;
     texts = tx;
   } catch {
-    errorScreen("Не удалось загрузить данные OpenDota.", boot);
+    errorScreen("Не удалось загрузить справочники. Проверь интернет и попробуй ещё раз.", boot);
     return;
   }
   await gate;

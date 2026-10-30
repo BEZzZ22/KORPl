@@ -146,10 +146,15 @@ await context.addInitScript(([acc, other, design]) => {
   } catch { /* */ }
 }, [ACCOUNT, { match: 1, hero: "Invoker", hero_id: 74, won: true, kda: "12/3/9", t: 0, payload: { hero: "Invoker", won: true, kda: "12/3/9", duration: "41:02" } }, process.env.UI_DESIGN || ""]);
 let netDown = false;
+const localFailed = new Set();
 let busyOnce = false; // офлайн-проверка: все запросы рвутся, как без сети
 async function handleRoute(route) {
   if (netDown) return route.abort("internetdisconnected");
   const url = new URL(route.request().url());
+  // UI_LOCAL_FAIL=texts.json,items.json — свои справочники не отдались с первого раза (мобильная сеть, GitHub Pages
+  // моргнул): приложение должно повторить или взять запасной путь, а не показать ошибку. UI_LOCAL_FAIL_ALL=1 — всегда
+  const flaky = url.origin === BASE && process.env.UI_LOCAL_FAIL && process.env.UI_LOCAL_FAIL.split(",").find((f) => url.pathname.endsWith(`/${f}`));
+  if (flaky && (process.env.UI_LOCAL_FAIL_ALL || !localFailed.has(flaky))) { localFailed.add(flaky); return route.fulfill({ status: 503, body: "" }); }
   if (url.origin === BASE) return route.continue();
   if (url.hostname === "api.opendota.com") {
     // UI_CONSTANTS_DOWN=1: справочники OpenDota отдают 503, приложение должно взять их с зеркала
