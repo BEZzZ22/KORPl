@@ -1790,6 +1790,14 @@ export default {
       const form = await request.formData().catch(() => null);
       const got = form && await roboResult(env, form);
       if (!got) return new Response("bad sign", { status: 400 });
+      if (got.orphan) {
+        const o = got.orphan, who = o.order ? `, заказ на ${o.order.u} (${o.order.p})` : ", заказа в базе нет";
+        console.log(`Робокасса: оплата без заказа, счёт ${o.inv}`);
+        const text = `Оплата картой пришла, а зачислить не вышло: счёт ${o.inv}, ${o.sum} ₽${who}. Проверь в кабинете Робокассы и выдай пакет или верни деньги.`;
+        const ids = String(env.OWNER_TG_IDS || "").split(",").map((x) => x.trim()).filter(Boolean);
+        if (env.BOT_TOKEN) ctx.waitUntil(Promise.all(ids.map((id) => sendTelegram(env, "sendMessage", { chat_id: Number(id), text }).catch(() => false))));
+        return new Response(got.ok);
+      }
       if (got.pack && env.BOT_TOKEN) ctx.waitUntil(sendTelegram(env, "sendMessage", { chat_id: Number(got.user), text: thanksText(got.pack, got.wallet), reply_markup: appButton }).catch(() => false));
       return new Response(got.ok);
     }

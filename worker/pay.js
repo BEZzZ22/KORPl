@@ -197,8 +197,14 @@ export const robokassaOn = (env) => Boolean(env.ROBOKASSA_LOGIN && env.ROBOKASSA
 export async function roboLink(env, pack, user, now = Date.now()) {
   const p = PACKS[pack];
   if (!p || !robokassaOn(env)) return null;
-  const inv = Number(`${Math.floor(now / 1000)}${Math.floor(Math.random() * 90 + 10)}`) % 2147483647; // InvId — int32
-  await env.COACH_KV.put(`robo:${inv}`, JSON.stringify({ u: String(user.id), p: pack, n: user.first_name, un: user.username }), { expirationTtl: 3 * 86400 });
+  // InvId — int32. Два счёта в одну секунду с одним хвостом перетёрли бы заказ: оплата ушла бы не тому
+  let inv;
+  for (let i = 0; i < 5; i++) {
+    inv = Number(`${Math.floor(now / 1000)}${Math.floor(Math.random() * 90 + 10)}`) % 2147483647;
+    if (!(await env.COACH_KV.get(`robo:${inv}`))) break;
+  }
+  // СБП и банк иногда подтверждают оплату через сутки и позже: заказ храним с запасом
+  await env.COACH_KV.put(`robo:${inv}`, JSON.stringify({ u: String(user.id), p: pack, n: user.first_name, un: user.username }), { expirationTtl: 30 * 86400 });
   const sum = p.rub.toFixed(2);
   // чек для «Робочеков СМЗ»: одна позиция, без НДС
   const receipt = encodeURIComponent(JSON.stringify({ items: [{ name: p.title, quantity: 1, sum: p.rub, tax: "none" }] }));
@@ -215,7 +221,9 @@ export async function roboResult(env, form, now = Date.now()) {
   if (!robokassaOn(env) || !sum || !/^\d{1,10}$/.test(inv)) return null;
   if (sig !== await md5hex(`${sum}:${inv}:${env.ROBOKASSA_PASS2}`)) return null;
   const order = await env.COACH_KV.get(`robo:${inv}`, "json");
-  if (!order || !PACKS[order.p] || Math.abs(Number(sum) - PACKS[order.p].rub) > 0.009) return null;
+  // подпись верна, а заказа нет или сумма не та: деньги уже списаны — не молчим, а зовём владельца разобраться руками.
+  // Ответ OK, иначе Робокасса будет повторять, а владельцу прилетит по сообщению на каждый повтор
+  if (!order || !PACKS[order.p] || Math.abs(Number(sum) - PACKS[order.p].rub) > 0.009) return { ok: `OK${inv}`, orphan: { inv, sum, order } };
   const got = await credit(env, order.u, order.p, `rk${inv}`, { r: Number(sum), n: order.n || "", un: order.un || "" }, now);
   return { ok: `OK${inv}`, user: order.u, ...got };
 }
