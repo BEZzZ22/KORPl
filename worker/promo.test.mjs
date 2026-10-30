@@ -32,3 +32,17 @@ test("promo: у бота {e:ключ} становится обычным сим
   const emoji = { fire: { char: "🔥", id: 5 } };
   assert.equal(plain("{e:fire} <b>Тест</b> {e:нет}", emoji), "🔥 Тест {e:нет}");
 });
+
+import { ytDue } from "./kick.js";
+
+test("пинок Shorts: только наступивший, не вышедший и не снятый ролик, и не раньше 5 ч после прошлого", () => {
+  const queue = [
+    { id: "old", at: "2026-10-28T15:00:00Z", retired: "снят" },
+    { id: "a", at: "2026-10-30T15:33:00Z" },
+    { id: "b", at: "2026-10-31T14:48:00Z" },
+  ];
+  const posted = { x: { at: "2026-10-29T20:19:00Z" } };
+  assert.equal(ytDue(queue, posted, Date.parse("2026-10-30T15:00:00Z")), null);
+  assert.equal(ytDue(queue, posted, Date.parse("2026-10-30T15:45:00Z")).id, "a");
+  assert.equal(ytDue(queue, { ...posted, a: { at: "2026-10-30T15:46:00Z" } }, Date.parse("2026-10-30T18:00:00Z")), null);
+});
