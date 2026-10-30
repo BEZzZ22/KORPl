@@ -114,6 +114,14 @@ test("D1 упала — запрос не падает, работает KV", as
   await env.COACH_KV.put("user:1", "{}");
   assert.equal(await env.COACH_KV.get("user:1"), "{}");
   assert.equal((await env.COACH_KV.list({ prefix: "user:" })).keys.length, 1);
+  // деньги в KV не уходят: иначе оплата пропала бы, когда D1 вернётся
+  const log = console.log;
+  console.log = () => {};
+  try {
+    await assert.rejects(env.COACH_KV.put("wallet:1", "{}"));
+    await assert.rejects(env.COACH_KV.get("pay:abc"));
+  } finally { console.log = log; }
+  assert.equal(await kv.get("wallet:1"), null);
 });
 
 test("просроченное чистится", async () => {
