@@ -7,6 +7,7 @@
 // Официальный лор героев с dota2.com (tools/fetch-lore.mjs): тренер рассказывает историю героя по нему, а не выдумывает
 import LORE from "./lore.json" with { type: "json" };
 import { withStore, migrateStep, purgeExpired } from "./store.js";
+import { spendUnit, spendChat, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT } from "./pay.js";
 
 const ALLOWED_ORIGINS = ["https://bezzz22.github.io"];
 const GEMINI_MODEL = "gemini-flash-lite-latest";
@@ -187,6 +188,25 @@ async function takeQuota(env, user, ip, kind) {
   const owner = user && user.id && String(env.OWNER_TG_IDS || "").split(",").map((x) => x.trim()).includes(String(user.id));
   if (owner) return { left: limit, refund: async () => {} };
   return takeAsk(env, user && user.id ? `tg${user.id}` : `ip${ip}`, Date.now(), limit, kind);
+}
+
+// Платный тренер (pay.js): платит аккаунт Телеграма, вне Телеграма тренера нет. Владелец бесплатно.
+// PAYWALL=off в переменных воркера — выключатель: тогда снова суточные лимиты, как до оплаты
+const PAYWALL_TEXT = "Бесплатные разборы тренера закончились. Возьми пакет или подписку, и тренер продолжит.";
+const NO_TG_TEXT = "Тренер работает в приложении в Телеграме: открой его через @DotaRazbor_bot.";
+const paywallOn = (env) => Boolean(env.COACH_KV && env.BOT_TOKEN) && env.PAYWALL !== "off";
+async function unitOf(prefix, match, fallback) {
+  return Number.isInteger(Number(match)) && Number(match) > 1e6 ? `${prefix}${Number(match)}` : `${prefix}h${(await sha256(JSON.stringify(fallback))).slice(0, 16)}`;
+}
+// Вернёт { refund, left? } — можно отвечать; или { status, body } — отказ
+async function payFor(env, raw, kind, unit) {
+  const user = await telegramUser(raw.initData, env.BOT_TOKEN);
+  if (!user || !user.id) return { status: 403, body: { error: NO_TG_TEXT } };
+  if (isOwner(env, user.id)) return { refund: async () => {} };
+  const r = kind === "chat" ? await spendChat(env, user.id, unit) : await spendUnit(env, user.id, unit);
+  if (r.paywall) return { status: 402, body: { error: PAYWALL_TEXT, paywall: true, wallet: r.wallet } };
+  if (r.limit) return { status: 429, body: { error: r.text } };
+  return r;
 }
 
 const duration = (d) => (Number.isFinite(Number(d)) && Number(d) > 0 ? `${Math.round(Number(d) / 60)} мин` : clip(d, 12));
@@ -789,6 +809,14 @@ async function sendTelegram(env, method, body) {
   });
   return res.ok;
 }
+// То же, но с результатом метода (ссылка на счёт и т. п.); ошибка — null
+async function tgCall(env, method, body) {
+  const res = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/${method}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(10000),
+  }).catch(() => null);
+  const data = res && await res.json().catch(() => null);
+  return data && data.ok ? data.result : null;
+}
 
 // Крон: у кого реплей разобрался, пишем в личку с кнопкой открыть разбор. Не дождались — тоже пишем, а не молчим
 export async function checkWatches(env, now = Date.now()) {
@@ -1103,12 +1131,12 @@ const EVENT_LABELS = {
   analysis: "разборов", coach: "с тренером", chat: "вопросов тренеру", compare: "сравнений", replay: "реплеев",
   share: "поделились", link: "привязали аккаунт", profile: "профиль", hero_stats: "статы героя", draft: "драфт",
   blame: "«кто слил»", share_blame: "поделились итогом матча", demo: "смотрели пример", disagree_blame: "не согласны с «кто слил»",
-  design_v2: "включили новый дизайн", design_classic: "вернули классику",
+  design_v2: "включили новый дизайн", design_classic: "вернули классику", paid: "оплатили тренера", paywall: "упёрлись в оплату",
 };
 const STEP_LABELS = {
   home: "главная", home_list: "список игр", home_empty: "«матчей не видно»", match: "открыл матч", link_bad_empty: "пустой ID", link_bad_vanity: "ссылка с ником", link_bad_url: "не та ссылка", link_bad_num: "не те цифры", link_bad_text: "ввёл ник", empty_retry: "жмёт «Проверить снова»", empty_found: "матчи нашлись", match_parsing: "ждёт разбор реплея",
   analysis: "разбор", not_yours: "чужой матч", link: "привязал аккаунт", link_bad: "неверный ID", link_unknown: "OpenDota не знает аккаунт", link_anyway: "привязал неизвестный ID", write_ok: "разрешил сообщения бота", write_no: "запретил сообщения бота",
-  profile: "профиль", hero_stats: "статы героя", draft: "драфт", coach: "тренер", chat: "вопрос тренеру", compare: "сравнение",
+  profile: "профиль", hero_stats: "статы героя", draft: "драфт", coach: "тренер", chat: "вопрос тренеру", compare: "сравнение", buy: "открыл оплату", paywall: "упёрся в оплату",
   replay: "реплей", share: "поделился", blame: "«кто слил»", share_blame: "поделился итогом", demo: "пример разбора", disagree_blame: "не согласен", err_opendota: "ОШИБКА OpenDota", err_no_match: "ОШИБКА нет матча", err_replay: "ОШИБКА реплей",
   err_parse: "ОШИБКА разбора", err_boot: "ОШИБКА загрузки", err_other: "ОШИБКА",
   design_v2: "новый дизайн", design_classic: "классика",
@@ -1199,6 +1227,13 @@ export async function buildReport(env, now = Date.now(), day = mskDay(now - 8640
     const stuck = [["home_empty", "видели «матчей не видно» (закрыт профиль в Доте)"], ["link_unknown", "OpenDota не нашла аккаунт"], ["not_yours", "открыли чужой матч"]]
       .map(([k, t]) => [t, [...today.values()].filter((a) => (a.e || {})[k]).length]).filter(([, n]) => n);
     if (stuck.length) lines.push(`Застряли: ${stuck.map(([t, n]) => `${t} — ${n}`).join(", ")}`);
+  }
+  // оплаты звёздами за день (pay.js), возвраты отмечены
+  const paid = (await listAll(env, `paid:${day}:`)).filter((k) => k.metadata);
+  if (paid.length) {
+    const stars = paid.reduce((a, k) => a + (Number(k.metadata.s) || 0), 0);
+    lines.push("", `Оплаты: ${paid.length} на ${stars} звёзд`);
+    for (const k of paid.slice(0, 10)) lines.push(`— ${who({ n: k.metadata.n, u: k.metadata.un }, k.metadata.u)}: ${k.metadata.p}, ${k.metadata.s} зв. (${k.name.split(":").pop()})`);
   }
   const fb = (await listAll(env, `fb:${day}:`)).filter((k) => k.metadata && !isOwner(env, k.name.split(":").pop()));
   if (fb.length) {
@@ -1297,7 +1332,7 @@ export async function dailyReport(env, now = Date.now()) {
 // Апдейты бота приходят вебхуком на /tg (крон сам ставит его один раз). Отчёт — только владельцу в личке,
 // остальным приветствие с кнопкой приложения. «отчёт» — за сегодня до текущей минуты, «отчёт вчера», «отчёт 26.10»
 const WORKER_URL = "https://dotacoach.2007rggg.workers.dev";
-const WEBHOOK_VERSION = "1";
+const WEBHOOK_VERSION = "2"; // меняется вместе с allowed_updates: крон переставит вебхук
 async function webhookSecret(token) {
   const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`tg-hook:${token}`)));
   return [...hash.slice(0, 20)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -1307,7 +1342,7 @@ export async function ensureWebhook(env) {
   if (!env.COACH_KV || !env.BOT_TOKEN) return false;
   if ((await env.COACH_KV.get("tg_webhook")) === WEBHOOK_VERSION) return true;
   const ok = await sendTelegram(env, "setWebhook", {
-    url: `${env.WORKER_URL || WORKER_URL}/tg`, secret_token: await webhookSecret(env.BOT_TOKEN), allowed_updates: ["message"], drop_pending_updates: true,
+    url: `${env.WORKER_URL || WORKER_URL}/tg`, secret_token: await webhookSecret(env.BOT_TOKEN), allowed_updates: ["message", "pre_checkout_query"], drop_pending_updates: true,
   }).catch(() => false);
   if (ok) await env.COACH_KV.put("tg_webhook", WEBHOOK_VERSION);
   return ok;
@@ -1345,8 +1380,29 @@ async function greet(env, msg) {
 }
 
 export async function handleBotUpdate(env, update, now = Date.now()) {
+  // оплата звёздами: подтвердить счёт (Телеграм ждёт до 10 с), потом зачислить
+  if (update && update.pre_checkout_query) {
+    const ok = await sendTelegram(env, "answerPreCheckoutQuery", checkout(update.pre_checkout_query)).catch(() => false);
+    return { checkout: ok ? 1 : 0 };
+  }
   const msg = update && update.message;
   if (!msg || !msg.from || !msg.chat || msg.chat.type !== "private") return null;
+  if (msg.successful_payment) {
+    const got = await grant(env, msg, now);
+    if (got && got.pack) await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: thanksText(got.pack, got.wallet), reply_markup: appButton }).catch(() => false);
+    return got;
+  }
+  const cmd = String(msg.text || "").trim();
+  if (/^\/paysupport(?:@\w+)?$/i.test(cmd) || /^\/terms(?:@\w+)?$/i.test(cmd)) {
+    await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: /^\/terms/i.test(cmd) ? TERMS_TEXT : PAYSUPPORT_TEXT }).catch(() => false);
+    return { info: 1 };
+  }
+  const back = isOwner(env, msg.from.id) && /^\/refund(?:@\w+)?\s+(\S+)$/i.exec(cmd);
+  if (back) {
+    const text = await refund(env, (m, b) => tgCall(env, m, b), back[1], now);
+    await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text }).catch(() => false);
+    return { refund: text };
+  }
   const day = isOwner(env, msg.from.id) ? reportCommandDay(msg.text, now) : null;
   if (!day) return greet(env, msg);
   try { return await sendReport(env, now, day, [msg.chat.id]); }
@@ -1489,6 +1545,19 @@ async function handlePost(request, env, ctx, origin) {
     return reply(200, { ok: true }, origin);
   }
 
+  // Кошелёк тренера и покупка: счёт на звёзды, приложение открывает его через Telegram.WebApp.openInvoice
+  if (mode === "wallet" || mode === "buy") {
+    if (!paywallOn(env)) return reply(200, { off: true }, origin);
+    const user = await telegramUser(raw.initData, env.BOT_TOKEN);
+    if (!user || !user.id) return reply(403, { error: NO_TG_TEXT }, origin);
+    const limited = throttle(String(user.id), Date.now(), 60, "pay", 20000);
+    if (limited) return reply(429, { error: limited }, origin);
+    if (mode === "wallet") return reply(200, { ...walletView(await getWallet(env, user.id)), owner: isOwner(env, user.id) }, origin);
+    if (!PACKS[raw.pack]) return reply(400, { error: "Нет такого пакета." }, origin);
+    const link = await invoiceLink((m, b) => tgCall(env, m, b), raw.pack, user.id);
+    return link ? reply(200, { link }, origin) : reply(502, { error: "Телеграм не выдал счёт. Попробуй ещё раз." }, origin);
+  }
+
   if (!env.CLAUDE_API_KEY && !env.GEMINI_API_KEY && !env.GROQ_API_KEY) return reply(500, { error: "Тренер ещё не настроен." }, origin);
 
   if (mode === "chat" || mode === "compare") {
@@ -1499,13 +1568,20 @@ async function handlePost(request, env, ctx, origin) {
     if (limited) return reply(429, { error: limited }, origin);
     // Человек — аккаунт Телеграма по подписанной initData, вне Телеграма — IP
     let quota = null;
-    if (env.COACH_KV) {
+    if (paywallOn(env)) {
+      // сравнение — своя единица на пару каток, порядок не важен
+      const pair = mode === "compare" ? [Number(raw.a.match_id), Number(raw.b.match_id)].sort((x, y) => x - y) : [];
+      const unit = mode === "chat" ? await unitOf("m", raw.summary.match_id, raw.summary)
+        : pair.every((x) => Number.isInteger(x) && x > 1e6) ? `c${pair.join("-")}` : await unitOf("c", 0, [raw.a, raw.b]);
+      quota = await payFor(env, raw, mode, unit);
+      if (quota.status) return reply(quota.status, quota.body, origin);
+    } else if (env.COACH_KV) {
       const user = env.BOT_TOKEN ? await telegramUser(raw.initData, env.BOT_TOKEN) : null;
       const limit = Number(env.ASK_PER_USER_DAY) || ASK_PER_USER_DAY;
       quota = await takeQuota(env, user, ip, mode);
       if (!quota) return reply(429, { error: limitText(mode, limit), left: 0 }, origin);
     }
-    const left = quota ? { left: quota.left } : {};
+    const left = quota ? { ...(quota.left != null ? { left: quota.left } : {}), ...(quota.wallet ? { wallet: quota.wallet } : {}) } : {};
     try {
       if (mode === "compare") {
         const text = await compare(run, raw.a, raw.b);
@@ -1537,7 +1613,11 @@ async function handlePost(request, env, ctx, origin) {
   // 5 разборов тренера в сутки на человека (аккаунт Телеграма, вне него — IP); владелец без лимита.
   // Фоновый заход Opus после быстрого разбора (cont) — продолжение, квоту не берёт; ответ из кэша тоже
   let quota = null;
-  if (env.COACH_KV && !(tier === "opus" && raw.cont)) {
+  if (paywallOn(env)) {
+    // платный тренер: катка открывается один раз — второй заход за Opus и чат по ней уже не списывают
+    quota = await payFor(env, raw, "coach", await unitOf("m", raw.match_id, prompt));
+    if (quota.status) return reply(quota.status, quota.body, origin);
+  } else if (env.COACH_KV && !(tier === "opus" && raw.cont)) {
     const user = env.BOT_TOKEN && raw.initData ? await telegramUser(raw.initData, env.BOT_TOKEN) : null;
     quota = await takeQuota(env, user, ip, "coach");
     if (!quota) return reply(429, { error: limitText("coach", Number(env.ASK_PER_USER_DAY) || ASK_PER_USER_DAY), left: 0 }, origin);
@@ -1554,7 +1634,7 @@ async function handlePost(request, env, ctx, origin) {
     // в общий ключ — только ответ Opus: его потом получают и быстрые заходы
     const opus = meter.by_name === "askClaude";
     if (hash) later(env.COACH_KV.put(opus || !tier ? `coach:${hash}` : cacheKey, text, { expirationTtl: COACH_CACHE_TTL }));
-    const out = { text, ...(opus ? { opus: true } : {}), ...(quota ? { left: quota.left } : {}) };
+    const out = { text, ...(opus ? { opus: true } : {}), ...(quota && quota.left != null ? { left: quota.left } : {}), ...(quota && quota.wallet ? { wallet: quota.wallet } : {}) };
     return reply(200, env.COACH_DEBUG ? { ...out, log: meter.log } : out, origin, meter.by_name);
   } catch (e) {
     console.warn(`coach ${tier || "all"} 502: ${(e.log || []).join(" | ")}`);

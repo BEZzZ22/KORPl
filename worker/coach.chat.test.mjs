@@ -224,7 +224,7 @@ test("fetch: разбор кэшируется в KV, второй раз без
 test("fetch: 3 вопроса тренеру в сутки на человека, ошибка модели лимит не тратит", async (t) => {
   t.after(restore);
   const kv = fakeKV();
-  const e = { ...env, COACH_KV: kv, BOT_TOKEN: "123:abc", ASK_PER_USER_DAY: "3" };
+  const e = { ...env, COACH_KV: kv, BOT_TOKEN: "123:abc", ASK_PER_USER_DAY: "3", PAYWALL: "off" };
   const init = await signInit({ auth_date: String(Math.floor(Date.now() / 1000)), user: JSON.stringify({ id: 7 }) }, "123:abc");
   const ask = (ip) => worker.fetch(req({ mode: "chat", summary: raw, question: "что делать на линии?", initData: init }, ip), e);
   // упал Opus и все запасные: вопрос не засчитан
@@ -686,7 +686,7 @@ test("fetch: быстрый заход без Opus, заход Opus только
 test("fetch: у владельца нет суточного лимита вопросов, у остальных есть", async (t) => {
   t.after(restore);
   const kv = fakeKV();
-  const e = { ...env, COACH_KV: kv, BOT_TOKEN: "123:abc", OWNER_TG_IDS: "7", ASK_PER_USER_DAY: "1" };
+  const e = { ...env, COACH_KV: kv, BOT_TOKEN: "123:abc", OWNER_TG_IDS: "7", ASK_PER_USER_DAY: "1", PAYWALL: "off" };
   const now = String(Math.floor(Date.now() / 1000));
   const owner = await signInit({ auth_date: now, user: JSON.stringify({ id: 7 }) }, "123:abc");
   const other = await signInit({ auth_date: now, user: JSON.stringify({ id: 8 }) }, "123:abc");
@@ -704,7 +704,7 @@ test("fetch: у владельца нет суточного лимита воп
 test("fetch: у каждого вида своя суточная квота — разбор, вопрос, сравнение по 5, у владельца без лимита", async (t) => {
   t.after(restore);
   const kv = fakeKV();
-  const e = { ...env, COACH_KV: kv, BOT_TOKEN: "123:abc", OWNER_TG_IDS: "7", ASK_PER_USER_DAY: "2", COACH_IP_LIMIT: "100", RATE_PER_MIN: "1000" };
+  const e = { ...env, COACH_KV: kv, BOT_TOKEN: "123:abc", OWNER_TG_IDS: "7", ASK_PER_USER_DAY: "2", COACH_IP_LIMIT: "100", RATE_PER_MIN: "1000", PAYWALL: "off" };
   const now = String(Math.floor(Date.now() / 1000));
   const user = await signInit({ auth_date: now, user: JSON.stringify({ id: 8 }) }, "123:abc");
   const boss = await signInit({ auth_date: now, user: JSON.stringify({ id: 7 }) }, "123:abc");
@@ -768,4 +768,97 @@ test("OpenDota через воркер: кэш неразобранного ма
 test("OpenDota через воркер: только со своего сайта", async () => {
   const res = await worker.fetch(new Request("https://coach.example/od/matches/9052987576", { headers: { Origin: "https://evil.example" } }), {});
   assert.equal(res.status, 403);
+});
+
+// ---------- платный тренер (pay.js) ----------
+
+test("платный тренер: 1 пробный разбор, дальше 402 с пакетами; второй заход и чат по той же катке бесплатно", async (t) => {
+  t.after(restore);
+  const kv = fakeKV();
+  const e = { ...env, COACH_KV: kv, BOT_TOKEN: "123:abc", OWNER_TG_IDS: "7", COACH_IP_LIMIT: "100", RATE_PER_MIN: "1000" };
+  const now = String(Math.floor(Date.now() / 1000));
+  const user = await signInit({ auth_date: now, user: JSON.stringify({ id: 8 }) }, "123:abc");
+  const boss = await signInit({ auth_date: now, user: JSON.stringify({ id: 7 }) }, "123:abc");
+  const coach = async (init, match, extra = {}) => {
+    mockFetch({ groq: [okChoice(good)], claude: [sse(good)] });
+    return worker.fetch(req({ ...raw, kda: `1/${match}/2`, match_id: 9000000000 + match, tier: "fast", initData: init, ...extra }), e);
+  };
+  // вне Телеграма тренера нет
+  assert.equal((await coach("", 1)).status, 403);
+  // ошибка модели пробный не тратит
+  mockFetch({ groq: [new Response("x", { status: 500 }), new Response("x", { status: 500 })], gemini: [new Response("x", { status: 500 }), new Response("x", { status: 500 })] });
+  assert.equal((await worker.fetch(req({ ...raw, kda: "1/2/2", match_id: 9000000002, tier: "fast", initData: user }), e)).status, 502);
+  const first = await (await coach(user, 1)).json();
+  assert.equal(first.wallet.free_left, 0);
+  // Opus по той же катке — уже открыта
+  assert.equal((await coach(user, 1, { tier: "opus", cont: true })).status, 200);
+  const wall = await coach(user, 3);
+  assert.equal(wall.status, 402);
+  const body = await wall.json();
+  assert.equal(body.paywall, true);
+  assert.deepEqual(body.wallet.packs.map((p) => p.id), ["p10", "month"]);
+  // чат по открытой катке — бесплатно, по закрытой — 402
+  mockFetch({ claude: [sse("Ответ.")] });
+  const chatOk = await worker.fetch(req({ mode: "chat", summary: { ...raw, match_id: 9000000001 }, question: "что делать на линии?", initData: user }), e);
+  assert.equal(chatOk.status, 200);
+  assert.equal((await chatOk.json()).left, 14);
+  assert.equal((await worker.fetch(req({ mode: "chat", summary: { ...raw, match_id: 9000000005 }, question: "что делать?", initData: user }), e)).status, 402);
+  // владелец не платит
+  for (let n = 10; n < 14; n++) assert.equal((await coach(boss, n)).status, 200);
+});
+
+test("платный тренер: счёт, проверка, зачисление один раз, кошелёк и возврат", async (t) => {
+  t.after(restore);
+  const { handleBotUpdate } = await import("./coach.js");
+  const kv = fakeKV();
+  const e = { ...env, COACH_KV: kv, BOT_TOKEN: "123:abc", OWNER_TG_IDS: "7", RATE_PER_MIN: "1000" };
+  const init = await signInit({ auth_date: String(Math.floor(Date.now() / 1000)), user: JSON.stringify({ id: 8 }) }, "123:abc");
+  let calls = mockFetch({ tg: [new Response(JSON.stringify({ ok: true, result: "https://t.me/$abc" }))] });
+  const buy = await (await worker.fetch(req({ mode: "buy", pack: "p10", initData: init }), e)).json();
+  assert.equal(buy.link, "https://t.me/$abc");
+  const inv = calls[0].body;
+  assert.equal(inv.currency, "XTR");
+  assert.equal(inv.prices[0].amount, 49);
+  assert.equal(inv.payload, "p10:8");
+  assert.equal((await worker.fetch(req({ mode: "buy", pack: "free", initData: init }), e)).status, 400);
+  // pre_checkout: сумма и покупатель должны совпасть со счётом
+  calls = mockFetch({ tg: [new Response("{}"), new Response("{}")] });
+  await handleBotUpdate(e, { pre_checkout_query: { id: "q1", from: { id: 8 }, currency: "XTR", total_amount: 49, invoice_payload: "p10:8" } });
+  await handleBotUpdate(e, { pre_checkout_query: { id: "q2", from: { id: 9 }, currency: "XTR", total_amount: 49, invoice_payload: "p10:8" } });
+  assert.equal(calls[0].body.ok, true);
+  assert.equal(calls[1].body.ok, false);
+  // зачисление; повтор того же платежа ничего не добавляет
+  const paid = { message: { chat: { id: 8, type: "private" }, from: { id: 8, first_name: "Ax" }, successful_payment: { currency: "XTR", total_amount: 49, invoice_payload: "p10:8", telegram_payment_charge_id: "ch1" } } };
+  mockFetch({ tg: [new Response("{}"), new Response("{}")] });
+  assert.equal((await handleBotUpdate(e, paid)).wallet.credits, 10);
+  assert.equal((await handleBotUpdate(e, paid)).dup, true);
+  mockFetch({});
+  const w = await (await worker.fetch(req({ mode: "wallet", initData: init }), e)).json();
+  assert.equal(w.credits, 10);
+  assert.equal(w.free_left, 1);
+  // возврат по команде владельца снимает пакет
+  calls = mockFetch({ tg: [new Response(JSON.stringify({ ok: true, result: true })), new Response("{}")] });
+  const back = await handleBotUpdate(e, { message: { chat: { id: 7, type: "private" }, from: { id: 7 }, text: "/refund ch1" } });
+  assert.match(back.refund, /Вернул 49/);
+  assert.equal(calls[0].body.telegram_payment_charge_id, "ch1");
+  mockFetch({});
+  assert.equal((await (await worker.fetch(req({ mode: "wallet", initData: init }), e)).json()).credits, 0);
+});
+
+test("платный тренер: подписка — до 10 разборов в сутки, PAYWALL=off выключает оплату", async (t) => {
+  t.after(restore);
+  const { spendUnit } = await import("./pay.js");
+  const kv = fakeKV();
+  const e = { COACH_KV: kv };
+  const now = Date.parse("2026-11-01T12:00:00+03:00");
+  await kv.put("wallet:8", JSON.stringify({ c: 0, until: now + 86400000, free: 1 }));
+  for (let i = 0; i < 10; i++) assert.equal((await spendUnit(e, "8", `m${i}`, now)).how, "sub");
+  assert.equal((await spendUnit(e, "8", "m99", now)).limit, true);
+  assert.equal((await spendUnit(e, "8", "m3", now)).how, "open");
+  // назавтра снова можно
+  assert.equal((await spendUnit(e, "8", "m100", now + 86400000 - 1000)).how, "sub");
+  mockFetch({});
+  const init = await signInit({ auth_date: String(Math.floor(Date.now() / 1000)), user: JSON.stringify({ id: 8 }) }, "123:abc");
+  const off = await (await worker.fetch(req({ mode: "wallet", initData: init }), { ...env, COACH_KV: fakeKV(), BOT_TOKEN: "123:abc", PAYWALL: "off" })).json();
+  assert.equal(off.off, true);
 });

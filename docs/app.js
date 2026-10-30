@@ -1671,14 +1671,10 @@ function stat(value, label) {
 // ---------- тренер на Opus (через воркер из worker/coach.js) ----------
 
 const COACH_URL = "https://dotacoach.2007rggg.workers.dev"; // адрес воркера с тренером
-const COACH_DAILY = 5; // разборов тренера в день на устройство
-const OWNER_ACCOUNT = 801280038; // владелец приложения: лимитов тренера у него нет
+const OWNER_ACCOUNT = 801280038; // владелец приложения: тренер для него бесплатный
 const isOwner = async () => Number(await storage.get("account_id")) === OWNER_ACCOUNT;
-const COACH_LIMIT_NOTE = `Лимит: ${COACH_DAILY} разборов тренера в сутки. Новые после полуночи по Москве.`;
-const CHAT_DAILY = 5; // вопросов тренеру (чат и сравнение) в сутки по Москве; сервер считает то же на аккаунт
-const CHAT_LIMIT_TEXT = `Лимит: ${CHAT_DAILY} ${plural(CHAT_DAILY, "вопрос", "вопроса", "вопросов")} тренеру в сутки. Новые после полуночи по Москве.`;
-const COMPARE_LIMIT_TEXT = `Лимит: ${CHAT_DAILY} сравнений каток в сутки. Новые после полуночи по Москве.`;
-const chatLeftText = (n) => n > 0 ? `${plural(n, "Остался", "Осталось", "Осталось")} ${n} ${plural(n, "вопрос", "вопроса", "вопросов")} на сегодня.` : CHAT_LIMIT_TEXT;
+const CHAT_PER_MATCH = 15; // вопросов тренеру по одной катке (сервер считает то же)
+const chatLeftText = (n) => n > 0 ? `По этой катке ${plural(n, "остался", "осталось", "осталось")} ${n} ${plural(n, "вопрос", "вопроса", "вопросов")}.` : "Вопросы по этой катке закончились.";
 const COACH_TIMEOUT = 75000;
 const OPUS_WAIT = 110000;      // заход Opus в фоне: посредник думает 30–70 с, иногда дольше
 const OPUS_RETRY = 30 * 60000; // не чаще раза в полчаса пробуем заменить быстрый разбор разбором Opus
@@ -1691,14 +1687,6 @@ const safeLocal = {
 };
 const localJson = (key, fallback) => { try { return JSON.parse(safeLocal.get(key) || "null") ?? fallback; } catch { return fallback; } };
 
-// Счётчик на сутки по Москве: [использовано, записать (по умолчанию +1)]
-function dailyCounter(name) {
-  const day = new Date(Date.now() + 3 * 3600_000).toISOString().slice(0, 10);
-  const used = safeLocal.get(`${name}_day`) === day ? Number(safeLocal.get(`${name}_n`) || 0) : 0;
-  return [used, (n = used + 1) => { safeLocal.set(`${name}_day`, day); safeLocal.set(`${name}_n`, String(n)); }];
-}
-// Сколько вопросов потрачено по словам сервера: он считает на аккаунт, а не на телефон
-const chatUsed = (data) => (Number.isInteger(data.left) ? CHAT_DAILY - data.left : undefined);
 
 // Запрос к воркеру. Ошибка с текстом воркера помечена fromCoach, остальные переводятся на русский
 async function postCoach(body, timeout = COACH_TIMEOUT) {
@@ -1708,11 +1696,85 @@ async function postCoach(body, timeout = COACH_TIMEOUT) {
   try {
     const res = await fetch(COACH_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: ctrl.signal });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw Object.assign(new Error(data.error || "Тренер сейчас недоступен."), { fromCoach: true, status: res.status });
+    if (!res.ok) throw Object.assign(new Error(data.error || "Тренер сейчас недоступен."), { fromCoach: true, status: res.status, wallet: data.wallet });
     return data;
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ---------- платный тренер: звёзды Телеграма (воркер, worker/pay.js) ----------
+
+let walletState = null; // последний ответ воркера: пробные, пакеты, подписка
+async function getWallet(refresh = false) {
+  if (!tg || !tg.initData || !COACH_URL) return null;
+  if (walletState && !refresh) return walletState;
+  try {
+    const w = await postCoach({ mode: "wallet", initData: tg.initData }, 10000);
+    walletState = w && !w.off ? w : null;
+  } catch { /* нет связи — покажем, когда тренер ответит */ }
+  return walletState;
+}
+const dateRu = (ms) => new Date(ms + 3 * 3600_000).toISOString().slice(0, 10).split("-").reverse().join(".");
+// Строка под кнопкой тренера: что осталось
+function walletLine(w) {
+  if (!w) return "";
+  if (w.owner) return "Для тебя тренер бесплатный.";
+  if (w.until) return `Подписка до ${dateRu(w.until)}, сегодня ${plural(w.sub_left, "остался", "осталось", "осталось")} ${w.sub_left} ${plural(w.sub_left, "разбор", "разбора", "разборов")}.`;
+  if (w.free_left) return `${plural(w.free_left, "Бесплатный", "Бесплатных", "Бесплатных")}: ${w.free_left} ${plural(w.free_left, "разбор", "разбора", "разборов")}, потом по пакету или подписке.`;
+  if (w.credits) return `На счету ${w.credits} ${plural(w.credits, "разбор", "разбора", "разборов")} тренера.`;
+  return "Бесплатные разборы закончились: тренер по пакету или подписке.";
+}
+
+// Покупка: счёт от воркера, оплата в окне Телеграма. onPaid — когда звёзды дошли и кошелёк обновился
+function paywallBlock(onPaid, text = "Бесплатные разборы тренера закончились.") {
+  const status = h("p", { class: "small muted", role: "status" });
+  const packs = (walletState && walletState.packs) || [];
+  const buy = async (pack, btn) => {
+    if (!tg || !tg.openInvoice) { status.textContent = "Оплата работает в приложении Телеграма. Обнови Телеграм."; return; }
+    btn.disabled = true;
+    status.textContent = "Открываю оплату…";
+    step("buy");
+    try {
+      const { link } = await postCoach({ mode: "buy", pack: pack.id, initData: tg.initData }, 15000);
+      tg.openInvoice(link, async (result) => {
+        btn.disabled = false;
+        if (result === "cancelled") { status.textContent = ""; return; }
+        if (result === "failed") { status.textContent = "Оплата не прошла. Звёзды не списаны."; return; }
+        // paid или pending: зачисление приходит вебхуком через пару секунд
+        status.textContent = "Оплата прошла, открываю тренера…";
+        track("paid");
+        for (let i = 0; i < 6; i++) {
+          await new Promise((r) => setTimeout(r, 1500));
+          const w = await getWallet(true);
+          if (w && (w.credits || w.until || w.owner)) { haptic("heavy"); onPaid(w); return; }
+        }
+        status.textContent = "Звёзды списаны, но зачисление задерживается. Открой катку ещё раз через минуту, а если не поможет — напиши боту /paysupport.";
+      });
+      status.textContent = "";
+    } catch (e) {
+      btn.disabled = false;
+      status.textContent = coachError(e);
+    }
+  };
+  return h("div", { class: "paywall" },
+    h("p", { class: "paywall-title" }, text),
+    h("p", { class: "small muted" }, "Разбор катки, карта и «Кто слил» остаются бесплатными. Платный только ИИ-тренер: разбор моментов, задачи, чат и сравнение каток."),
+    h("div", { class: "paywall-packs" }, ...packs.map((p) => {
+      const btn = h("button", { class: `paywall-pack${p.days ? " best" : ""}`, type: "button" },
+        h("b", {}, p.days ? "Месяц тренера" : `${p.credits} ${plural(p.credits, "разбор", "разбора", "разборов")}`),
+        h("span", { class: "paywall-sub" }, p.days ? "до 10 разборов в сутки" : "не сгорают"),
+        h("span", { class: "paywall-price" }, `${p.stars} ⭐`));
+      btn.onclick = () => { haptic(); buy(p, btn); };
+      return btn;
+    })),
+    status,
+    h("p", { class: "small muted" }, "Оплата звёздами Телеграма. Вопросы по оплате — боту, команда /paysupport."));
+}
+// 402 от воркера: кошелёк в ответе, показываем покупку
+function isPaywall(e) {
+  if (e && e.status === 402) { if (e.wallet) walletState = { ...walletState, ...e.wallet }; track("paywall"); step("paywall"); return true; }
+  return false;
 }
 
 // ---------- счётчики для владельца: что делают в приложении (воркер копит по дням и шлёт отчёт) ----------
@@ -1803,7 +1865,7 @@ function coachMicro(a) {
 function coachPayload(a) {
   const s = a.summary || {}, f = a.facts;
   return {
-    hero: f.hero, role: s.role || "", rank: s.rank || "", won: f.won, kda: f.kda, duration: f.duration,
+    match_id: f.match_id, hero: f.hero, role: s.role || "", rank: s.rank || "", won: f.won, kda: f.kda, duration: f.duration,
     problems: (s.problems || []).slice(0, 3).map((p) => ({ title: p.title, fact: p.fact, action: p.action })),
     strengths: (s.strengths || []).slice(0, 2).map((x) => ({ title: x.title, fact: x.fact })),
     micro: coachMicro(a),
@@ -1914,12 +1976,12 @@ function coachBlock(a) {
   }
 
   const ask = h("button", { class: "coach-btn", type: "button" }, "Разобрать с тренером");
-  const note = h("p", { class: "coach-note small muted", role: "status" },
-    `Тренер разберёт ключевые моменты катки и даст три задачи на следующую. Потом можно задать ему вопросы. ${COACH_LIMIT_NOTE}`);
-  isOwner().then((yes) => { if (yes && note.isConnected) note.textContent = "Тренер разберёт ключевые моменты катки и даст три задачи на следующую. Для тебя лимитов нет."; });
+  const ABOUT = "Тренер разберёт ключевые моменты катки и даст три задачи на следующую. Потом можно задать ему вопросы.";
+  const note = h("p", { class: "coach-note small muted", role: "status" }, ABOUT);
+  let wall = null;
+  getWallet().then((w) => { if (w && note.isConnected && !wall) note.textContent = `${ABOUT} ${walletLine(w)}`; });
   ask.onclick = async () => {
-    const [used, spend] = dailyCounter("coach");
-    if (used >= COACH_DAILY && !(await isOwner())) { note.textContent = `Сегодня уже ${COACH_DAILY} разборов, это лимит. Завтра снова.`; return; }
+    if (wall) { wall.remove(); wall = null; }
     ask.disabled = true;
     step("coach");
     ask.textContent = "Тренер смотрит катку…";
@@ -1934,8 +1996,8 @@ function coachBlock(a) {
           if (!data.text) throw new Error("пусто");
         } catch (e) {
           data = null;
-          // лимит или битый запрос: Opus тут не поможет, говорим причину сразу
-          if (e && (e.status === 429 || e.status === 400 || e.status === 413)) throw e;
+          // лимит, оплата или битый запрос: Opus тут не поможет, говорим причину сразу
+          if (e && (e.status === 429 || e.status === 400 || e.status === 413 || e.status === 402 || e.status === 403)) throw e;
           if (attempt === 0) { await new Promise((r) => setTimeout(r, 2000)); continue; }
           ask.textContent = "Быстрые модели заняты, жду Opus…";
           note.textContent = "Opus отвечает от 30 секунд до двух минут. Можно свернуть приложение, разбор сохранится.";
@@ -1943,13 +2005,20 @@ function coachBlock(a) {
         }
       }
       if (!data.text) throw Object.assign(new Error("Тренер сейчас недоступен."), { fromCoach: true });
-      if (!data.cached) spend();
+      if (data.wallet) walletState = { ...walletState, ...data.wallet };
       safeLocal.set(key, data.text);
       safeLocal.set(`${key}:by`, data.opus ? "opus" : "fast");
       show(data.text, true);
       if (!data.opus) upgrade();
     } catch (e) {
       ask.disabled = false;
+      if (isPaywall(e)) {
+        ask.textContent = "Разобрать с тренером";
+        note.textContent = "";
+        wall = paywallBlock(() => { if (wall) wall.remove(); wall = null; note.textContent = walletLine(walletState); ask.click(); });
+        box.append(wall);
+        return;
+      }
       ask.textContent = "Попробовать ещё раз";
       note.textContent = coachError(e);
     } finally {
@@ -1992,7 +2061,7 @@ function chatBlock(a) {
   const note = h("p", { class: "chat-note small muted", role: "status" });
   const chips = h("div", { class: "chat-chips" }, chatSuggestions(a).map((q) =>
     h("button", { class: "chat-chip", type: "button", onclick: () => ask(q) }, q)));
-  let busy = false;
+  let busy = false, wall = null;
   const bubble = (m) => h("div", { class: `chat-msg ${m.role}` }, m.text);
   const draw = (typing = false) => {
     const dots = typing ? [h("div", { class: "chat-msg assistant typing", "aria-label": "Тренер печатает" }, h("i"), h("i"), h("i"))] : [];
@@ -2007,8 +2076,7 @@ function chatBlock(a) {
   async function ask(question) {
     const q = String(question || "").trim().slice(0, 400);
     if (!q || busy) return;
-    const [used, spend] = dailyCounter("chat");
-    if (used >= CHAT_DAILY && !(await isOwner())) { note.textContent = CHAT_LIMIT_TEXT; return; }
+    if (wall) { wall.remove(); wall = null; }
     busy = true;
     send.disabled = true;
     note.textContent = "";
@@ -2022,8 +2090,8 @@ function chatBlock(a) {
     try {
       const data = await postCoach({ mode: "chat", summary: coachPayload(a), coach: safeLocal.get(coachKey(a)) || "", history: before, question: q, initData: (tg && tg.initData) || "" });
       if (!data.text) throw Object.assign(new Error("Тренер сейчас недоступен."), { fromCoach: true });
-      spend(chatUsed(data));
-      note.textContent = (await isOwner()) ? "" : chatLeftText(CHAT_DAILY - dailyCounter("chat")[0]);
+      if (data.wallet) walletState = { ...walletState, ...data.wallet };
+      note.textContent = Number.isInteger(data.left) && data.left < 5 ? chatLeftText(data.left) : "";
       history = [...history, { role: "assistant", text: data.text }].slice(-CHAT_KEEP);
       safeLocal.set(chatKey(a), JSON.stringify(history));
       haptic("medium");
@@ -2032,7 +2100,11 @@ function chatBlock(a) {
       history = history.slice(0, -1);
       input.value = q;
       grow();
-      note.textContent = coachError(e);
+      if (isPaywall(e)) {
+        note.textContent = "";
+        wall = paywallBlock(() => { if (wall) wall.remove(); wall = null; ask(input.value); }, "Чат с тренером — по пакету или подписке.");
+        note.after(wall);
+      } else note.textContent = coachError(e);
     } finally {
       busy = false;
       send.disabled = false;
@@ -2043,7 +2115,7 @@ function chatBlock(a) {
   draw();
   const box = h("section", { class: "card chat", "aria-labelledby": "chat-title" },
     h("div", { class: "coach-title", id: "chat-title" }, "Спроси тренера"),
-    h("p", { class: "small muted chat-hint" }, `Только про Доту и эту катку: моменты, сборку, линию, драки. ${CHAT_DAILY} ${plural(CHAT_DAILY, "вопрос", "вопроса", "вопросов")} в сутки.`),
+    h("p", { class: "small muted chat-hint" }, `Только про Доту и эту катку: моменты, сборку, линию, драки. До ${CHAT_PER_MATCH} вопросов по катке.`),
     list, chips, h("div", { class: "chat-row" }, input, send), note);
   return {
     box,
@@ -2344,24 +2416,22 @@ function compareBlock(a) {
   if (!others.length) return null;
   const out = h("div", { class: "compare-out", role: "status" });
   const pick = async (other, btn) => {
-    const [used, spend] = dailyCounter("compare");
-    if (used >= CHAT_DAILY && !(await isOwner())) { out.textContent = COMPARE_LIMIT_TEXT; return; }
     btn.disabled = true;
     step("compare");
     out.replaceChildren(h("div", { class: "chat-msg assistant typing" }, h("i"), h("i"), h("i")));
     try {
       const data = await postCoach({ mode: "compare", a: { ...coachPayload(a), past: [] }, b: other.payload, initData: (tg && tg.initData) || "" });
-      spend(chatUsed(data));
+      if (data.wallet) walletState = { ...walletState, ...data.wallet };
       out.replaceChildren(...String(data.text || "").split("\n").filter(Boolean).map((l) => h("p", {}, l)));
     } catch (e) {
-      out.replaceChildren(h("p", { class: "error" }, coachError(e)));
+      out.replaceChildren(isPaywall(e) ? paywallBlock(() => pick(other, btn), "Сравнение каток — по пакету или подписке.") : h("p", { class: "error" }, coachError(e)));
     } finally {
       btn.disabled = false;
     }
   };
   return h("details", { class: "card timeline-box compare" },
     h("summary", {}, "Сравнить с другой каткой"),
-    h("p", { class: "small muted" }, `Тренер скажет, что ты делал по-другому. В списке — катки, которые ты уже открывал. Лимит: ${CHAT_DAILY} сравнений в сутки.`),
+    h("p", { class: "small muted" }, `Тренер скажет, что ты делал по-другому. В списке — катки, которые ты уже открывал.`),
     h("div", { class: "compare-list" }, ...others.map((o) => {
       const btn = h("button", { class: `compare-item ${o.won ? "win" : "loss"}`, type: "button" },
         heroImg(o.hero_id, "hero-img small"), h("span", { class: "grow" }, o.hero), h("span", { class: "muted" }, o.kda));

@@ -109,7 +109,12 @@ function coach(body) {
   if (raw.mode === "watch") return { ok: true };
   if (raw.mode === "gate") return gateCalls++ === 0 ? { ok: false, channel: true, chat: false } : { ok: true, channel: true, chat: true };
   if (raw.mode === "feedback") return { ok: true };
-  return { text: COACH_TEXT };
+  // платный тренер: в шаге paywall пробные кончились, пока не «оплатят» в окне Телеграма
+  const PACKS = [{ id: "p10", stars: 49, title: "10 разборов тренера", credits: 10, days: 0 }, { id: "month", stars: 129, title: "Тренер на месяц", credits: 0, days: 30 }];
+  if (raw.mode === "wallet") return { credits: pay.paid ? 10 : 0, free_left: 0, until: 0, sub_left: 0, packs: PACKS };
+  if (raw.mode === "buy") return { link: `https://t.me/$inv_${raw.pack}` };
+  if (pay.on && !pay.paid) return { __status: 402, error: "Бесплатные разборы тренера закончились. Возьми пакет или подписку, и тренер продолжит.", paywall: true, wallet: { credits: 0, free_left: 0, until: 0, sub_left: 0, packs: PACKS } };
+  return { text: COACH_TEXT, ...(pay.on ? { wallet: { credits: 9, free_left: 0, until: 0, sub_left: 0, packs: PACKS } } : {}) };
 }
 
 // Настоящий разбор реплея этого матча (GitHub Actions + odota/parser)
@@ -119,6 +124,7 @@ const PLACEHOLDER = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAA
 const errors = [];
 const cardSizes = [];
 let gateCalls = 0;
+const pay = { on: false, paid: false };
 // запросы из service worker тоже идут через подмену, иначе офлайн-проверка зависит от живой OpenDota
 process.env.PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS = "1";
 const browser = await chromium.launch({ headless: !process.env.UI_HEADED, ...(process.env.PW_EXEC ? { executablePath: process.env.PW_EXEC } : {}) });
@@ -154,7 +160,8 @@ async function handleRoute(route) {
   }
   if (url.hostname.endsWith("workers.dev")) {
     if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*", "Access-Control-Allow-Methods": "POST" } });
-    return route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(coach(route.request().postData())) });
+    const { __status, ...out } = coach(route.request().postData());
+    return route.fulfill({ status: __status || 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(out) });
   }
   if (url.hostname === "raw.githubusercontent.com") {
     const mirror = url.pathname.match(/^\/odota\/dotaconstants\/master\/build\/(\w+)\.json$/);
@@ -529,6 +536,41 @@ if (!only || only.has("gate")) {
     await p5.waitForSelector(".match-item", { timeout: 15000 });
   });
   await ctx5.close();
+}
+
+// Платный тренер: пробные кончились — покупка звёздами в окне Телеграма, после оплаты разбор приходит сам
+if (!only || only.has("paywall")) {
+  const ctx8 = await browser.newContext({ viewport: { width: Number(process.env.UI_WIDTH) || 390, height: 844 }, colorScheme: "dark", reducedMotion: "reduce" });
+  await ctx8.addInitScript((acc) => {
+    try { localStorage.setItem("account_id", String(acc)); localStorage.setItem("gate_ok", String(Date.now() + 3600_000)); } catch { /* */ }
+    const noop = () => {};
+    window.Telegram = { WebApp: { initData: "query_id=test", initDataUnsafe: {}, platform: "test", ready: noop, expand: noop, isVersionAtLeast: () => true,
+      setHeaderColor: noop, setBackgroundColor: noop, disableVerticalSwipes: noop, openTelegramLink: noop,
+      openInvoice: (link, cb) => { window.__invoice = link; setTimeout(() => { window.__pay(); cb("paid"); }, 50); },
+      BackButton: { show: noop, hide: noop, onClick: noop }, HapticFeedback: { impactOccurred: noop, notificationOccurred: noop, selectionChanged: noop } } };
+  }, ACCOUNT);
+  await ctx8.exposeFunction("__pay", () => { pay.paid = true; });
+  await ctx8.route("**/*", handleRoute);
+  const p8 = await ctx8.newPage();
+  p8.on("pageerror", (e) => errors.push(`paywall pageerror: ${e.message}`));
+  await step("paywall", async () => {
+    Object.assign(pay, { on: true, paid: false });
+    await p8.goto(`${BASE}/index.html?match=${match.match_id}`);
+    await p8.locator(".coach-btn").click({ timeout: 20000 });
+    await p8.waitForSelector(".paywall .paywall-pack", { timeout: 10000 });
+    const packs = await p8.locator(".paywall-pack").count();
+    if (packs !== 2) throw new Error(`пакетов ${packs}, ждали 2`);
+    await p8.locator(".paywall").scrollIntoViewIfNeeded();
+    const file = join(OUT, `${String(shots.length + 1).padStart(2, "0")}-paywall.png`);
+    await p8.screenshot({ path: file });
+    shots.push(file);
+    await p8.locator(".paywall-pack").first().click();
+    await p8.waitForSelector(".coach-moment", { timeout: 15000 });
+    if (!/inv_p10/.test(await p8.evaluate(() => window.__invoice || ""))) throw new Error("счёт не открылся");
+    if (await p8.locator(".paywall").count()) throw new Error("после оплаты пейвол не убрался");
+  });
+  Object.assign(pay, { on: false, paid: false });
+  await ctx8.close();
 }
 
 // Облако Телеграма не отвечает (колбэк CloudStorage не приходит): главная всё равно открывается с привязкой из localStorage
