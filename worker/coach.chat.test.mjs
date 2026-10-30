@@ -916,3 +916,22 @@ test("оплата картой из бота: ссылка с токеном н
   assert.equal(calls[0].body.reply_markup.inline_keyboard[0][0].text, "Картой или СБП");
   assert.match(calls[0].body.text, /79 ₽/);
 });
+
+test("владелец: «баланс» — звёзды от Телеграма и сумма оплат, чужим не отвечает", async (t) => {
+  t.after(restore);
+  const { handleBotUpdate } = await import("./coach.js");
+  const kv = fakeKV();
+  const e = { ...env, COACH_KV: kv, BOT_TOKEN: "123:abc", OWNER_TG_IDS: "7" };
+  const now = Date.parse("2026-10-30T15:00:00+03:00");
+  await kv.put("paid:2026-10-30:ch1", "1", { metadata: { u: "8", p: "p10", s: 49 } });
+  await kv.put("paid:2026-10-20:rk5", "1", { metadata: { u: "9", p: "month", r: 199 } });
+  const calls = mockFetch({ tg: [new Response(JSON.stringify({ ok: true, result: { amount: 49 } })), new Response("{}")] });
+  const out = await handleBotUpdate(e, { message: { chat: { id: 7, type: "private" }, from: { id: 7 }, text: "баланс" } }, now);
+  assert.match(out.balance, /Звёзд на балансе бота: 49/);
+  assert.match(out.balance, /Сегодня: 1 оплата, звёздами 49/);
+  assert.match(out.balance, /Всего: 2 оплаты, звёздами 49, картой 199 ₽/);
+  assert.equal(calls[1].body.chat_id, 7);
+  mockFetch({ tg: [new Response("{}")] });
+  const other = await handleBotUpdate(e, { message: { chat: { id: 8, type: "private" }, from: { id: 8 }, text: "баланс" } }, now);
+  assert.equal(other && other.balance, undefined);
+});
