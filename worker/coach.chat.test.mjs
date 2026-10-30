@@ -792,6 +792,11 @@ test("платный тренер: 1 пробный разбор, дальше 4
   assert.equal(first.wallet.free_left, 0);
   // Opus по той же катке — уже открыта
   assert.equal((await coach(user, 1, { tier: "opus", cont: true })).status, 200);
+  // фоновый Opus по катке, которая не открыта (открытие истекло), разбор не списывает
+  await kv.put("wallet:8", JSON.stringify({ c: 3, until: 0, free: 1, d: "", n: 0 }));
+  assert.equal((await coach(user, 4, { tier: "opus", cont: true })).status, 402);
+  assert.equal(JSON.parse(await kv.get("wallet:8")).c, 3);
+  await kv.put("wallet:8", JSON.stringify({ c: 0, until: 0, free: 1, d: "", n: 0 }));
   const wall = await coach(user, 3);
   assert.equal(wall.status, 402);
   const body = await wall.json();

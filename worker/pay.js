@@ -39,6 +39,11 @@ export function walletView(w, now = Date.now()) {
   };
 }
 
+// Единица уже открыта (без списания): фоновый заход за Opus по старому разбору не должен тихо тратить разбор
+export async function isOpen(env, id, unit) {
+  return Boolean(await env.COACH_KV.get(unlockKey(id, unit)));
+}
+
 // Списать единицу. Вернёт { how, left, refund } или { paywall, wallet } / { limit, text }.
 // Уже открытая единица не списывается повторно (второй заход за Opus, чат по той же катке)
 export async function spendUnit(env, id, unit, now = Date.now()) {
