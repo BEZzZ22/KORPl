@@ -111,9 +111,10 @@ function coach(body) {
   if (raw.mode === "feedback") return { ok: true };
   // платный тренер: в шаге paywall пробные кончились, пока не «оплатят» в окне Телеграма
   const PACKS = [{ id: "p10", stars: 49, title: "10 разборов тренера", credits: 10, days: 0 }, { id: "month", stars: 129, title: "Тренер на месяц", credits: 0, days: 30 }];
-  if (raw.mode === "wallet") return { credits: pay.paid ? 10 : 0, free_left: 0, until: 0, sub_left: 0, packs: PACKS };
+  if (raw.mode === "wallet") return { credits: pay.paid ? 10 : 0, free_left: 0, until: 0, sub_left: 0, packs: PACKS, cards: true };
+  if (raw.mode === "pay_link") return { url: "https://bezzz22.github.io/KORPl/pay.html#t=8.9999999999.Ax.axel.0123456789abcdef0123456789abcdef" };
   if (raw.mode === "buy") return { link: `https://t.me/$inv_${raw.pack}` };
-  if (pay.on && !pay.paid) return { __status: 402, error: "Бесплатные разборы тренера закончились. Возьми пакет или подписку, и тренер продолжит.", paywall: true, wallet: { credits: 0, free_left: 0, until: 0, sub_left: 0, packs: PACKS } };
+  if (pay.on && !pay.paid) return { __status: 402, error: "Бесплатные разборы тренера закончились. Возьми пакет или подписку, и тренер продолжит.", paywall: true, wallet: { credits: 0, free_left: 0, until: 0, sub_left: 0, packs: PACKS, cards: true } };
   return { text: COACH_TEXT, ...(pay.on ? { wallet: { credits: 9, free_left: 0, until: 0, sub_left: 0, packs: PACKS } } : {}) };
 }
 
@@ -546,6 +547,7 @@ if (!only || only.has("paywall")) {
     const noop = () => {};
     window.Telegram = { WebApp: { initData: "query_id=test", initDataUnsafe: {}, platform: "test", ready: noop, expand: noop, isVersionAtLeast: () => true,
       setHeaderColor: noop, setBackgroundColor: noop, disableVerticalSwipes: noop, openTelegramLink: noop,
+      openLink: (u) => { window.__link = u; },
       openInvoice: (link, cb) => { window.__invoice = link; setTimeout(() => { window.__pay(); cb("paid"); }, 50); },
       BackButton: { show: noop, hide: noop, onClick: noop }, HapticFeedback: { impactOccurred: noop, notificationOccurred: noop, selectionChanged: noop } } };
   }, ACCOUNT);
@@ -560,6 +562,8 @@ if (!only || only.has("paywall")) {
     await p8.waitForSelector(".paywall .paywall-pack", { timeout: 10000 });
     const packs = await p8.locator(".paywall-pack").count();
     if (packs !== 2) throw new Error(`пакетов ${packs}, ждали 2`);
+    await p8.locator(".paywall-card").click();
+    await p8.waitForFunction(() => /pay\.html#t=/.test(window.__link || ""), null, { timeout: 5000 });
     await p8.locator(".paywall").scrollIntoViewIfNeeded();
     const file = join(OUT, `${String(shots.length + 1).padStart(2, "0")}-paywall.png`);
     await p8.screenshot({ path: file });

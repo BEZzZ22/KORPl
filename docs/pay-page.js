@@ -28,10 +28,21 @@
     for (const k of ["id", "first_name", "last_name", "username", "photo_url", "auth_date", "hash"]) if (q.get(k) != null) login[k] = q.get(k);
     store.set(login);
   }
+  // ссылка из бота: #t=<подписанный токен>, вход уже выполнен
+  const tok = /^#t=([\w.%-]+)$/.exec(location.hash);
+  if (tok) {
+    const parts = tok[1].split(".");
+    let name = "", username = "";
+    try { name = decodeURIComponent(parts[2] || ""); username = decodeURIComponent(parts[3] || ""); } catch { /* */ }
+    store.set({ token: tok[1], first_name: name, username });
+    history.replaceState(null, "", location.pathname + location.search);
+  }
   const result = q.get("ok") ? "ok" : q.get("fail") ? "fail" : "";
-  if (q.toString()) history.replaceState(null, "", location.pathname);
+  if (q.toString()) history.replaceState(null, "", location.pathname + location.hash);
 
-  const login = store.get();
+  const saved = store.get();
+  const auth = saved && saved.token ? { token: saved.token } : { login: saved };
+  const login = saved;
   if (!login) {
     const s = document.createElement("script");
     s.async = true;
@@ -72,7 +83,7 @@
         b.disabled = true;
         status.className = "status";
         status.textContent = "Открываю оплату…";
-        try { location.href = (await post({ mode: "web_buy", pack: p.id, login })).url; }
+        try { location.href = (await post({ mode: "web_buy", pack: p.id, ...auth })).url; }
         catch (e) { b.disabled = false; status.className = "status bad"; status.textContent = e.message; }
       };
       return b;
@@ -80,7 +91,7 @@
     if (!w.cards) { status.className = "status"; status.textContent = "Оплата картой скоро заработает. Пока можно платить звёздами в боте."; }
   };
 
-  post({ mode: "web_wallet", login }).then(show).catch((e) => {
+  post({ mode: "web_wallet", ...auth }).then(show).catch((e) => {
     status.className = "status bad";
     status.textContent = e.message;
     if (/Войди/.test(e.message)) { try { sessionStorage.removeItem(KEY); } catch { /* */ } }

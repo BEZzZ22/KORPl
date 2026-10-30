@@ -1154,3 +1154,5 @@ body.gated .tabbar { display: none; }
 .paywall-price { margin-top: 6px; font: 800 18px/1 var(--sans); }
 .paywall-pack:disabled { opacity: 0.6; }
 @media (max-width: 340px) { .paywall-packs { grid-template-columns: 1fr; } }
+.paywall-card { width: 100%; margin: 0 0 10px; padding: 12px; font: 700 14px/1.2 var(--sans); color: var(--text); border-radius: 12px;
+  background: transparent; box-shadow: inset 0 0 0 1px var(--line-2); }

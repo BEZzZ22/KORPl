@@ -168,6 +168,25 @@ export async function loginUser(data, botToken, now = Date.now()) {
   return { id: Number(data.id), first_name: data.first_name || "", username: data.username || "" };
 }
 
+// Ссылка на оплату картой из бота: вход уже выполнен — подписанный токен на сутки (id, срок, имя)
+const PAY_PAGE = "https://bezzz22.github.io/KORPl/pay.html";
+const TOKEN_TTL = 86400;
+async function tokenSign(botToken, body) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", await crypto.subtle.digest("SHA-256", enc.encode(`paylink:${botToken}`)), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return [...new Uint8Array(await crypto.subtle.sign("HMAC", key, enc.encode(body)))].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
+}
+export async function payUrl(botToken, user, now = Date.now()) {
+  const body = [user.id, Math.floor(now / 1000) + TOKEN_TTL, encodeURIComponent(String(user.first_name || "").slice(0, 32)), encodeURIComponent(String(user.username || "").slice(0, 32))].join(".");
+  return `${PAY_PAGE}#t=${body}.${await tokenSign(botToken, body)}`;
+}
+export async function tokenUser(token, botToken, now = Date.now()) {
+  const m = /^(\d{1,20})\.(\d{1,12})\.([^.]{0,200})\.([^.]{0,200})\.([0-9a-f]{32})$/.exec(String(token || ""));
+  if (!m || !botToken || Number(m[2]) < now / 1000) return null;
+  if (await tokenSign(botToken, `${m[1]}.${m[2]}.${m[3]}.${m[4]}`) !== m[5]) return null;
+  try { return { id: Number(m[1]), first_name: decodeURIComponent(m[3]), username: decodeURIComponent(m[4]) }; } catch { return null; }
+}
+
 export const robokassaOn = (env) => Boolean(env.ROBOKASSA_LOGIN && env.ROBOKASSA_PASS1 && env.ROBOKASSA_PASS2);
 
 export async function roboLink(env, pack, user, now = Date.now()) {
