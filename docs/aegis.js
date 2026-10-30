@@ -339,11 +339,12 @@ export function aegisBadge({ reduced = false, haptic = () => {}, tick = () => {}
   let live = false;
 
   // q — положение щита; w — угловая скорость (рад/с, ось × скорость) после броска пальцем
-  const st = { q: [0, 0, 0, 1], w: [0, 0, 0], drag: null, freeUntil: 0, flip: 0, pose: null, tilt: [0, 0, 0, 1] };
+  // hold — выбран вид в витрине («Сбоку», «Сзади»): щит стоит на нём без покачивания
+  const st = { q: [0, 0, 0, 1], w: [0, 0, 0], drag: null, freeUntil: 0, flip: 0, pose: null, hold: false, tilt: [0, 0, 0, 1] };
   const t0 = performance.now();
   // само по себе: покачивается по двум осям и раз в 12 с делает оборот
   const idle = (t) => {
-    if (reduced) return qAxis(0, 1, 0, st.flip * DEG);
+    if (reduced || st.hold) return qAxis(0, 1, 0, st.flip * DEG);
     const cycle = 12, k = Math.floor(t / cycle), ph = (t % cycle) - (cycle - 2.4);
     const turn = ph > 0 ? (1 - Math.cos((Math.PI * ph) / 2.4)) / 2 : 0;
     const yaw = (24 * Math.sin(t * 0.55) + 360 * (k + turn) + st.flip) * DEG;
@@ -478,6 +479,9 @@ export function aegisBadge({ reduced = false, haptic = () => {}, tick = () => {}
   box.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } });
   // для проверок: застыть на угле (градусы вокруг вертикали или [вокруг вертикали, наклон]), null — снова живой
   box.aegisPose = (angle) => { st.pose = angle; start(); };
+  // витрина без Sketchfab: кнопки видов доворачивают щит пружиной (градусы вокруг вертикали), «Поднять Аегис» — оборот
+  box.aegisView = (deg) => { st.flip = deg; st.hold = true; st.freeUntil = 0; start(); };
+  box.aegisClaim = claim;
   box.aegisState = () => ({ q: st.q.map((v) => +v.toFixed(3)), drag: Boolean(st.drag), running: Boolean(raf), live, visible });
 
   if (gfx) {
@@ -518,11 +522,13 @@ export function openShowcase({ haptic = () => {}, openLink = (url) => window.ope
 
   const camera = (name, duration = 1.1) => {
     view = name;
-    if (!viewer) return;
+    const deg = { front: 0, side: 90, back: 180 }[name];
+    // живая модель не поднялась — крутим свой щит, иначе кнопки видов молчат
+    if (!viewer) { if (local) local.aegisView(deg); return; }
     const r = stage.getBoundingClientRect();
     // узкая сцена: отходим дальше, чтобы щит влез по ширине
     const R = CAM.radius * Math.max(1, r.height / Math.max(1, r.width)) * 1.06;
-    const a = CAM.front + { front: 0, side: Math.PI / 2, back: Math.PI }[name];
+    const a = CAM.front + deg * DEG;
     const e = (CAM.elev * Math.PI) / 180, t = CAM.target;
     viewer.setCameraLookAt([t[0] + R * Math.cos(e) * Math.cos(a), t[1] + R * Math.cos(e) * Math.sin(a), t[2] + R * Math.sin(e)], t, duration);
   };
@@ -547,7 +553,7 @@ export function openShowcase({ haptic = () => {}, openLink = (url) => window.ope
     void overlay.offsetWidth;
     overlay.classList.add("claim");
     haptic("success");
-    if (!viewer) return;
+    if (!viewer) { if (local) local.aegisClaim(); return; }
     const order = ["side", "back", "front"];
     order.forEach((v, i) => setTimeout(() => camera(v, 0.35), i * 360));
   } }, "Поднять Аегис");
@@ -574,6 +580,7 @@ export function openShowcase({ haptic = () => {}, openLink = (url) => window.ope
     if (!overlay.isConnected || viewer || local) return;
     local = aegisBadge({ haptic, onOpen: () => {} });
     local.classList.add("sc-local");
+    if (view !== "front") local.aegisView({ side: 90, back: 180 }[view]);
     stage.append(local);
     stage.classList.add("local");
   };

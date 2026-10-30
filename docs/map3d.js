@@ -2,7 +2,7 @@
 // (несколько смертей в одном месте — столб выше), обсы — золотыми. Пальцем стол крутится с инерцией
 // и наклоняется, без пальца медленно поворачивается сам. Тап по столбу — что там случилось.
 import { mapX, mapY, terrainUrl } from "./dotamap.js?v=3";
-import { whenGone } from "./aegis.js?v=7";
+import { whenGone } from "./aegis.js?v=8";
 
 function d(cls, ...children) {
   const n = document.createElement("div");
@@ -43,6 +43,7 @@ export function tacticalTable({ deaths = [], wards = [], reduced = false, haptic
     const times = g.list.map((x) => mmss(x.t)).join(", ");
     pin.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (moved > 8) return; // это был поворот стола, а не тап по столбу
       haptic("light");
       board.querySelectorAll(".m3d-pin.on").forEach((p) => p.classList.remove("on"));
       pin.classList.add("on");
@@ -56,6 +57,7 @@ export function tacticalTable({ deaths = [], wards = [], reduced = false, haptic
     pin.style.top = `${(mapY(w.y) / 128) * 100}%`;
     pin.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (moved > 8) return; // это был поворот стола, а не тап по столбу
       haptic("light");
       board.querySelectorAll(".m3d-pin.on").forEach((p) => p.classList.remove("on"));
       pin.classList.add("on");
@@ -84,12 +86,17 @@ export function tacticalTable({ deaths = [], wards = [], reduced = false, haptic
       if (Math.abs(v) < 0.08) v = reduced ? 0 : 0.08; // сам медленно крутится
     }
     draw();
+    // без анимаций стол крутится только пальцем и докатывается по инерции, потом цикл спит
+    if (reduced && !held && v === 0) return;
     raf = requestAnimationFrame(loop);
   };
   view.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
     held = true; moved = 0; v = 0;
     lastX = e.clientX; lastY = e.clientY; lastT = performance.now();
     view.classList.add("held");
+    // палец уехал за край стола — поворот всё равно идёт, пока не отпустили
+    try { view.setPointerCapture(e.pointerId); } catch { /* не критично */ }
   });
   view.addEventListener("pointermove", (e) => {
     if (!held) return;
@@ -100,11 +107,21 @@ export function tacticalTable({ deaths = [], wards = [], reduced = false, haptic
     tilt = Math.max(15, Math.min(68, tilt - dy * 0.25));
     v = (-dx * 0.5) / Math.max(8, now - lastT) * 16;
     lastX = e.clientX; lastY = e.clientY; lastT = now;
+    draw();
   });
-  const release = () => { held = false; view.classList.remove("held"); };
+  const release = () => {
+    if (!held) return;
+    held = false;
+    view.classList.remove("held");
+    if (performance.now() - lastT > 80) v = 0; // палец остановился перед отпусканием
+    v = Math.max(-25, Math.min(25, v));
+  };
   view.addEventListener("pointerup", release);
   view.addEventListener("pointercancel", release);
-  view.addEventListener("pointerleave", release);
+  view.addEventListener("lostpointercapture", release);
+  // айфон не всегда слушается touch-action: без этого страница начинает скроллиться,
+  // браузер отменяет жест и стол замирает посреди поворота
+  view.addEventListener("touchmove", (e) => { if (e.cancelable) e.preventDefault(); }, { passive: false });
   view.addEventListener("click", () => {
     if (moved > 8) return;
     board.querySelectorAll(".m3d-pin.on").forEach((p) => p.classList.remove("on"));
@@ -112,7 +129,7 @@ export function tacticalTable({ deaths = [], wards = [], reduced = false, haptic
   });
 
   draw();
-  const kick = () => { if (!raf && !reduced) raf = requestAnimationFrame(loop); };
+  const kick = () => { if (!raf) raf = requestAnimationFrame(loop); };
   view.addEventListener("pointerdown", kick);
   document.addEventListener("visibilitychange", kick);
   // столбы вырастают, когда стол доехал до экрана; вне экрана — пауза

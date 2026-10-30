@@ -3,12 +3,12 @@ import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan, skillPlan,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
 } from "./engine.js?v=39";
-import { aegisBadge, openShowcase } from "./aegis.js?v=7";
+import { aegisBadge, openShowcase } from "./aegis.js?v=8";
 import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=3";
 import { matchVerdicts } from "./blame.js?v=5";
 import { rankMedal3d } from "./medal3d.js?v=5";
 import { heroCard3d } from "./herocard3d.js?v=4";
-import { tacticalTable } from "./map3d.js?v=4";
+import { tacticalTable } from "./map3d.js?v=5";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -1427,7 +1427,7 @@ function analysisScreen(a) {
   };
   let sx = 0, sy = 0, tracking = false;
   content.addEventListener("touchstart", (e) => {
-    tracking = e.touches.length === 1 && !e.target.closest(".chart, .frame, .live-map, input, textarea, .chat-chips, .chat-list, .chat-row")&& !scrollsX(e.target);
+    tracking = e.touches.length === 1 && !e.target.closest(".chart, .frame, .live-map, .m3d, input, textarea, .chat-chips, .chat-list, .chat-row")&& !scrollsX(e.target);
     sx = e.touches[0].clientX; sy = e.touches[0].clientY;
   }, { passive: true });
   content.addEventListener("touchend", (e) => {
