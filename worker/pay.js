@@ -1,0 +1,168 @@
+// Платный тренер: оплата звёздами Телеграма (XTR). Цифровое внутри Mini App Телеграм разрешает продавать только за звёзды.
+// Сам разбор, карта и «Кто слил» бесплатные; платный — ИИ-тренер: разбор, чат по катке и сравнение каток.
+//
+// Доступ считается «единицами»: разбор тренера по матчу открывает этот матч (оба захода, fast и opus, и чат по нему),
+// сравнение двух каток — отдельная единица. Откуда берётся единица, по порядку: подписка (до SUB_PER_DAY в сутки),
+// бесплатные пробные (FREE_COACH на аккаунт навсегда), купленные пакеты. Владелец (OWNER_TG_IDS) не платит.
+//
+// Ключи: wallet:<tg id> — кошелёк { c: разборов в пакетах, until: подписка до (мс), free: потрачено пробных,
+// d: день МСК, n: единиц подписки за этот день }; unl:<tg id>:<единица> — открытая единица (значение — сколько
+// задано вопросов в чате); pay:<charge id> — оплата (для повторов вебхука и возврата); paid:<день>:<charge id> — для отчёта.
+
+export const PACKS = {
+  p10: { stars: 49, credits: 10, title: "10 разборов тренера", text: "Десять разборов ИИ-тренера с чатом по каждой катке. Не сгорают." },
+  month: { stars: 129, days: 30, title: "Тренер на месяц", text: "30 дней ИИ-тренера: до 10 разборов в сутки, чат по каждой катке и сравнения." },
+};
+export const FREE_COACH = 1;
+export const SUB_PER_DAY = 10;
+export const CHAT_PER_UNIT = 15;   // вопросов в чате на одну открытую катку
+const UNLOCK_TTL = 60 * 86400;
+const DAY_MS = 86400_000;
+
+const mskDay = (now) => new Date(now + 3 * 3600_000).toISOString().slice(0, 10);
+const walletKey = (id) => `wallet:${id}`;
+const unlockKey = (id, unit) => `unl:${id}:${String(unit).slice(0, 64)}`;
+
+export async function getWallet(env, id) {
+  const w = await env.COACH_KV.get(walletKey(id), "json").catch(() => null);
+  return { c: 0, until: 0, free: 0, d: "", n: 0, ...(w || {}) };
+}
+const putWallet = (env, id, w) => env.COACH_KV.put(walletKey(id), JSON.stringify(w));
+
+// Что показать в приложении
+export function walletView(w, now = Date.now()) {
+  const sub = w.until > now;
+  return {
+    credits: w.c, free_left: Math.max(0, FREE_COACH - w.free), until: sub ? w.until : 0,
+    sub_left: sub ? Math.max(0, SUB_PER_DAY - (w.d === mskDay(now) ? w.n : 0)) : 0,
+    packs: Object.entries(PACKS).map(([id, p]) => ({ id, stars: p.stars, title: p.title, credits: p.credits || 0, days: p.days || 0 })),
+  };
+}
+
+// Списать единицу. Вернёт { how, left, refund } или { paywall, wallet } / { limit, text }.
+// Уже открытая единица не списывается повторно (второй заход за Opus, чат по той же катке)
+export async function spendUnit(env, id, unit, now = Date.now()) {
+  const ukey = unlockKey(id, unit);
+  if (await env.COACH_KV.get(ukey)) return { how: "open", refund: async () => {} };
+  const w = await getWallet(env, id);
+  const day = mskDay(now);
+  const before = { ...w };
+  let how;
+  if (w.until > now) {
+    if (w.d !== day) { w.d = day; w.n = 0; }
+    if (w.n >= SUB_PER_DAY) return { limit: true, text: `По подписке до ${SUB_PER_DAY} разборов в сутки. Новые после полуночи по Москве.` };
+    w.n += 1; how = "sub";
+  } else if (w.free < FREE_COACH) { w.free += 1; how = "free"; }
+  else if (w.c > 0) { w.c -= 1; how = "credit"; }
+  else return { paywall: true, wallet: walletView(w, now) };
+  await putWallet(env, id, w);
+  await env.COACH_KV.put(ukey, "0", { expirationTtl: UNLOCK_TTL });
+  return {
+    how, wallet: walletView(w, now),
+    // ответ не получился — возвращаем ровно то, что списали
+    refund: async () => {
+      const cur = await getWallet(env, id);
+      if (how === "sub" && cur.d === w.d) cur.n = Math.max(0, cur.n - 1);
+      if (how === "free") cur.free = Math.max(0, cur.free - 1);
+      if (how === "credit") cur.c += 1;
+      await putWallet(env, id, cur);
+      await env.COACH_KV.delete(ukey);
+      return before;
+    },
+  };
+}
+
+// Вопрос в чате: катка должна быть открыта (если нет — открываем, это одна единица), дальше до CHAT_PER_UNIT вопросов
+export async function spendChat(env, id, unit, now = Date.now()) {
+  const ukey = unlockKey(id, unit);
+  let asked = await env.COACH_KV.get(ukey);
+  let opened = null;
+  if (asked == null) {
+    opened = await spendUnit(env, id, unit, now);
+    if (!opened.refund) return opened;
+    asked = "0";
+  }
+  const n = Number(asked) || 0;
+  if (n >= CHAT_PER_UNIT) return { limit: true, text: `По одной катке до ${CHAT_PER_UNIT} вопросов. Открой другую катку.` };
+  await env.COACH_KV.put(ukey, String(n + 1), { expirationTtl: UNLOCK_TTL });
+  return {
+    how: opened ? opened.how : "open", left: CHAT_PER_UNIT - n - 1, wallet: opened && opened.wallet,
+    refund: async () => {
+      if (opened) return opened.refund();
+      await env.COACH_KV.put(ukey, String(n), { expirationTtl: UNLOCK_TTL });
+    },
+  };
+}
+
+// ---------- счёт и оплата ----------
+
+// payload счёта: пакет и кому — проверяется в pre_checkout_query и при зачислении
+const payloadOf = (pack, id) => `${pack}:${id}`;
+export function parsePayload(s) {
+  const m = /^([a-z0-9]{1,12}):(\d{1,20})$/.exec(String(s || ""));
+  return m && PACKS[m[1]] ? { pack: m[1], id: m[2] } : null;
+}
+
+// tg(method, body) -> результат метода Bot API или null
+export async function invoiceLink(tg, pack, id) {
+  const p = PACKS[pack];
+  if (!p) return null;
+  return tg("createInvoiceLink", {
+    title: p.title, description: p.text, payload: payloadOf(pack, id), provider_token: "", currency: "XTR",
+    prices: [{ label: p.title, amount: p.stars }],
+  });
+}
+
+// Телеграм ждёт ответа на pre_checkout_query до 10 секунд: проверяем, что пакет и сумма те же, что в счёте
+export function checkout(q) {
+  const p = parsePayload(q && q.invoice_payload);
+  const ok = Boolean(p && q.currency === "XTR" && Number(q.total_amount) === PACKS[p.pack].stars && String(q.from && q.from.id) === p.id);
+  return ok ? { pre_checkout_query_id: q.id, ok: true } : { pre_checkout_query_id: q && q.id, ok: false, error_message: "Счёт устарел. Открой оплату в приложении заново." };
+}
+
+// Зачислить оплату. Вебхук может прийти повторно — второй раз ничего не добавляем
+export async function grant(env, msg, now = Date.now()) {
+  const sp = msg && msg.successful_payment;
+  const p = sp && parsePayload(sp.invoice_payload);
+  if (!p || sp.currency !== "XTR") return null;
+  const charge = sp.telegram_payment_charge_id;
+  if (await env.COACH_KV.get(`pay:${charge}`)) return { dup: true };
+  const pack = PACKS[p.pack];
+  const id = String(msg.from.id);
+  const w = await getWallet(env, id);
+  if (pack.credits) w.c += pack.credits;
+  if (pack.days) w.until = Math.max(w.until, now) + pack.days * DAY_MS;
+  await putWallet(env, id, w);
+  const rec = { u: id, p: p.pack, s: sp.total_amount, t: now, n: msg.from.first_name || "", un: msg.from.username || "" };
+  await env.COACH_KV.put(`pay:${charge}`, JSON.stringify(rec));
+  await env.COACH_KV.put(`paid:${mskDay(now)}:${charge}`, "1", { metadata: rec, expirationTtl: 400 * 86400 });
+  return { pack: p.pack, wallet: walletView(w, now) };
+}
+
+export function thanksText(pack, view) {
+  const p = PACKS[pack];
+  if (p.days) return `Оплата прошла, спасибо! Тренер открыт до ${new Date(view.until + 3 * 3600_000).toISOString().slice(0, 10).split("-").reverse().join(".")}. Возвращайся в приложение и разбирай катки.`;
+  return `Оплата прошла, спасибо! Разборов тренера на счету: ${view.credits}. Возвращайся в приложение и разбирай катки.`;
+}
+
+// Возврат звёзд (команда владельца «/refund <charge id>»): снимаем то, что дали, сколько осталось
+export async function refund(env, tg, charge, now = Date.now()) {
+  const rec = await env.COACH_KV.get(`pay:${charge}`, "json");
+  if (!rec) return "Такой оплаты нет.";
+  if (rec.refunded) return "Уже возвращено.";
+  const ok = await tg("refundStarPayment", { user_id: Number(rec.u), telegram_payment_charge_id: charge });
+  if (!ok) return "Телеграм не принял возврат.";
+  const pack = PACKS[rec.p];
+  const w = await getWallet(env, rec.u);
+  if (pack.credits) w.c = Math.max(0, w.c - pack.credits);
+  if (pack.days) w.until -= pack.days * DAY_MS;
+  await putWallet(env, rec.u, w);
+  await env.COACH_KV.put(`pay:${charge}`, JSON.stringify({ ...rec, refunded: now }));
+  return `Вернул ${rec.s} звёзд.`;
+}
+
+export const PAYSUPPORT_TEXT = "По оплате пиши сюда же, в этот чат, одним сообщением: что купил и что не так. Ответим в течение суток. "
+  + "Если тренер так и не открылся после оплаты, звёзды вернём.";
+export const TERMS_TEXT = "Платный только ИИ-тренер: разбор катки, чат и сравнение. Разбор матча, карта и «Кто слил» бесплатные. "
+  + "Пакеты разборов не сгорают, подписка действует 30 дней с момента оплаты. Оплата звёздами Телеграма. "
+  + "Если тренер не ответил, разбор не списывается. Полные условия: https://bezzz22.github.io/KORPl/terms.html";
