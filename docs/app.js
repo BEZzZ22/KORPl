@@ -1759,7 +1759,8 @@ function paywallBlock(onPaid, text = "Бесплатные разборы тре
   const status = h("p", { class: "small muted", role: "status" });
   const packs = (walletState && walletState.packs) || [];
   const buy = async (pack, btn) => {
-    if (!tg || !tg.openInvoice) { status.textContent = "Оплата работает в приложении Телеграма. Обнови Телеграм."; return; }
+    // старый клиент: openInvoice в скрипте Телеграма есть, но бросает WebAppMethodUnsupported — выходило «нет связи»
+    if (!tg || !tg.openInvoice || !(tg.isVersionAtLeast && tg.isVersionAtLeast("6.1"))) { status.textContent = "Оплата работает в приложении Телеграма. Обнови Телеграм."; return; }
     btn.disabled = true;
     status.textContent = "Открываю оплату…";
     step("buy");
