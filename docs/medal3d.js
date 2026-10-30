@@ -370,7 +370,7 @@ export function rankMedal3d(tier, { reduced = false, haptic = () => {}, tick = (
   root.addEventListener("pointercancel", release);
 
   // вне экрана и в свёрнутом приложении не рисуем: кадр стоит денег батарее
-  const io = new IntersectionObserver((es) => { visible = es.some((e) => e.isIntersecting); if (visible) kick(); });
+  const io = new IntersectionObserver((es) => { visible = es[es.length - 1].isIntersecting; if (visible) kick(); }); // пачка событий: верим последнему
   io.observe(root);
   const onVis = () => { if (!document.hidden) kick(); };
   document.addEventListener("visibilitychange", onVis);
