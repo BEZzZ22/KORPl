@@ -1,6 +1,7 @@
 // Оплата тренера картой или СБП (Робокасса) на сайте. Внутри Телеграма платят звёздами — там сторонние платёжки запрещены.
 // Вход: Telegram Login Widget в режиме перехода (data-auth-url) — данные входа приходят в адресе этой страницы,
-// воркер проверяет подпись токеном бота. После оплаты Робокасса возвращает сюда с ?ok=1 или ?fail=1.
+// воркер проверяет подпись токеном бота. После оплаты Робокасса возвращает сюда GET-ом: на Success URL с InvId и
+// SignatureValue, на Fail URL — с InvId без подписи (параметры в самих URL она не принимает).
 (() => {
   const WORKER = "https://dotacoach.2007rggg.workers.dev";
   const BOT = "DotaRazbor_bot";
@@ -37,7 +38,8 @@
     store.set({ token: tok[1], first_name: name, username });
     history.replaceState(null, "", location.pathname + location.search);
   }
-  const result = q.get("ok") ? "ok" : q.get("fail") ? "fail" : "";
+  const robo = q.has("InvId") ? (q.has("SignatureValue") ? "ok" : "fail") : "";
+  const result = q.get("ok") ? "ok" : q.get("fail") ? "fail" : robo;
   if (q.toString()) history.replaceState(null, "", location.pathname + location.hash);
 
   const saved = store.get();
