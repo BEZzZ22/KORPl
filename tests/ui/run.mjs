@@ -228,6 +228,13 @@ const step = async (name, fn) => {
     return el ? `${el.tagName.toLowerCase()}.${String(el.className.baseVal ?? el.className).split(" ").join(".")} (${Math.round(el.getBoundingClientRect().right)} > ${innerWidth})` : "?";
   }).catch(() => null);
   if (wide) errors.push(`${name}: шире экрана: ${wide}`);
+  // UI_A11Y=1 — кнопки и ссылки без имени: диктор VoiceOver читает их как «кнопка» без смысла
+  if (process.env.UI_A11Y) {
+    const unnamed = await page.evaluate(() => [...document.querySelectorAll("button, a[href], [role=button]")]
+      .filter((e) => e.offsetParent !== null && !(e.getAttribute("aria-label") || e.getAttribute("title") || e.textContent.trim() || e.querySelector("img[alt]:not([alt=''])")))
+      .map((e) => `${e.tagName.toLowerCase()}.${String(e.className).split(" ").join(".")}`)).catch(() => []);
+    if (unnamed.length) errors.push(`${name}: без имени для диктора: ${[...new Set(unnamed)].join(", ")}`);
+  }
   const text = await page.evaluate(() => document.body.innerText).catch(() => "");
   // регистр важен: утёкшие значения JS пишутся строчными, а «Gem of True Sight» — название предмета
   const junk = /(^|[^a-zA-Zа-яё])(undefined|NaN|null|false|true|\[object Object\])([^a-zA-Zа-яё]|$)/.exec(text);
