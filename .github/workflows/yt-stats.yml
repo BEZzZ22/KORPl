@@ -37,6 +37,8 @@ jobs:
         run: |
           git config user.name "promo-bot"
           git config user.email "promo-bot@users.noreply.github.com"
+          # статистика не собралась (токену не хватает прав) — файла нет, коммитить нечего
+          [ -f promo/yt_stats.json ] || { echo "статистики нет"; exit 0; }
           git add -A promo/yt_stats.json
           git diff --cached --quiet && { echo "без изменений"; exit 0; }
           git commit -q -m "YouTube: статистика Shorts"
