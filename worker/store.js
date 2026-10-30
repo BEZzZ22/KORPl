@@ -9,6 +9,7 @@
 
 const SCHEMA = "CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v BLOB, meta TEXT, exp INTEGER)";
 const KV_ONLY = /^(card:|coach:)/;          // остаются в KV
+const MONEY = /^(wallet:|pay:|paid:|robo:|unl:)/; // кошельки и оплаты: без запасного пути в KV
 const SKIP_COPY = /^(card:|coach:|hint:|ban:)/; // не переносим: живут в KV или своё отживут за часы
 const MIG_CURSOR = "_mig:cursor", MIG_DONE = "_mig:done";
 const MIG_BATCH = 20;                        // ключей за прогон крона: D1 на бесплатном плане — 50 запросов на вызов
@@ -114,10 +115,13 @@ export function d1kv(db, kv = null, clock = () => Date.now()) {
 export function withStore(env) {
   if (!env || !env.DB || !env.COACH_KV || env.COACH_KV.routed) return env;
   const kv = env.COACH_KV, d1 = d1kv(env.DB, kv);
-  // D1 не ответила — делаем то же в KV: лучше старое хранилище, чем упавший запрос у юзера
+  // D1 не ответила — делаем то же в KV: лучше старое хранилище, чем упавший запрос у юзера.
+  // Кроме денег: оплата, записанная в KV, пропала бы, когда D1 вернётся (читаем-то её). Там — ошибка:
+  // вебхук ответит 500 и Телеграм пришлёт оплату снова, тренер скажет «недоступен», а не спишет мимо
   const call = (k, op, ...args) => {
     if (KV_ONLY.test(String(k))) return kv[op](...args);
     return d1[op](...args).catch((e) => {
+      if (MONEY.test(String(k))) throw e;
       console.log(`D1 ${op} ${String(k).split(":")[0]}: ${e && e.message || e}, беру KV`);
       return kv[op](...args);
     });
