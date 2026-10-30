@@ -29,7 +29,7 @@ const METRICS = [
     bad: (v, p, x) => `${x.noTrade} из ${x.heroDeaths} ${plural(x.heroDeaths, "смерти", "смертей", "смертей")} от героев без размена` },
 ];
 
-import { assignRoles } from "./engine.js?v=40";
+import { assignRoles } from "./engine.js?v=41";
 
 // heroKey(id) -> "npc_dota_hero_tusk" (так жертва записана в kills_log), heroName(id) -> "Tusk"
 export function matchVerdicts(match, meAccount, { heroName, heroKey }) {
