@@ -65,6 +65,7 @@
   if (result === "fail") { status.className = "status bad"; status.textContent = "Оплата не прошла, деньги не списаны. Можно попробовать ещё раз."; }
 
   const show = (w) => {
+    if (!w || !Array.isArray(w.packs)) { status.className = "status"; status.textContent = "Оплата сейчас выключена: тренер бесплатный, открывай бота."; return; }
     $("who").textContent = `Аккаунт: ${login.first_name || ""}${login.username ? ` (@${login.username})` : ""}`;
     $("balance").textContent = w.until ? `Подписка до ${new Date(w.until + 3 * 3600e3).toISOString().slice(0, 10).split("-").reverse().join(".")}.`
       : w.credits ? `На счету ${w.credits} ${plural(w.credits, "разбор", "разбора", "разборов")} тренера.`
@@ -90,12 +91,17 @@
       };
       return b;
     }));
-    if (!w.cards) { status.className = "status"; status.textContent = "Оплата картой скоро заработает. Пока можно платить звёздами в боте."; }
+    if (!w.cards && !result) { status.className = "status"; status.textContent = "Оплата картой скоро заработает. Пока можно платить звёздами в боте."; }
   };
 
   post({ mode: "web_wallet", ...auth }).then(show).catch((e) => {
     status.className = "status bad";
     status.textContent = e.message;
-    if (/Войди/.test(e.message)) { try { sessionStorage.removeItem(KEY); } catch { /* */ } }
+    // вход устарел (ссылка из бота живёт сутки): забываем его и показываем кнопку входа заново
+    if (/Войди/.test(e.message)) {
+      try { sessionStorage.removeItem(KEY); } catch { /* */ }
+      status.textContent = "Вход устарел — сейчас покажу кнопку входа через Телеграм.";
+      setTimeout(() => location.reload(), 1500);
+    }
   });
 })();

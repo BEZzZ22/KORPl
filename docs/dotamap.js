@@ -550,6 +550,7 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
     raf = requestAnimationFrame(frame);
   }
   function play() {
+    if (playing) return; // второй цикл кадров — карта шла бы вдвое быстрее
     if (t >= T) t = t0;
     playing = true;
     setIcon();
@@ -562,7 +563,7 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
     setIcon();
   }
   // карта ушла с экрана (другая вкладка, уход со страницы) — не крутим кадры впустую
-  const io = typeof IntersectionObserver === "function" ? new IntersectionObserver((es) => { if (!es[0].isIntersecting && playing) pause(); }) : null;
+  const io = typeof IntersectionObserver === "function" ? new IntersectionObserver((es) => { if (!es[es.length - 1].isIntersecting && playing) pause(); }) : null;
   map.addEventListener("click", () => { if (selected >= 0 && !follow) { selected = -1; draw(true); } });
   function seek(s) { pause(); t = Math.max(t0, Math.min(T, s)); draw(); }
 

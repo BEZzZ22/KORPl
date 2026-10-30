@@ -381,6 +381,7 @@ export function createDictionary({ heroes, items, abilities }) {
     heroImage: (id) => heroImages[id],
     heroRoles: (id) => (heroes[id] && heroes[id].roles) || [],
     heroNameByKey(key) {
+      key = String(key || "");
       if (key in heroesByKey) return heroesByKey[key];
       if (key.includes("tower")) return "башня";
       if (key.includes("creep") || key.includes("neutral") || key.includes("siege")) return "крипы";
@@ -444,7 +445,7 @@ class MatchAnalyzer {
     this.oppName = this.opponent ? od.heroName(this.opponent.hero_id) : null;
     this.hero = od.heroName(player.hero_id);
     this.bench = {};
-    for (const [k, v] of Object.entries(player.benchmarks || {})) this.bench[k] = pyRound(v.pct * 100);
+    for (const [k, v] of Object.entries(player.benchmarks || {})) if (v && Number.isFinite(v.pct)) this.bench[k] = pyRound(v.pct * 100);
     const sign = player.isRadiant ? 1 : -1;
     this.teamAdv = (match.radiant_gold_adv || []).map((a) => a * sign);
     this.fightWindows = (match.teamfights || []).map((tf) => [tf.start - TEAMFIGHT_MARGIN, tf.end + TEAMFIGHT_MARGIN]);
@@ -3085,7 +3086,8 @@ export function replayInsights(match, player, replay) {
   };
   const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) * CELL;
   const radiant = player.isRadiant;
-  const allies = match.players.filter((x) => x.isRadiant === radiant && x !== player).map((x) => replay.pos[x.player_slot]);
+  // у кого-то из своих нет дорожки в реплее (вышел из игры, сбой парсера) — считаем без него
+  const allies = match.players.filter((x) => x.isRadiant === radiant && x !== player).map((x) => replay.pos[x.player_slot]).filter(Array.isArray);
   const enemies = match.players.filter((x) => x.isRadiant !== radiant).map((x) => replay.pos[x.player_slot]);
   const deaths = (player.deaths_log || []).map((d) => {
     const me = at(mine, d.time);

@@ -8,7 +8,7 @@
 import LORE from "./lore.json" with { type: "json" };
 import { withStore, migrateStep, purgeExpired } from "./store.js";
 import { kickShorts } from "./kick.js";
-import { spendUnit, spendChat, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT, loginUser, roboLink, roboResult, robokassaOn, payUrl, tokenUser } from "./pay.js";
+import { spendUnit, spendChat, isOpen, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT, loginUser, roboLink, roboResult, robokassaOn, payUrl, tokenUser } from "./pay.js";
 
 const ALLOWED_ORIGINS = ["https://bezzz22.github.io"];
 const GEMINI_MODEL = "gemini-flash-lite-latest";
@@ -200,10 +200,12 @@ async function unitOf(prefix, match, fallback) {
   return Number.isInteger(Number(match)) && Number(match) > 1e6 ? `${prefix}${Number(match)}` : `${prefix}h${(await sha256(JSON.stringify(fallback))).slice(0, 16)}`;
 }
 // Вернёт { refund, left? } — можно отвечать; или { status, body } — отказ
-async function payFor(env, raw, kind, unit) {
+async function payFor(env, raw, kind, unit, { onlyOpen = false } = {}) {
   const user = await telegramUser(raw.initData, env.BOT_TOKEN);
   if (!user || !user.id) return { status: 403, body: { error: NO_TG_TEXT } };
   if (isOwner(env, user.id)) return { refund: async () => {} };
+  // продолжение (Opus дописывает уже открытый разбор): катка закрыта (открытие истекло) — не списываем молча
+  if (onlyOpen && !(await isOpen(env, user.id, unit))) return { status: 402, body: { error: PAYWALL_TEXT, paywall: true, wallet: walletView(await getWallet(env, user.id)) } };
   const r = kind === "chat" ? await spendChat(env, user.id, unit) : await spendUnit(env, user.id, unit);
   if (r.paywall) return { status: 402, body: { error: PAYWALL_TEXT, paywall: true, wallet: r.wallet } };
   if (r.limit) return { status: 429, body: { error: r.text } };
@@ -1344,7 +1346,9 @@ export async function ensureWebhook(env) {
   if (!env.COACH_KV || !env.BOT_TOKEN) return false;
   if ((await env.COACH_KV.get("tg_webhook")) === WEBHOOK_VERSION) return true;
   const ok = await sendTelegram(env, "setWebhook", {
-    url: `${env.WORKER_URL || WORKER_URL}/tg`, secret_token: await webhookSecret(env.BOT_TOKEN), allowed_updates: ["message", "pre_checkout_query"], drop_pending_updates: true,
+    url: `${env.WORKER_URL || WORKER_URL}/tg`, secret_token: await webhookSecret(env.BOT_TOKEN), allowed_updates: ["message", "pre_checkout_query"],
+    // висящие апдейты не выбрасываем: среди них может быть оплата звёздами, которую иначе не зачислим
+    drop_pending_updates: false,
   }).catch(() => false);
   if (ok) await env.COACH_KV.put("tg_webhook", WEBHOOK_VERSION);
   return ok;
@@ -1563,10 +1567,11 @@ async function handlePost(request, env, ctx, origin) {
     if (!env.COACH_KV) return reply(500, { error: "Разбор реплеев не настроен." }, origin);
     const match = Number(raw.match_id);
     if (!Number.isInteger(match) || match < 1e6) return reply(400, { error: "Нет матча." }, origin);
-    const limited = throttle(ip, Date.now(), 10, "replay", 300);
-    if (limited) return reply(429, { error: limited }, origin);
-    // из Телеграма — пришлём сообщение, когда разберётся; без него просто ставим в очередь
+    // из Телеграма — пришлём сообщение, когда разберётся; без него просто ставим в очередь.
+    // Лимит на человека, а не на IP: у мобильного оператора один IP на сотни людей
     const user = env.BOT_TOKEN ? await telegramUser(raw.initData, env.BOT_TOKEN) : null;
+    const limited = throttle(user && user.id ? `tg${user.id}` : ip, Date.now(), 10, "replay", 300);
+    if (limited) return reply(429, { error: limited }, origin);
     return reply(200, { status: await queueReplay(env, match, user && user.id ? user.id : null) }, origin);
   }
 
@@ -1667,7 +1672,7 @@ async function handlePost(request, env, ctx, origin) {
   let quota = null;
   if (paywallOn(env)) {
     // платный тренер: катка открывается один раз — второй заход за Opus и чат по ней уже не списывают
-    quota = await payFor(env, raw, "coach", await unitOf("m", raw.match_id, prompt));
+    quota = await payFor(env, raw, "coach", await unitOf("m", raw.match_id, prompt), { onlyOpen: tier === "opus" && Boolean(raw.cont) });
     if (quota.status) return reply(quota.status, quota.body, origin);
   } else if (env.COACH_KV && !(tier === "opus" && raw.cont)) {
     const user = env.BOT_TOKEN && raw.initData ? await telegramUser(raw.initData, env.BOT_TOKEN) : null;
@@ -1763,6 +1768,12 @@ export default {
     if (request.method === "POST" && new URL(request.url).pathname === "/tg") {
       if (!env.BOT_TOKEN || request.headers.get("X-Telegram-Bot-Api-Secret-Token") !== await webhookSecret(env.BOT_TOKEN)) return new Response("Нельзя.", { status: 403 });
       const update = await request.json().catch(() => null);
+      // оплату зачисляем до ответа: упало (база недоступна) — 500, и Телеграм пришлёт апдейт ещё раз
+      // (повтор безопасен, зачисление по charge id одно). Остальное — в фоне
+      if (env.COACH_KV && update && update.message && update.message.successful_payment) {
+        try { await handleBotUpdate(env, update); } catch (e) { console.log(`оплата не зачислена: ${e && e.message || e}`); return new Response("retry", { status: 500 }); }
+        return new Response("ok");
+      }
       if (env.COACH_KV) ctx.waitUntil(handleBotUpdate(env, update));
       return new Response("ok");
     }

@@ -189,3 +189,22 @@ test("вебхук без секрета не пускает", async () => {
   const res = await worker.fetch(new Request("https://coach.example/tg", { method: "POST", body: "{}" }), { BOT_TOKEN: "x" }, { waitUntil() {} });
   assert.equal(res.status, 403);
 });
+
+test("вебхук: оплата не зачислилась (база упала) — 500, Телеграм пришлёт ещё раз", async () => {
+  const token = "1:x";
+  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`tg-hook:${token}`)));
+  const secret = [...hash.slice(0, 20)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const paid = { message: { chat: { id: 8, type: "private" }, from: { id: 8 }, successful_payment: { currency: "XTR", total_amount: 49, invoice_payload: "p10:8", telegram_payment_charge_id: "c1" } } };
+  const broken = { get: async () => { throw new Error("db down"); }, put: async () => { throw new Error("db down"); } };
+  const send = (kv) => worker.fetch(new Request("https://coach.example/tg", { method: "POST", body: JSON.stringify(paid), headers: { "X-Telegram-Bot-Api-Secret-Token": secret } }),
+    { BOT_TOKEN: token, COACH_KV: kv }, { waitUntil() {} });
+  const log = console.log;
+  console.log = () => {};
+  try { assert.equal((await send(broken)).status, 500); } finally { console.log = log; }
+  const store = new Map();
+  const ok = { get: async (k) => store.get(k) ?? null, put: async (k, v) => { store.set(k, v); }, delete: async (k) => { store.delete(k); } };
+  const real = globalThis.fetch;
+  globalThis.fetch = async () => new Response("{}");
+  try { assert.equal((await send(ok)).status, 200); } finally { globalThis.fetch = real; }
+  assert.equal(JSON.parse(store.get("wallet:8")).c, 10);
+});
