@@ -90,7 +90,7 @@ export function replayModel(match, replay, me, { heroKey, heroName }) {
   const byKey = new Map(players.map((p) => [`npc_dota_hero_${p.key}`, p]));
   const duration = match.duration;
   // позиции: массив точек раз в step секунд от start
-  const pos = replay && replay.pos ? players.map((p) => replay.pos[String(p.slot)] || null) : null;
+  const pos = replay && replay.pos && replay.step > 0 ? players.map((p) => replay.pos[String(p.slot)] || null) : null;
   const posAt = (i, t) => {
     if (!pos || !pos[i]) return null;
     const f = (t - replay.start) / replay.step;

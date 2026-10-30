@@ -2,13 +2,13 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan, skillPlan,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
-} from "./engine.js?v=41";
+} from "./engine.js?v=42";
 import { aegisBadge, openShowcase } from "./aegis.js?v=9";
-import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=4";
-import { matchVerdicts } from "./blame.js?v=7";
+import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=5";
+import { matchVerdicts } from "./blame.js?v=8";
 import { rankMedal3d } from "./medal3d.js?v=7";
 import { heroCard3d } from "./herocard3d.js?v=5";
-import { tacticalTable } from "./map3d.js?v=9";
+import { tacticalTable } from "./map3d.js?v=10";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
