@@ -6,9 +6,9 @@ import {
 import { aegisBadge, openShowcase } from "./aegis.js?v=9";
 import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=4";
 import { matchVerdicts } from "./blame.js?v=7";
-import { rankMedal3d } from "./medal3d.js?v=6";
+import { rankMedal3d } from "./medal3d.js?v=7";
 import { heroCard3d } from "./herocard3d.js?v=5";
-import { tacticalTable } from "./map3d.js?v=8";
+import { tacticalTable } from "./map3d.js?v=9";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -393,6 +393,10 @@ async function fetchJson(url, timeout = 20000) {
   }
 }
 
+// Свои тексты и база знаний: без них приложение не стартует, а мобильная сеть рвёт отдельный запрос.
+// Один повтор через секунду вместо экрана ошибки
+const ownJson = (url) => fetchJson(url).catch(() => new Promise((r) => setTimeout(r, 1000)).then(() => fetchJson(url)));
+
 async function localDict(name, min) {
   try {
     const res = await fetch(`${name}.json`, { signal: AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined });
@@ -531,6 +535,8 @@ function tabButton(tab, label) {
 }
 
 function goTab(tab) {
+  // справочники не загрузились (экран ошибки): вкладка — это ещё одна попытка, а не экран без данных
+  if (!dictionary) { if (document.querySelector("#app .error")) boot(); return; }
   if (tab === "home") navRoot("home", homeScreen);
   else if (tab === "profile") navRoot("profile", profileScreen);
   else if (tab === "match") lastAnalysis ? navRoot("match", analysisScreen, lastAnalysis) : navRoot("match", matchEmpty);
@@ -1759,7 +1765,8 @@ function paywallBlock(onPaid, text = "Бесплатные разборы тре
   const status = h("p", { class: "small muted", role: "status" });
   const packs = (walletState && walletState.packs) || [];
   const buy = async (pack, btn) => {
-    if (!tg || !tg.openInvoice) { status.textContent = "Оплата работает в приложении Телеграма. Обнови Телеграм."; return; }
+    // старый клиент: openInvoice в скрипте Телеграма есть, но бросает WebAppMethodUnsupported — выходило «нет связи»
+    if (!tg || !tg.openInvoice || !(tg.isVersionAtLeast && tg.isVersionAtLeast("6.1"))) { status.textContent = "Оплата работает в приложении Телеграма. Обнови Телеграм."; return; }
     btn.disabled = true;
     status.textContent = "Открываю оплату…";
     step("buy");
@@ -1885,7 +1892,7 @@ function startStats() {
 
 function coachError(e) {
   // текст ошибки показываем только от воркера: у fetch он английский («Failed to fetch»)
-  if (e && e.fromCoach && e.message.length < 80) return e.message;
+  if (e && e.fromCoach && e.message.length < 200) return e.message; // «Лимит: N в сутки…» длиннее 80 — раньше показывалось «нет связи»
   return e && e.name === "AbortError" ? "Тренер думал слишком долго. Попробуй ещё раз." : "Нет связи с тренером. Проверь интернет.";
 }
 
@@ -3689,14 +3696,14 @@ async function boot() {
     const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
       constants("heroes"), localDict("items", 200), localDict("abilities", 1000),
       constants("item_ids"),
-      fetchJson("knowledge.json?v=12"), fetchJson("texts.json?v=19"),
+      ownJson("knowledge.json?v=12"), ownJson("texts.json?v=19"),
     ]);
     dictionary = createDictionary({ heroes, items, abilities });
     itemIds = ids;
     knowledge = kb;
     texts = tx;
   } catch {
-    errorScreen("Не удалось загрузить данные OpenDota.", boot);
+    errorScreen("Не удалось загрузить справочники. Проверь интернет и попробуй ещё раз.", boot);
     return;
   }
   await gate;

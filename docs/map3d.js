@@ -137,7 +137,7 @@ export function tacticalTable({ deaths = [], wards = [], reduced = false, haptic
   document.addEventListener("visibilitychange", kick);
   // столбы вырастают, когда стол доехал до экрана; вне экрана — пауза
   const io = new IntersectionObserver((es) => {
-    visible = es.some((x) => x.isIntersecting);
+    visible = es[es.length - 1].isIntersecting; // события приходят пачкой: верим последнему
     root.classList.toggle("paused", !visible);
     if (visible) { root.classList.add("grown"); kick(); }
   }, { threshold: 0.15 });
