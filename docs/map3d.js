@@ -2,7 +2,7 @@
 // (несколько смертей в одном месте — столб выше), обсы — золотыми. Пальцем стол крутится с инерцией
 // и наклоняется, без пальца медленно поворачивается сам. Тап по столбу — что там случилось.
 import { mapX, mapY, terrainUrl } from "./dotamap.js?v=3";
-import { whenGone } from "./aegis.js?v=8";
+import { whenGone } from "./aegis.js?v=9";
 
 function d(cls, ...children) {
   const n = document.createElement("div");
