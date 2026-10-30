@@ -384,14 +384,17 @@ export function aegisBadge({ reduced = false, haptic = () => {}, tick = () => {}
       if (!size || !ro) measure();
       gfx.draw(qMul(st.tilt, st.q), size);
     }
-    if (visible && !document.hidden) raf = requestAnimationFrame(frame);
+    if (visible && !document.hidden && !covered()) raf = requestAnimationFrame(frame);
   };
+  // витрина открыта поверх — щит под ней не рисуем: на айфоне два живых WebGL сразу съедают память
+  const covered = () => document.documentElement.classList.contains("sc-open") && !box.closest(".showcase");
   const start = () => { if (!raf && !stopped && live) { last = performance.now(); raf = requestAnimationFrame(frame); } };
   // события приходят пачкой («ещё не в DOM» и «уже на экране»): верит последнему, иначе анимация засыпает
   const io = window.IntersectionObserver && new IntersectionObserver((es) => { visible = es[es.length - 1].isIntersecting; if (visible) start(); });
   if (io) io.observe(box);
   const onVis = () => { if (!document.hidden) start(); };
   document.addEventListener("visibilitychange", onVis);
+  document.addEventListener("aegis-wake", onVis);
   const stopGyro = reduced || !gfx ? () => {} : gyro((beta, gamma) => {
     // наклон телефона вперёд-назад и вбок поворачивает щит по двум осям
     const pitch = Math.max(-16, Math.min(16, beta * 0.5)) * DEG, yaw = Math.max(-28, Math.min(28, gamma * 0.9)) * DEG;
@@ -409,6 +412,7 @@ export function aegisBadge({ reduced = false, haptic = () => {}, tick = () => {}
     if (io) io.disconnect();
     if (ro) ro.disconnect();
     document.removeEventListener("visibilitychange", onVis);
+    document.removeEventListener("aegis-wake", onVis);
     stopGyro();
     // контекстов WebGL у страницы мало: отдаём сразу
     const lose = gfx && gfx.gl.getExtension("WEBGL_lose_context");
@@ -482,6 +486,7 @@ export function aegisBadge({ reduced = false, haptic = () => {}, tick = () => {}
   // витрина без Sketchfab: кнопки видов доворачивают щит пружиной (градусы вокруг вертикали), «Поднять Аегис» — оборот
   box.aegisView = (deg) => { st.flip = deg; st.hold = true; st.freeUntil = 0; start(); };
   box.aegisClaim = claim;
+  box.aegisStop = stop; // контекст WebGL отдать сразу, не ждать проверки раз в 2 с
   box.aegisState = () => ({ q: st.q.map((v) => +v.toFixed(3)), drag: Boolean(st.drag), running: Boolean(raf), live, visible });
 
   if (gfx) {
@@ -497,6 +502,15 @@ export function aegisBadge({ reduced = false, haptic = () => {}, tick = () => {}
 }
 
 // ---------- витрина: живая модель на весь экран ----------
+
+// Мобильный Телеграм (и любой сенсорный телефон): Sketchfab не грузим
+function heavyForDevice() {
+  const tg = window.Telegram && window.Telegram.WebApp;
+  const pl = tg && tg.platform;
+  if (pl === "ios" || pl === "android" || pl === "android_x") return true;
+  if (pl && pl !== "unknown") return false;
+  try { return matchMedia("(pointer: coarse)").matches && Math.min(screen.width, screen.height) < 820; } catch { return false; }
+}
 
 let api = null;
 function loadApi() {
@@ -518,7 +532,7 @@ export function openShowcase({ haptic = () => {}, openLink = (url) => window.ope
   const iframe = el("iframe", { title: "3D-модель Аегиса", allow: "autoplay; fullscreen; xr-spatial-tracking" });
   const waitText = el("p", { class: "muted small", role: "status" }, "Загружаю 3D-модель…");
   const stage = el("div", { class: "sc-stage" }, iframe, el("div", { class: "sc-wait" }, el("img", { src: STILL, alt: "" }), waitText));
-  let viewer = null, light = "studio", view = "front";
+  let viewer = null, light = "studio", view = "front", timer = 0;
 
   const camera = (name, duration = 1.1) => {
     view = name;
@@ -558,17 +572,21 @@ export function openShowcase({ haptic = () => {}, openLink = (url) => window.ope
     order.forEach((v, i) => setTimeout(() => camera(v, 0.35), i * 360));
   } }, "Поднять Аегис");
   const close = () => {
+    dropIframe();
+    if (local) local.aegisStop();
     overlay.remove();
     document.documentElement.classList.remove("sc-open");
     document.removeEventListener("keydown", onKey);
+    document.dispatchEvent(new Event("aegis-wake"));
     clearTimeout(timer);
   };
   const onKey = (e) => { if (e.key === "Escape") close(); };
+  const hint = el("span", {}, "Крути пальцем, щипок — приблизить.");
   const overlay = el("div", { class: "showcase light-studio", role: "dialog", "aria-modal": "true", "aria-label": "Аегис чемпионов в 3D" },
     el("div", { class: "sc-head" }, el("h2", {}, "Аегис чемпионов"), el("button", { type: "button", class: "ghost", onclick: close }, "Закрыть")),
     stage,
     el("div", { class: "sc-controls" }, views, lights, claim),
-    el("p", { class: "sc-credit" }, "Крути пальцем, щипок — приблизить. 3D-модель «Aegis of champions» — ",
+    el("p", { class: "sc-credit" }, hint, " 3D-модель «Aegis of champions» — ",
       el("button", { type: "button", onclick: () => openLink(MODEL_URL) }, "msta2219"), ", CC BY 4.0"));
   document.body.append(overlay);
   document.documentElement.classList.add("sc-open"); // страница под витриной не листается
@@ -576,17 +594,28 @@ export function openShowcase({ haptic = () => {}, openLink = (url) => window.ope
 
   // Sketchfab не поднялся (тяжёлый для телефона, режется сетью) — крутим свой щит, без вечной «загрузки»
   let local = null;
+  // недогруженный Sketchfab продолжает качать модель и держит память: глушим его совсем
+  const dropIframe = () => {
+    if (viewer || !iframe.isConnected) return;
+    try { iframe.src = "about:blank"; } catch { /* уже ушёл */ }
+    iframe.remove();
+  };
   const fail = () => {
     if (!overlay.isConnected || viewer || local) return;
+    dropIframe();
     local = aegisBadge({ haptic, onOpen: () => {} });
     local.classList.add("sc-local");
     if (view !== "front") local.aegisView({ side: 90, back: 180 }[view]);
     stage.append(local);
     stage.classList.add("local");
+    hint.textContent = "Крути пальцем, двойной тап — поднять.";
   };
-  const timer = setTimeout(fail, 7000);
+  // Телефон: живая модель Sketchfab весит десятки мегабайт и на айфоне роняет Телеграм по памяти —
+  // сразу свой щит (виды и «Поднять» он умеет), живую модель можно открыть по ссылке автора в браузере
+  if (heavyForDevice()) { fail(); return; }
+  timer = setTimeout(fail, 7000);
   loadApi().then(() => {
-    if (!overlay.isConnected) return;
+    if (!overlay.isConnected || !iframe.isConnected) return;
     const client = new window.Sketchfab("1.12.1", iframe);
     client.init(UID, {
       // без автовращения: оно сбивает кнопки видов («Сзади» показывало бок)
@@ -596,7 +625,7 @@ export function openShowcase({ haptic = () => {}, openLink = (url) => window.ope
       success(v) {
         v.start();
         v.addEventListener("viewerready", () => {
-          if (!overlay.isConnected) return;
+          if (!overlay.isConnected || local) return;
           viewer = v;
           clearTimeout(timer);
           if (local) { local.remove(); stage.classList.remove("local"); }

@@ -238,10 +238,19 @@ await step("showcase", async () => {
   // тап по Аегису — витрина; Sketchfab в тесте недоступен, поэтому вместо вечной загрузки должен крутиться свой щит
   await page.locator(".app-top .aegis").click();
   await page.waitForSelector(".showcase", { timeout: 3000 });
-  await page.waitForSelector(".sc-stage.local .aegis.sc-local", { timeout: 10000 });
+  // телефон (сенсор): живую модель Sketchfab не качаем вовсе — она роняла Телеграм на айфоне по памяти
+  await page.waitForSelector(".sc-stage.local .aegis.sc-local", { timeout: 1500 });
+  if (await page.evaluate(() => Boolean(document.querySelector(".showcase iframe")))) throw new Error("витрина на телефоне держит iframe Sketchfab");
+  // щит на главной под витриной стоит, а не рисует впустую
+  await page.waitForFunction(() => !document.querySelector(".app-top .aegis").aegisState().running, null, { timeout: 2000 });
+  for (const name of ["Сбоку", "Сзади", "Спереди", "Поднять Аегис"]) await page.evaluate((n) => [...document.querySelectorAll(".showcase button")].find((b) => b.textContent === n).click(), name);
   await shot("showcase");
   await page.locator(".showcase .sc-head button").click();
   await page.waitForSelector(".showcase", { state: "detached", timeout: 3000 });
+  await page.waitForFunction(() => document.querySelector(".app-top .aegis").aegisState().running, null, { timeout: 2000 });
+  // открыть-закрыть десять раз подряд: контексты WebGL отдаются сразу, щит на главной живой
+  for (let i = 0; i < 10; i++) await page.evaluate(() => { document.querySelector(".app-top .aegis").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" })); document.querySelector(".showcase .sc-head button").click(); });
+  await page.waitForFunction(() => document.querySelector(".app-top .aegis.ready") && document.querySelector(".app-top .aegis").aegisState().running, null, { timeout: 2000 });
 });
 await step("overview", async () => {
   // свежая катка открывается из большого блока сверху
