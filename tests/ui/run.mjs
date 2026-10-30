@@ -120,6 +120,16 @@ function coach(body) {
 
 // Настоящий разбор реплея этого матча (GitHub Actions + odota/parser)
 const REPLAY = gz("replay_9052987576.json.gz");
+// UI_REPLAY_BROKEN=1 — кривой файл позиций: трёх героев нет, у остальных дыры и обрезанный конец (вылет из игры, сбой парсера)
+if (process.env.UI_REPLAY_BROKEN) {
+  const slots = Object.keys(REPLAY.pos);
+  for (const s of slots.slice(5, 8)) delete REPLAY.pos[s];
+  for (const s of Object.keys(REPLAY.pos)) {
+    const tr = REPLAY.pos[s];
+    REPLAY.pos[s] = tr.slice(0, Math.floor(tr.length * (0.4 + Math.random() * 0.6))).map((p, i) => (i % 7 < 3 ? null : p));
+  }
+  delete REPLAY.heroes[slots[1]];
+}
 const PLACEHOLDER = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
 
 const errors = [];
@@ -413,7 +423,7 @@ for (const [i, name] of ["blame", "phases", "deaths", "map", "build", "charts"].
       // повтор: все десять героев на карте в разгар драки, плей двигает время
       await page.waitForSelector(".live-map .lm-h[display=inline]", { timeout: 5000 });
       const heroes = await page.evaluate(() => { document.querySelector(".live-map").seek(1030); return document.querySelectorAll(".lm-h[display=inline]").length; });
-      if (heroes < 8) throw new Error(`на карте героев: ${heroes}`);
+      if (heroes < 8 && !process.env.UI_REPLAY_BROKEN) throw new Error(`на карте героев: ${heroes}`);
       await page.locator(".live-map").scrollIntoViewIfNeeded();
       await page.waitForTimeout(200);
       await page.locator(".live-card").screenshot({ path: join(OUT, "map-live.png") });
