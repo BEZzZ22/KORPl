@@ -202,6 +202,8 @@ async function shot(name, { full = true } = {}) {
 }
 // После каждого шага: на экране не должно быть служебного мусора вроде «undefined» или «NaN»
 const step = async (name, fn) => {
+  // UI_MONKEY_ONLY=1 — только главная и обезьяна, без остального набора
+  if (process.env.UI_MONKEY_ONLY && name !== "home" && name !== "monkey") return;
   try { await fn(); } catch (e) { errors.push(`${name}: ${e.message.split("\n").slice(0, process.env.UI_DEBUG ? 12 : 1).join("\n")}`); }
   // вёрстка не шире экрана: иначе страница ездит вбок
   const wide = await page.evaluate(() => {
@@ -678,7 +680,7 @@ if (process.env.UI_MONKEY) {
   const N = Number(process.env.UI_MONKEY) || 300;
   let seed = Number(process.env.UI_SEED) || 7;
   const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
-  const ctx7 = await browser.newContext({ viewport: { width: 375, height: 667 }, deviceScaleFactor: 3, hasTouch: true, isMobile: true, locale: "ru-RU",
+  const ctx7 = await browser.newContext({ viewport: { width: Number(process.env.UI_MONKEY_W) || 375, height: 667 }, deviceScaleFactor: 3, hasTouch: true, isMobile: true, locale: "ru-RU",
     serviceWorkers: "block", colorScheme: "dark", reducedMotion: "no-preference" });
   await ctx7.addInitScript((acc) => { try { localStorage.setItem("account_id", String(acc)); localStorage.setItem("gate_ok", String(Date.now() + 864e5)); } catch { /* */ } }, ACCOUNT);
   await ctx7.route("**/*", async (route) => {
@@ -705,10 +707,14 @@ if (process.env.UI_MONKEY) {
         const vis = (e) => { const b = e.getBoundingClientRect(); return b.width > 4 && b.height > 4 && b.bottom > 0 && b.top < innerHeight * 3; };
         const pool = [...document.querySelectorAll("button:not([disabled]), a[href]:not([href^=http]):not([target]), [role=button], [role=tab], .match-item, .tab, summary, .aegis, .m3d, .hc")]
           .filter(vis).filter((e) => !/Закрыть приложение|Оплатить|Купить|звёзд/i.test(e.textContent || ""));
-        if (r < 0.06) { history.back(); return "back"; }
+        // «Назад» Телеграма: в браузере его нет, поэтому реже и только внутри приложения
+        if (r < 0.03 && history.length > 2) { history.back(); return "back"; }
         if (r < 0.12) { window.scrollTo(0, r2 * document.body.scrollHeight); return "scroll"; }
         if (!pool.length) return "пусто";
-        const el = pool[Math.floor(r2 * pool.length)];
+        // нижняя панель видна всегда и съедала половину тапов: внутри экрана — в 85% случаев
+        const inside = pool.filter((e) => !e.closest(".tabbar, nav"));
+        const from = inside.length && r2 < 0.85 ? inside : pool;
+        const el = from[Math.floor(((r2 * 7919) % 1) * from.length)];
         el.scrollIntoView({ block: "center" });
         const b = el.getBoundingClientRect();
         return { name: `${el.tagName.toLowerCase()}.${String(el.className.baseVal ?? el.className).split(" ")[0]}:${(el.textContent || "").trim().slice(0, 18)}`, x: b.left + b.width / 2, y: b.top + b.height / 2 };
@@ -736,7 +742,11 @@ if (process.env.UI_MONKEY) {
       }
     }
     const nodes = await p7.evaluate(() => document.getElementsByTagName("*").length);
-    console.log(`обезьяна: ${N} действий, узлов DOM в конце ${nodes}`);
+    const heap = await p7.evaluate(() => (performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : 0));
+    console.log(`обезьяна: память JS ${heap} МБ`);
+    const freq = new Map();
+    for (const x of log) { const k = String(x).split(":")[0]; freq.set(k, (freq.get(k) || 0) + 1); }
+    console.log(`обезьяна: ${N} действий, узлов DOM в конце ${nodes}; чаще всего: ${[...freq].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, n]) => `${k} ${n}`).join(", ")}`);
   });
   await ctx7.close();
 }

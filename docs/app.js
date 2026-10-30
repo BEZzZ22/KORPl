@@ -8,7 +8,7 @@ import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=4";
 import { matchVerdicts } from "./blame.js?v=6";
 import { rankMedal3d } from "./medal3d.js?v=6";
 import { heroCard3d } from "./herocard3d.js?v=5";
-import { tacticalTable } from "./map3d.js?v=7";
+import { tacticalTable } from "./map3d.js?v=8";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];

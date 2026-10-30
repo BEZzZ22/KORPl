@@ -47,7 +47,9 @@ export function tacticalTable({ deaths = [], wards = [], reduced = false, haptic
       haptic("light");
       board.querySelectorAll(".m3d-pin.on").forEach((p) => p.classList.remove("on"));
       pin.classList.add("on");
-      showInfo(`${g.list.length > 1 ? `${g.list.length} смерти здесь` : "Смерть"}: ${times}`);
+      const n = g.list.length, m10 = n % 10, m100 = n % 100;
+      const word = m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? "смерти" : "смертей";
+      showInfo(`${n > 1 ? `${n} ${word} здесь` : "Смерть"}: ${times}`);
     });
     board.append(pin);
   });
