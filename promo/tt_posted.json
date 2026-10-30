@@ -58,5 +58,11 @@
   "status": "SEND_TO_USER_INBOX",
   "mode": "inbox",
   "at": "2026-10-30T06:23:52.816406+00:00"
+ },
+ "killers2": {
+  "publish_id": "v_inbox_file~v2.7702452237360023574",
+  "status": "SEND_TO_USER_INBOX",
+  "mode": "inbox",
+  "at": "2026-10-30T13:30:22.834156+00:00"
  }
 }
