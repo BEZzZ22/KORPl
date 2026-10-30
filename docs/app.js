@@ -440,6 +440,11 @@ async function heroBench(heroId) {
 // Friend ID, Steam ID, ссылки на профиль Steam (/profiles/7656...), Dotabuff, OpenDota, Stratz (/players/123)
 function toAccountId(raw) {
   const text = String(raw).trim();
+  // старые форматы Steam ID из консоли и сайтов статистики: STEAM_0:1:12345 и [U:1:24691]
+  const legacy = /^STEAM_[0-5]:([01]):(\d{1,10})$/i.exec(text);
+  if (legacy) { const id = Number(legacy[2]) * 2 + Number(legacy[1]); return id > 0 && id < 2 ** 32 ? id : null; }
+  const u3 = /^\[?U:1:(\d{1,10})\]?$/i.exec(text);
+  if (u3) { const id = Number(u3[1]); return id > 0 && id < 2 ** 32 ? id : null; }
   const link = /(?:profiles|players)\/(\d{1,20})(?!\d)/.exec(text);
   // Friend ID иногда копируют с пробелами или дефисами («123 456 789»)
   const digits = link ? link[1] : /^[\d\s-]+$/.test(text) ? text.replace(/[\s-]/g, "") : text;
