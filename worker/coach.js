@@ -1473,6 +1473,11 @@ async function handlePost(request, env, ctx, origin) {
   const ip = request.headers.get("CF-Connecting-IP") || "anon";
   const meter = { calls: 0, by: {} };
   const run = { ...env, meter };
+  // лимиты в час — на человека из Телеграма, а не на IP: у мобильного оператора один IP на сотни людей
+  const who = async () => {
+    const u = env.BOT_TOKEN && raw.initData ? await telegramUser(raw.initData, env.BOT_TOKEN).catch(() => null) : null;
+    return u && u.id ? `tg${u.id}` : ip;
+  };
   const later = (p) => { const q = p.catch(() => {}); if (ctx && ctx.waitUntil) ctx.waitUntil(q); return q; };
   const debug = (e) => (env.COACH_DEBUG ? { error: busyError(e), log: e.log } : { error: busyError(e) });
 
@@ -1624,7 +1629,7 @@ async function handlePost(request, env, ctx, origin) {
     if (body.length > MAX_CHAT_BODY) return reply(413, { error: "Слишком длинная переписка." }, origin);
     const ok = mode === "chat" ? raw.summary && raw.summary.hero : raw.a && raw.a.hero && raw.b && raw.b.hero;
     if (!ok) return reply(400, { error: "Не понял сводку." }, origin);
-    const limited = throttle(ip, Date.now(), Number(env.CHAT_IP_LIMIT) || CHAT_PER_IP_PER_HOUR, "chat", CHAT_PER_DAY);
+    const limited = throttle(await who(), Date.now(), Number(env.CHAT_IP_LIMIT) || CHAT_PER_IP_PER_HOUR, "chat", CHAT_PER_DAY);
     if (limited) return reply(429, { error: limited }, origin);
     // Человек — аккаунт Телеграма по подписанной initData, вне Телеграма — IP
     let quota = null;
@@ -1683,7 +1688,7 @@ async function handlePost(request, env, ctx, origin) {
     if (!quota) return reply(429, { error: limitText("coach", Number(env.ASK_PER_USER_DAY) || ASK_PER_USER_DAY), left: 0 }, origin);
   }
   const perHour = tier === "fast" ? FAST_PER_IP_PER_HOUR : tier === "opus" ? OPUS_PER_IP_PER_HOUR : PER_IP_PER_HOUR;
-  const limited = throttle(ip, Date.now(), Number(env.COACH_IP_LIMIT) || perHour, tier === "opus" ? "opus" : tier === "fast" ? "fast" : "coach", tier === "fast" ? 2 * GLOBAL_PER_DAY : GLOBAL_PER_DAY);
+  const limited = throttle(await who(), Date.now(), Number(env.COACH_IP_LIMIT) || perHour, tier === "opus" ? "opus" : tier === "fast" ? "fast" : "coach", tier === "fast" ? 2 * GLOBAL_PER_DAY : GLOBAL_PER_DAY);
   if (limited) { if (quota) await quota.refund(); console.warn(`coach ${tier || "all"} 429 ${ip}: ${limited}`); return reply(429, { error: limited }, origin); }
   const setup = tier === "fast" ? { ...run, CLAUDE_API_KEY: "" }
     : tier === "opus" ? { ...run, GROQ_API_KEY: "", GEMINI_API_KEY: "", CLAUDE_TIMEOUT: String(OPUS_TIMEOUT), CLAUDE_FIRST_BYTE: String(OPUS_TIMEOUT) }

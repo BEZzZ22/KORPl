@@ -3728,5 +3728,8 @@ export function draftAdvice({ enemies, pool = [], recent = {}, matchups = {}, co
 }
 
 export function analyze(match, player, od, knowledge, texts, proItems, heroBench, norms, matchups, replay = null, guides = null) {
+  // isRadiant OpenDota досчитывает сама, но в ответе запасного пути или старом кэше его может не быть: без него
+  // все десять оказались бы в одной команде. Сторона однозначно видна по слоту
+  for (const p of match.players || []) if (p && typeof p.isRadiant !== "boolean") p.isRadiant = Number(p.player_slot) < 128;
   return new MatchAnalyzer(match, player, od, knowledge, texts, proItems, heroBench, norms, matchups, replay, guides).run();
 }
