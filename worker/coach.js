@@ -7,7 +7,7 @@
 // Официальный лор героев с dota2.com (tools/fetch-lore.mjs): тренер рассказывает историю героя по нему, а не выдумывает
 import LORE from "./lore.json" with { type: "json" };
 import { withStore, migrateStep, purgeExpired } from "./store.js";
-import { spendUnit, spendChat, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT } from "./pay.js";
+import { spendUnit, spendChat, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT, loginUser, roboLink, roboResult, robokassaOn } from "./pay.js";
 
 const ALLOWED_ORIGINS = ["https://bezzz22.github.io"];
 const GEMINI_MODEL = "gemini-flash-lite-latest";
@@ -1232,8 +1232,9 @@ export async function buildReport(env, now = Date.now(), day = mskDay(now - 8640
   const paid = (await listAll(env, `paid:${day}:`)).filter((k) => k.metadata);
   if (paid.length) {
     const stars = paid.reduce((a, k) => a + (Number(k.metadata.s) || 0), 0);
-    lines.push("", `Оплаты: ${paid.length} на ${stars} звёзд`);
-    for (const k of paid.slice(0, 10)) lines.push(`— ${who({ n: k.metadata.n, u: k.metadata.un }, k.metadata.u)}: ${k.metadata.p}, ${k.metadata.s} зв. (${k.name.split(":").pop()})`);
+    const rub = paid.reduce((a, k) => a + (Number(k.metadata.r) || 0), 0);
+    lines.push("", `Оплаты: ${paid.length}${stars ? `, звёздами ${stars}` : ""}${rub ? `, картой ${rub} ₽` : ""}`);
+    for (const k of paid.slice(0, 10)) lines.push(`— ${who({ n: k.metadata.n, u: k.metadata.un }, k.metadata.u)}: ${k.metadata.p}, ${k.metadata.s ? `${k.metadata.s} зв.` : `${k.metadata.r} ₽`} (${k.name.split(":").pop()})`);
   }
   const fb = (await listAll(env, `fb:${day}:`)).filter((k) => k.metadata && !isOwner(env, k.name.split(":").pop()));
   if (fb.length) {
@@ -1558,6 +1559,19 @@ async function handlePost(request, env, ctx, origin) {
     return link ? reply(200, { link }, origin) : reply(502, { error: "Телеграм не выдал счёт. Попробуй ещё раз." }, origin);
   }
 
+  // Сайт (docs/pay.html): вход через Telegram Login Widget, оплата картой или СБП через Робокассу
+  if (mode === "web_wallet" || mode === "web_buy") {
+    if (!paywallOn(env)) return reply(200, { off: true }, origin);
+    const user = await loginUser(raw.login, env.BOT_TOKEN);
+    if (!user || !user.id) return reply(403, { error: "Войди через Телеграм ещё раз." }, origin);
+    const limited = throttle(String(user.id), Date.now(), 60, "pay", 20000);
+    if (limited) return reply(429, { error: limited }, origin);
+    if (mode === "web_wallet") return reply(200, { ...walletView(await getWallet(env, user.id)), cards: robokassaOn(env), name: user.first_name }, origin);
+    if (!PACKS[raw.pack]) return reply(400, { error: "Нет такого пакета." }, origin);
+    const url = await roboLink(env, raw.pack, user);
+    return url ? reply(200, { url }, origin) : reply(503, { error: "Оплата картой ещё не подключена." }, origin);
+  }
+
   if (!env.CLAUDE_API_KEY && !env.GEMINI_API_KEY && !env.GROQ_API_KEY) return reply(500, { error: "Тренер ещё не настроен." }, origin);
 
   if (mode === "chat" || mode === "compare") {
@@ -1713,6 +1727,14 @@ export default {
       const update = await request.json().catch(() => null);
       if (env.COACH_KV) ctx.waitUntil(handleBotUpdate(env, update));
       return new Response("ok");
+    }
+    // Робокасса: Result URL после оплаты картой или СБП (без Origin, проверка по подписи паролем 2)
+    if (request.method === "POST" && new URL(request.url).pathname === "/robokassa") {
+      const form = await request.formData().catch(() => null);
+      const got = form && await roboResult(env, form);
+      if (!got) return new Response("bad sign", { status: 400 });
+      if (got.pack && env.BOT_TOKEN) ctx.waitUntil(sendTelegram(env, "sendMessage", { chat_id: Number(got.user), text: thanksText(got.pack, got.wallet), reply_markup: appButton }).catch(() => false));
+      return new Response(got.ok);
     }
     // запасной путь к OpenDota: свой лимит без банов, чтобы сбой OpenDota не забанил человека и у тренера
     if (request.method === "GET" && new URL(request.url).pathname.startsWith("/od/")) {

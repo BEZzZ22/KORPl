@@ -1,6 +1,6 @@
 # Деплой воркера тренера в Cloudflare: при изменениях в worker/ и вручную (Actions → «Воркер тренера» → Run workflow).
 # Нужны секреты репозитория CLOUDFLARE_API_TOKEN (шаблон «Edit Cloudflare Workers») и CLOUDFLARE_ACCOUNT_ID.
-# Ключи самого воркера (CLAUDE_API_KEY, GROQ_API_KEY, GEMINI_API_KEY, GH_TOKEN, BOT_TOKEN, OPENDOTA_KEY) можно тоже держать в секретах
+# Ключи самого воркера (CLAUDE_API_KEY, GROQ_API_KEY, GEMINI_API_KEY, GH_TOKEN, BOT_TOKEN, OPENDOTA_KEY, ROBOKASSA_*) можно тоже держать в секретах
 # репозитория: заданные перекладываются в воркер, не заданные остаются как были в Cloudflare.
 name: Воркер тренера
 
@@ -78,8 +78,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           OPENDOTA_KEY: ${{ secrets.OPENDOTA_KEY }}
+          ROBOKASSA_LOGIN: ${{ secrets.ROBOKASSA_LOGIN }}
+          ROBOKASSA_PASS1: ${{ secrets.ROBOKASSA_PASS1 }}
+          ROBOKASSA_PASS2: ${{ secrets.ROBOKASSA_PASS2 }}
         run: |
-          for name in CLAUDE_API_KEY GROQ_API_KEY GEMINI_API_KEY GH_TOKEN BOT_TOKEN OPENDOTA_KEY; do
+          for name in CLAUDE_API_KEY GROQ_API_KEY GEMINI_API_KEY GH_TOKEN BOT_TOKEN OPENDOTA_KEY ROBOKASSA_LOGIN ROBOKASSA_PASS1 ROBOKASSA_PASS2; do
             value="${!name}"
             [ -z "$value" ] && continue
             printf '%s' "$value" | npx --yes wrangler@4 secret put "$name" -c wrangler.toml > /dev/null
