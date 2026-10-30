@@ -1380,6 +1380,28 @@ async function greet(env, msg) {
   return { greeted: ok ? 1 : 0 };
 }
 
+// Сводка по деньгам для владельца. Звёзды на балансе — от Телеграма; продажи — из ключей paid:<день>:<платёж>
+export async function moneyText(env, now = Date.now()) {
+  const bal = await tgCall(env, "getMyStarBalance", {});
+  const all = (await listAll(env, "paid:")).filter((k) => k.metadata);
+  const sum = (list) => ({ n: list.length, s: list.reduce((a, k) => a + (Number(k.metadata.s) || 0), 0), r: list.reduce((a, k) => a + (Number(k.metadata.r) || 0), 0) });
+  const line = (t) => `${t.n} ${plural(t.n, "оплата", "оплаты", "оплат")}${t.s ? `, звёздами ${t.s}` : ""}${t.r ? `, картой ${t.r} ₽` : ""}`;
+  const today = mskDay(now), week = mskDay(now - 6 * 86400000);
+  const day = (k) => k.name.split(":")[1];
+  const lines = [
+    bal ? `Звёзд на балансе бота: ${bal.amount}` : "Баланс звёзд Телеграм не отдал, попробуй позже.",
+    "Вывести можно через 21 день после оплаты, от 1000 звёзд: fragment.com, вход тем же аккаунтом, что владеет ботом.",
+    "",
+    `Сегодня: ${line(sum(all.filter((k) => day(k) === today)))}`,
+    `За 7 дней: ${line(sum(all.filter((k) => day(k) >= week)))}`,
+    `Всего: ${line(sum(all))}`,
+  ];
+  const total = sum(all);
+  if (total.s) lines.push(`На руки со звёзд примерно ${Math.round(total.s * 1.2)} ₽ (около 1,2 ₽ за звезду после вывода).`);
+  if (total.r) lines.push("Деньги с карт — в кабинете Робокассы: partner.robokassa.ru");
+  return lines.join("\n");
+}
+
 export async function handleBotUpdate(env, update, now = Date.now()) {
   // оплата звёздами: подтвердить счёт (Телеграм ждёт до 10 с), потом зачислить
   if (update && update.pre_checkout_query) {
@@ -1404,6 +1426,12 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
       + (card ? ", картой или через СБП — по кнопке ниже (ссылка на сутки)." : ".");
     await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text, reply_markup: { inline_keyboard: [...(card ? [[card]] : []), ...appButton.inline_keyboard] } }).catch(() => false);
     return { pay: 1 };
+  }
+  // владелец: «баланс» — звёзды на балансе бота (Bot API) и все оплаты из нашего учёта
+  if (isOwner(env, msg.from.id) && /^\/?(?:баланс|деньги|balance)(?:@\w+)?$/i.test(cmd)) {
+    const text = await moneyText(env, now);
+    await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text, disable_web_page_preview: true }).catch(() => false);
+    return { balance: text };
   }
   const back = isOwner(env, msg.from.id) && /^\/refund(?:@\w+)?\s+(\S+)$/i.exec(cmd);
   if (back) {
