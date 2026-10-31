@@ -189,6 +189,42 @@ test("кошелёк: сравнить-и-записать — списание 
   assert.equal((await getWallet(env, "7")).c, 13);
 });
 
+test("оплата: два одинаковых уведомления разом зачисляют пакет один раз", async () => {
+  const { grant, getWallet } = await import("./pay.js");
+  const env = withStore({ DB: fakeD1(), COACH_KV: fakeKV() });
+  const msg = { from: { id: 9 }, successful_payment: { invoice_payload: "p10:9", currency: "XTR", total_amount: 49, telegram_payment_charge_id: "ch9" } };
+  const [a, b] = await Promise.all([grant(env, msg), grant(env, msg)]);
+  assert.equal([a, b].filter((x) => x.dup).length, 1);
+  assert.equal((await getWallet(env, "9")).c, 10);
+  assert.equal((await grant(env, msg)).dup, true);
+  assert.equal((await getWallet(env, "9")).c, 10);
+});
+
+test("тренер: два запроса по одной катке разом списывают один разбор; зависшая метка не держит катку", async () => {
+  const { spendUnit, spendChat, getWallet, isOpen } = await import("./pay.js");
+  const env = withStore({ DB: fakeD1(), COACH_KV: fakeKV() });
+  const kv = env.COACH_KV;
+  await kv.put("wallet:5", JSON.stringify({ c: 5, until: 0, free: 1, d: "", n: 0 }));
+  const [a, b] = await Promise.all([spendUnit(env, "5", "m1"), spendChat(env, "5", "m1")]);
+  assert.equal([a, b].filter((x) => x.how === "credit").length, 1);
+  assert.equal((await getWallet(env, "5")).c, 4);
+  assert.ok(await isOpen(env, "5", "m1"));
+  // второй заход после первого — катка открыта, не списывает
+  assert.equal((await spendUnit(env, "5", "m1")).how, "open");
+  assert.equal((await getWallet(env, "5")).c, 4);
+  // воркер упал посреди списания: метка висит; сразу — «подожди», через минуту катка списывается как обычно
+  const t0 = Date.now();
+  await kv.put("unl:5:m2", `p${t0}`);
+  assert.equal(await isOpen(env, "5", "m2"), false);
+  assert.equal((await spendUnit(env, "5", "m2", t0 + 1000)).limit, true);
+  assert.equal((await spendUnit(env, "5", "m2", t0 + 61_000)).how, "credit");
+  assert.equal((await getWallet(env, "5")).c, 3);
+  // пейволл снимает метку: после покупки катка откроется
+  await kv.put("wallet:6", JSON.stringify({ c: 0, until: 0, free: 1, d: "", n: 0 }));
+  assert.equal((await spendUnit(env, "6", "m3")).paywall, true);
+  assert.equal(await kv.get("unl:6:m3"), null);
+});
+
 test("кошельки и оплаты не истекают: копия из KV без срока, старые сроки снимает чистка", async () => {
   const db = fakeD1(), kv = fakeKV();
   await kv.put("wallet:5", JSON.stringify({ c: 10 }));

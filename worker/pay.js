@@ -21,6 +21,10 @@ const DAY_MS = 86400_000;
 
 const mskDay = (now) => new Date(now + 3 * 3600_000).toISOString().slice(0, 10);
 const walletKey = (id) => `wallet:${id}`;
+// катка открывается прямо сейчас: метка «p<время>»; воркер упал посреди списания — через минуту метка не мешает
+const PEND_MS = 60_000;
+const pendingAge = (v, now) => (typeof v === "string" && v[0] === "p" ? now - (Number(v.slice(1)) || 0) : null);
+const BUSY = { limit: true, text: "Тренер уже взялся за эту катку, подожди пару секунд." };
 const unlockKey = (id, unit) => `unl:${id}:${String(unit).slice(0, 64)}`;
 
 export async function getWallet(env, id) {
@@ -53,26 +57,42 @@ export function walletView(w, now = Date.now()) {
 
 // Единица уже открыта (без списания): фоновый заход за Opus по старому разбору не должен тихо тратить разбор
 export async function isOpen(env, id, unit) {
-  return Boolean(await env.COACH_KV.get(unlockKey(id, unit)));
+  const v = await env.COACH_KV.get(unlockKey(id, unit));
+  return Boolean(v) && pendingAge(v, Date.now()) == null;
 }
 
 // Списать единицу. Вернёт { how, left, refund } или { paywall, wallet } / { limit, text }.
 // Уже открытая единица не списывается повторно (второй заход за Opus, чат по той же катке)
 export async function spendUnit(env, id, unit, now = Date.now()) {
-  const ukey = unlockKey(id, unit);
-  if (await env.COACH_KV.get(ukey)) return { how: "open", refund: async () => {} };
+  const ukey = unlockKey(id, unit), kv = env.COACH_KV;
+  const open = { how: "open", refund: async () => {} };
+  const seen = await kv.get(ukey), age = pendingAge(seen, now);
+  if (age != null && age < PEND_MS) return BUSY;
+  if (seen && age == null) return open;
+  // два запроса по одной катке разом (двойной тап, разбор и вопрос в чат) не должны списать два раза:
+  // катку занимаем меткой, второй видит её и ждёт
+  if (kv.cas && !(await kv.cas(ukey, seen, `p${now}`))) {
+    const v = await kv.get(ukey);
+    return v && pendingAge(v, now) == null ? open : BUSY;
+  }
   const day = mskDay(now);
-  let how, before, stop;
-  const w = await updateWallet(env, id, (w) => {
-    before = { ...w }; how = stop = null;
-    if (w.until > now) {
-      if (w.d !== day) { w.d = day; w.n = 0; }
-      if (w.n >= SUB_PER_DAY) { stop = "limit"; return false; }
-      w.n += 1; how = "sub";
-    } else if (w.free < FREE_COACH) { w.free += 1; how = "free"; }
-    else if (w.c > 0) { w.c -= 1; how = "credit"; }
-    else { stop = "paywall"; return false; }
-  });
+  let how, before, stop, w;
+  try {
+    w = await updateWallet(env, id, (w) => {
+      before = { ...w }; how = stop = null;
+      if (w.until > now) {
+        if (w.d !== day) { w.d = day; w.n = 0; }
+        if (w.n >= SUB_PER_DAY) { stop = "limit"; return false; }
+        w.n += 1; how = "sub";
+      } else if (w.free < FREE_COACH) { w.free += 1; how = "free"; }
+      else if (w.c > 0) { w.c -= 1; how = "credit"; }
+      else { stop = "paywall"; return false; }
+    });
+  } catch (e) {
+    if (kv.cas) await kv.delete(ukey).catch(() => {});
+    throw e;
+  }
+  if (stop && kv.cas) await kv.delete(ukey);
   if (stop === "limit") return { limit: true, text: `По подписке до ${SUB_PER_DAY} разборов в сутки. Новые после полуночи по Москве.` };
   if (stop === "paywall") return { paywall: true, wallet: walletView(w, now) };
   await env.COACH_KV.put(ukey, "0", { expirationTtl: UNLOCK_TTL });
@@ -95,6 +115,9 @@ export async function spendUnit(env, id, unit, now = Date.now()) {
 export async function spendChat(env, id, unit, now = Date.now()) {
   const ukey = unlockKey(id, unit);
   let asked = await env.COACH_KV.get(ukey);
+  const age = pendingAge(asked, now);
+  if (age != null && age < PEND_MS) return BUSY;
+  if (age != null) asked = null;
   let opened = null;
   if (asked == null) {
     opened = await spendUnit(env, id, unit, now);
@@ -139,17 +162,27 @@ export function checkout(q) {
   return ok ? { pre_checkout_query_id: q.id, ok: true } : { pre_checkout_query_id: q && q.id, ok: false, error_message: "Счёт устарел. Открой оплату в приложении заново." };
 }
 
-// Зачислить пакет. Платёж (звёзды или Робокасса) может прийти повторно — второй раз ничего не добавляем
+// Зачислить пакет. Платёж (звёзды или Робокасса) может прийти повторно — второй раз ничего не добавляем.
+// Повтор может прийти и одновременно с первым (Робокасса не дождалась ответа): платёж сначала занимаем
+// через сравнить-и-записать, иначе оба прочли бы «платежа нет» и зачислили дважды
 async function credit(env, id, pack, charge, rec, now) {
-  if (await env.COACH_KV.get(`pay:${charge}`)) return { dup: true };
-  const p = PACKS[pack];
-  const w = await updateWallet(env, id, (w) => {
-    if (p.credits) w.c += p.credits;
-    if (p.days) w.until = Math.max(w.until, now) + p.days * DAY_MS;
-  });
+  const kv = env.COACH_KV, key = `pay:${charge}`;
+  if (await kv.get(key)) return { dup: true };
   const full = { u: String(id), p: pack, t: now, ...rec };
-  await env.COACH_KV.put(`pay:${charge}`, JSON.stringify(full));
-  await env.COACH_KV.put(`paid:${mskDay(now)}:${charge}`, "1", { metadata: full, expirationTtl: 400 * 86400 });
+  if (kv.cas && !(await kv.cas(key, null, JSON.stringify(full)))) return { dup: true };
+  const p = PACKS[pack];
+  let w;
+  try {
+    w = await updateWallet(env, id, (w) => {
+      if (p.credits) w.c += p.credits;
+      if (p.days) w.until = Math.max(w.until, now) + p.days * DAY_MS;
+    });
+  } catch (e) {
+    if (kv.cas) await kv.delete(key).catch(() => {}); // не зачислили — повтор платежа должен пройти
+    throw e;
+  }
+  if (!kv.cas) await kv.put(key, JSON.stringify(full));
+  await kv.put(`paid:${mskDay(now)}:${charge}`, "1", { metadata: full, expirationTtl: 400 * 86400 });
   return { pack, wallet: walletView(w, now) };
 }
 
