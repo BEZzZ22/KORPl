@@ -195,6 +195,14 @@ test("новичку на /start — приветствие с кнопкой, �
     assert.equal((await handleBotUpdate(env, reply)).answered, 1);
   } finally { globalThis.fetch = real; }
   assert.deepEqual(sent.map((m) => [m.chat_id, m.text]), [[7, "Звёзды вернул"], [5, "Отправил."]]);
+  // ответ скрином — уходит копией
+  sent.length = 0;
+  globalThis.fetch = async (url, init) => { sent.push(JSON.parse(init.body)); return { ok: true, text: async () => "{}" }; };
+  try {
+    const shot = { message: { message_id: 42, from: { id: 5 }, chat: { id: 5, type: "private" }, photo: [{ file_id: "f" }], reply_to_message: { text: toOwner[1].text } } };
+    assert.equal((await handleBotUpdate(env, shot)).answered, 1);
+  } finally { globalThis.fetch = real; }
+  assert.deepEqual(sent[0], { chat_id: 7, from_chat_id: 5, message_id: 42 });
   // имя с чужим «(id …)» не уводит ответ владельца к другому человеку
   sent.length = 0;
   globalThis.fetch = async (url, init) => { sent.push(JSON.parse(init.body)); return { ok: true, text: async () => "{}" }; };

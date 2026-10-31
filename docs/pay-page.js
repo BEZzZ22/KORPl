@@ -30,7 +30,7 @@
     store.set(login);
   }
   // ссылка из бота: #t=<подписанный токен>, вход уже выполнен
-  const tok = /^#t=([\w.%-]+)$/.exec(location.hash);
+  const tok = /^#t=([\w.%~!*'()-]+)$/.exec(location.hash);
   if (tok) {
     const parts = tok[1].split(".");
     let name = "", username = "";
@@ -41,6 +41,10 @@
   const robo = q.has("InvId") ? (q.has("SignatureValue") ? "ok" : "fail") : "";
   const result = q.get("ok") ? "ok" : q.get("fail") ? "fail" : robo;
   if (q.toString()) history.replaceState(null, "", location.pathname + location.hash);
+
+  // «Назад» из Робокассы на айфоне достаёт страницу из кэша как была: кнопка пакета так и осталась выключенной
+  // «Открываю оплату…». Перезагружаем — баланс и кнопки свежие
+  addEventListener("pageshow", (e) => { if (e.persisted) location.reload(); });
 
   const saved = store.get();
   const auth = saved && saved.token ? { token: saved.token } : { login: saved };
@@ -94,6 +98,8 @@
     if (!w.cards && !result) { status.className = "status"; status.textContent = "Оплата картой скоро заработает. Пока можно платить звёздами в боте."; }
   };
 
+  // Робокасса возвращает сюда раньше, чем её уведомление дойдёт до воркера: баланс после оплаты переспрашиваем
+  if (result === "ok") for (const ms of [4000, 12000]) setTimeout(() => post({ mode: "web_wallet", ...auth }).then(show).catch(() => {}), ms);
   post({ mode: "web_wallet", ...auth }).then(show).catch((e) => {
     status.className = "status bad";
     status.textContent = e.message;

@@ -923,6 +923,10 @@ test("оплата картой из бота: ссылка с токеном н
   assert.equal(await tokenUser(token, "999:zzz", now), null);
   assert.equal(await tokenUser(token.replace(/^8\./, "9."), "123:abc", now), null);
   assert.equal(await tokenUser(token, "123:abc", now + 2 * 86400000), null);
+  // имя с точкой и скобками: токен не рвётся, страница оплаты его узнаёт
+  const odd = (await payUrl("123:abc", { id: 9, first_name: "A.K. (Аксель)!", username: "a_k" }, now)).split("#t=")[1];
+  assert.match(`#t=${odd}`, /^#t=([\w.%-]+)$/);
+  assert.deepEqual(await tokenUser(odd, "123:abc", now), { id: 9, first_name: "A.K. (Аксель)!", username: "a_k" });
   const kv = fakeKV();
   const e = { ...env, COACH_KV: kv, BOT_TOKEN: "123:abc", RATE_PER_MIN: "1000", ROBOKASSA_LOGIN: "shop", ROBOKASSA_PASS1: "p1", ROBOKASSA_PASS2: "p2" };
   mockFetch({});
