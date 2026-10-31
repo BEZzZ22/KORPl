@@ -107,9 +107,9 @@ async def rules():
     print(f"Групп разобрано: {sum(1 for v in out.values() if 'error' not in v)}, ошибок: {sum(1 for v in out.values() if 'error' in v)}")
 
 
-PROFILE = {"first_name": "Аксель", "last_name": "| DotaRazbor",
-           "about": "Менеджер @DotaRazbor_bot: разбор катки Dota 2. Сотрудничество — пиши"}  # лимит био 70
-USERNAMES = ["dotarazbor_manager", "dotarazbor_axel", "axel_dotarazbor"]
+PROFILE = {"first_name": "Максим", "last_name": "| DotaRazbor",
+           "about": "Менеджер по партнёрствам @DotaRazbor_bot. Реклама, коллабы — в ЛС"}  # лимит био 70
+USERNAMES = ["dotarazbor_manager", "dotarazbor_partners", "dotarazbor_biz"]
 
 
 async def setup():
