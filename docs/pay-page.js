@@ -42,6 +42,10 @@
   const result = q.get("ok") ? "ok" : q.get("fail") ? "fail" : robo;
   if (q.toString()) history.replaceState(null, "", location.pathname + location.hash);
 
+  // «Назад» из Робокассы на айфоне достаёт страницу из кэша как была: кнопка пакета так и осталась выключенной
+  // «Открываю оплату…». Перезагружаем — баланс и кнопки свежие
+  addEventListener("pageshow", (e) => { if (e.persisted) location.reload(); });
+
   const saved = store.get();
   const auth = saved && saved.token ? { token: saved.token } : { login: saved };
   const login = saved;
