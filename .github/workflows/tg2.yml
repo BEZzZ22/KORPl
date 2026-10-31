@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "code — прислать код, login — войти, rules — снять правила чатов, setup — почистить чаты и оформить профиль поддержки"
+        description: "code — прислать код, login — войти, rules — снять правила чатов, setup — почистить чаты и оформить профиль менеджера"
         type: choice
         options: [code, login, rules, setup]
         default: code

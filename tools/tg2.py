@@ -107,13 +107,13 @@ async def rules():
     print(f"Групп разобрано: {sum(1 for v in out.values() if 'error' not in v)}, ошибок: {sum(1 for v in out.values() if 'error' in v)}")
 
 
-PROFILE = {"first_name": "DotaRazbor", "last_name": "| Поддержка",
-           "about": "Поддержка @DotaRazbor_bot — разбор твоей катки Dota 2 за минуту. Вопросы — сюда."}
-USERNAMES = ["dotarazbor_help", "dotarazbor_support", "dotarazbor_helper"]
+PROFILE = {"first_name": "Аксель", "last_name": "| DotaRazbor",
+           "about": "Менеджер DotaRazbor. Разбор катки Dota 2 за минуту: @DotaRazbor_bot. Сотрудничество и взаимопиар — пиши."}
+USERNAMES = ["dotarazbor_manager", "dotarazbor_axel", "axel_dotarazbor"]
 
 
 async def setup():
-    """Чистит все чаты акка (кроме служебного чата Telegram с кодами входа) и оформляет профиль поддержки."""
+    """Чистит все чаты акка (кроме служебного чата Telegram с кодами входа) и оформляет профиль менеджера."""
     from telethon.errors import UsernameNotModifiedError, UsernameOccupiedError
     from telethon.tl.functions.account import UpdateProfileRequest, UpdateUsernameRequest
     from telethon.tl.functions.photos import DeletePhotosRequest, UploadProfilePhotoRequest
