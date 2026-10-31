@@ -1870,7 +1870,13 @@ export default {
       if (!ALLOWED_ORIGINS.includes(origin)) return reply(403, { error: "Нельзя." }, origin);
       return proxyOpenDota(env, new URL(request.url), request.headers.get("CF-Connecting-IP") || "anon", origin);
     }
-    // файл позиций реплея с GitHub через воркер: у части провайдеров raw.githubusercontent.com не открывается
+    // антиддос: любой запрос с одного IP считается, при превышении лестница банов (5 мин, 30 мин, 12 ч).
+    // Запрос из Телеграма считаем по человеку: у мобильных операторов один IP на сотни людей
+    if (request.method !== "OPTIONS") {
+      const ban = await rateGuard(env, await guardKey(request, env));
+      if (ban) return reply(429, { error: ban.text, retry_after: Math.ceil(ban.wait / 1000) }, origin);
+    }
+    // файл позиций реплея с GitHub через воркер (после антиддоса: путь открытый): у части провайдеров raw.githubusercontent.com не открывается
     const rp = request.method === "GET" && /^\/rp\/(\d{6,12})\.json$/.exec(new URL(request.url).pathname);
     if (rp) {
       if (!ALLOWED_ORIGINS.includes(origin)) return reply(403, { error: "Нельзя." }, origin);
@@ -1878,12 +1884,6 @@ export default {
       if (!res) return reply(502, { error: "GitHub не отвечает." }, origin);
       if (!res.ok) return reply(res.status === 404 ? 404 : 502, null, origin);
       return new Response(res.body, { status: 200, headers: { "Content-Type": "application/json", ...cors(origin) } });
-    }
-    // антиддос: любой запрос с одного IP считается, при превышении лестница банов (5 мин, 30 мин, 12 ч).
-    // Запрос из Телеграма считаем по человеку: у мобильных операторов один IP на сотни людей
-    if (request.method !== "OPTIONS") {
-      const ban = await rateGuard(env, await guardKey(request, env));
-      if (ban) return reply(429, { error: ban.text, retry_after: Math.ceil(ban.wait / 1000) }, origin);
     }
     if (request.method === "GET") {
       const url = new URL(request.url);
