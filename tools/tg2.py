@@ -353,13 +353,81 @@ async def test():
     await c.disconnect()
 
 
+JOIN_MAX = 15        # вступлений за прогон
+JOIN_GAP = 60        # секунд между вступлениями
+JOINED = ROOT / "promo" / "joined.json"
+
+
+def is_dota(v):
+    t = (v.get("title", "") + " " + v.get("about", "")).lower()
+    return any(w in t for w in ("dota", "дота", "доту", "доте", "дотер", "доташ"))
+
+
+async def join():
+    """Вступает в крупнейшие Дота-группы и каналы из promo/targets.json (по JOIN_MAX за прогон) и складывает в папки."""
+    from telethon.errors import ChannelsTooMuchError, FloodWaitError, InviteRequestSentError
+    from telethon.tl.functions.channels import JoinChannelRequest
+
+    targets = json.loads(TARGETS.read_text(encoding="utf-8")) if TARGETS.exists() else {}
+    joined = json.loads(JOINED.read_text(encoding="utf-8")) if JOINED.exists() else []
+    pool = sorted(((k, v) for k, v in targets.items() if "error" not in v and is_dota(v) and k not in joined),
+                  key=lambda kv: -(kv[1].get("members") or 0))
+    c = await connected()
+    done = 0
+    for name, v in pool:
+        if done >= JOIN_MAX:
+            break
+        try:
+            await c(JoinChannelRequest(await c.get_entity(name)))
+            joined.append(name)
+            done += 1
+            print(f"Вступил: {v.get('kind')} {v.get('members')}")
+        except InviteRequestSentError:
+            joined.append(name)
+            print("Заявка на вступление отправлена")
+        except FloodWaitError as e:
+            print(f"FloodWait {e.seconds} с — стоп")
+            break
+        except ChannelsTooMuchError:
+            print("Лимит групп на акк — стоп")
+            break
+        except Exception as e:
+            print(f"{type(e).__name__}")
+        await asyncio.sleep(JOIN_GAP)
+    JOINED.write_text(json.dumps(joined, ensure_ascii=False, indent=1), encoding="utf-8")
+    await make_folder(c, 3, "Дота-чаты", joined)
+    await c.disconnect()
+    print(f"Вступил за прогон: {done}, всего: {len(joined)}, осталось в базе: {len(pool) - done}")
+
+
+async def make_folder(c, fid, title, names, pinned=0):
+    from telethon.tl.functions.messages import UpdateDialogFilterRequest
+    from telethon.tl.types import DialogFilter, TextWithEntities
+
+    peers = []
+    for n in names[:100]:
+        try:
+            peers.append(await c.get_input_entity(n))
+        except Exception:
+            pass
+    if not peers:
+        return
+    try:
+        f = DialogFilter(id=fid, title=TextWithEntities(text=title, entities=[]), pinned_peers=peers[:pinned],
+                         include_peers=peers[pinned:], exclude_peers=[])
+    except TypeError:
+        f = DialogFilter(id=fid, title=title, pinned_peers=peers[:pinned], include_peers=peers[pinned:], exclude_peers=[])
+    await c(UpdateDialogFilterRequest(id=fid, filter=f))
+    print(f"Папка «{title}»: {len(peers)}")
+
+
 if __name__ == "__main__":
     act = os.environ.get("ACTION", "rules")
     if act == "code" and os.environ.get("CODE", "").strip():
         act = "login"  # код вбит в поле — значит, это вход, даже если action забыли переключить
     if act == "code":
         asyncio.run(send_code())
-    elif act in ("discover", "send", "inbox", "folder", "test"):
+    elif act in ("discover", "send", "inbox", "folder", "test", "join"):
         asyncio.run(globals()[act]())
     elif act == "setup":
         asyncio.run(setup())
