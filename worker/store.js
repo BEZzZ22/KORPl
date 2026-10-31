@@ -61,7 +61,8 @@ export function d1kv(db, kv = null, clock = () => Date.now()) {
     const got = await kv.getWithMetadata(k, "text");
     if (!got || got.value == null) return null;
     await db.prepare("INSERT OR IGNORE INTO kv (k, v, meta, exp) VALUES (?, ?, ?, ?)")
-      .bind(k, got.value, got.metadata == null ? null : JSON.stringify(got.metadata), clock() + COPY_TTL).run();
+      // деньги и оплаты в KV бессрочные: со сроком копии кошелёк с купленными разборами пропал бы через 120 дней
+      .bind(k, got.value, got.metadata == null ? null : JSON.stringify(got.metadata), MONEY.test(k) ? null : clock() + COPY_TTL).run();
     return { v: got.value, meta: got.metadata == null ? null : JSON.stringify(got.metadata) };
   };
   const store = {
