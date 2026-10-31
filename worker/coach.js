@@ -1483,8 +1483,11 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
   // id — последний в первой строке: имя человек пишет сам и может вписать туда чужой «(id …)», а наш идёт после имени
   const head = isOwner(env, msg.from.id) && msg.reply_to_message && String(msg.reply_to_message.text || "").split("\n")[0];
   const to = head && /^Письмо в бота от /.test(head) && [...head.matchAll(new RegExp(FWD_ID, "g"))].pop();
-  if (to && msg.text) {
-    const ok = await sendTelegram(env, "sendMessage", { chat_id: Number(to[1]), text: msg.text }).catch(() => false);
+  if (to) {
+    // ответ текстом — как текст, скрин, голосовое или стикер — копией без подписи «переслано»
+    const ok = await (msg.text
+      ? sendTelegram(env, "sendMessage", { chat_id: Number(to[1]), text: msg.text })
+      : sendTelegram(env, "copyMessage", { chat_id: Number(to[1]), from_chat_id: msg.chat.id, message_id: msg.message_id })).catch(() => false);
     await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: ok ? "Отправил." : "Не ушло: человек, похоже, остановил бота." }).catch(() => false);
     return { answered: ok ? 1 : 0 };
   }
