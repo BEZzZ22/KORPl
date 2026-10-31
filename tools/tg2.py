@@ -296,11 +296,15 @@ async def inbox():
     import datetime
     from telethon.tl.types import User
 
-    c = await connected()
+    c = await connected(allow_main=True)
+    # с основы читаем ТОЛЬКО диалоги с теми, кому писали по работе — личку Ярика не трогаем
+    work = {k.lower() for k in json.loads(SENT.read_text(encoding="utf-8"))} if SENT.exists() else set()
     since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=3)
     out = {}
-    async for d in c.iter_dialogs(limit=100):
+    async for d in c.iter_dialogs(limit=200):
         if d.id == 777000 or not isinstance(d.entity, User) or d.entity.bot:
+            continue
+        if FROM_MAIN and (d.entity.username or "").lower() not in work:
             continue
         if d.date and d.date < since:
             continue
@@ -310,7 +314,7 @@ async def inbox():
         out[d.entity.username or str(d.id)] = {"name": " ".join(filter(None, [d.entity.first_name, d.entity.last_name])),
                                                "unread": d.unread_count, "msgs": msgs[::-1]}
     await c.disconnect()
-    INBOX.write_text(seal(out), encoding="utf-8")
+    (promo_tokens.DIR / ("inbox_main.enc" if FROM_MAIN else "inbox.enc")).write_text(seal(out), encoding="utf-8")
     print(f"Диалогов: {len(out)}, непрочитанных: {sum(v['unread'] for v in out.values())}")
 
 
