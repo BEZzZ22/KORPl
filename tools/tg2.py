@@ -108,7 +108,7 @@ async def rules():
 
 
 PROFILE = {"first_name": "Аксель", "last_name": "| DotaRazbor",
-           "about": "Менеджер DotaRazbor. Разбор катки Dota 2 за минуту: @DotaRazbor_bot. Сотрудничество и взаимопиар — пиши."}
+           "about": "Менеджер @DotaRazbor_bot: разбор катки Dota 2. Сотрудничество — пиши"}  # лимит био 70
 USERNAMES = ["dotarazbor_manager", "dotarazbor_axel", "axel_dotarazbor"]
 
 
