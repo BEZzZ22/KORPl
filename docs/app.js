@@ -368,11 +368,17 @@ async function constants(name, timeout = 20000) {
     if (data && typeof data === "object") return data;
   } catch {}
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeout);
+  // заблокированный GitHub часто не отказывает, а висит: долго его не ждём, дальше есть воркер
+  const timer = setTimeout(() => ctrl.abort(), Math.min(timeout, 8000));
   try {
     const res = await fetch(`${CONSTANTS_MIRROR}/${name}.json`, { signal: ctrl.signal });
     if (!res.ok) throw new Error(`Справочник ${name}: ${res.status}`);
     return await res.json();
+  } catch (e) {
+    // у части провайдеров недоступны и OpenDota, и GitHub: третий путь — через наш воркер
+    const data = await viaProxy(`/constants/${name}`, e);
+    if (data && typeof data === "object") return data;
+    throw e;
   } finally {
     clearTimeout(timer);
   }
@@ -2890,8 +2896,10 @@ async function fetchReplay(matchId) {
     try {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 15000);
-      const res = await fetch(`${REPLAY_RAW}/${matchId}.json`, { signal: ctrl.signal });
-      data = res.ok ? await res.json() : null;
+      let res = await fetch(`${REPLAY_RAW}/${matchId}.json`, { signal: ctrl.signal }).catch(() => null);
+      // GitHub не открылся (не 404, а сеть): у части провайдеров он закрыт — тот же файл через воркер
+      if (!res && COACH_URL && !ctrl.signal.aborted) res = await fetch(`${COACH_URL}/rp/${matchId}.json`, { signal: ctrl.signal });
+      data = res && res.ok ? await res.json() : null;
       clearTimeout(timer);
     } catch { data = null; }
     if (data) replayCache.set(matchId, data);

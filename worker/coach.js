@@ -1619,7 +1619,7 @@ async function handlePost(request, env, ctx, origin) {
     const limited = throttle(ip, Date.now(), 30, "vanity", 20000);
     if (limited) return reply(429, { error: limited }, origin);
     const id = await steamVanity(name);
-    return id ? reply(200, { steam64: id }, origin) : reply(404, { error: "Steam не нашёл профиль по этой ссылке. Пришли Friend ID из профиля в Доте." }, origin);
+    return id ? reply(200, { steam64: id }, origin) : reply(404, { error: "По этой ссылке профиль не нашёлся. Пришли Friend ID: в Доте в профиле, цифры под ником." }, origin);
   }
 
   // «Не согласен» из приложения: какой вывод и в каком матче. Видно в ежедневном отчёте
@@ -1867,6 +1867,15 @@ export default {
     if (request.method === "GET" && new URL(request.url).pathname.startsWith("/od/")) {
       if (!ALLOWED_ORIGINS.includes(origin)) return reply(403, { error: "Нельзя." }, origin);
       return proxyOpenDota(env, new URL(request.url), request.headers.get("CF-Connecting-IP") || "anon", origin);
+    }
+    // файл позиций реплея с GitHub через воркер: у части провайдеров raw.githubusercontent.com не открывается
+    const rp = request.method === "GET" && /^\/rp\/(\d{6,12})\.json$/.exec(new URL(request.url).pathname);
+    if (rp) {
+      if (!ALLOWED_ORIGINS.includes(origin)) return reply(403, { error: "Нельзя." }, origin);
+      const res = await fetch(`${REPLAY_RAW}/${rp[1]}.json`, { signal: AbortSignal.timeout(15000), cf: { cacheTtl: 300 } }).catch(() => null);
+      if (!res) return reply(502, { error: "GitHub не отвечает." }, origin);
+      if (!res.ok) return reply(res.status === 404 ? 404 : 502, null, origin);
+      return new Response(res.body, { status: 200, headers: { "Content-Type": "application/json", ...cors(origin) } });
     }
     // антиддос: любой запрос с одного IP считается, при превышении лестница банов (5 мин, 30 мин, 12 ч).
     // Запрос из Телеграма считаем по человеку: у мобильных операторов один IP на сотни людей

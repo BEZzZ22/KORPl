@@ -91,7 +91,7 @@ async function cacheFirstOk(req, cacheName) {
   const res = await fetch(req);
   if (res.ok) {
     await cache.put(req, res.clone());
-    await trim(cache, "https://raw.githubusercontent.com/BEZzZ22/KORPl/replays/", MATCHES_KEEP);
+    await trim(cache, req.url.slice(0, req.url.lastIndexOf("/") + 1), MATCHES_KEEP);
   }
   return res;
 }
@@ -128,6 +128,10 @@ self.addEventListener("fetch", (e) => {
   if (url.hostname === "raw.githubusercontent.com" && url.pathname.startsWith("/odota/dotaconstants/")) { e.respondWith(staleWhileRevalidate(req, DATA)); return; }
   // файл позиций реплея после разбора не меняется: второй раз открывается без сети. 404 не кэшируем — реплей ещё могут разобрать
   if (url.hostname === "raw.githubusercontent.com" && url.pathname.startsWith("/BEZzZ22/KORPl/replays/")) { e.respondWith(cacheFirstOk(req, DATA)); return; }
+  // файл позиций через воркер (GitHub недоступен): так же, как с GitHub
+  if (url.hostname.endsWith(".workers.dev") && /^\/rp\/\d+\.json$/.test(url.pathname)) { e.respondWith(cacheFirstOk(req, DATA)); return; }
+  // справочники через наш воркер (OpenDota и GitHub у провайдера недоступны): тоже нужны без сети
+  if (url.hostname.endsWith(".workers.dev") && url.pathname.startsWith("/od/constants/")) { e.respondWith(staleWhileRevalidate(req, DATA)); return; }
   if (url.hostname !== "api.opendota.com") return;
   if (/^\/api\/matches\/\d+$/.test(url.pathname)) e.respondWith(parsedMatch(req));
   else if (url.pathname.startsWith("/api/constants/") || url.pathname === "/api/benchmarks" || /^\/api\/heroes\/\d+\//.test(url.pathname)) e.respondWith(staleWhileRevalidate(req, DATA));
