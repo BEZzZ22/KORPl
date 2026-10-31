@@ -451,7 +451,11 @@ async def fix():
                     mine = m
                     break
             if mine:
-                if (mine.message or "") != item["text"]:
+                from telethon.tl.functions.messages import GetPeerDialogsRequest
+                pd = await c(GetPeerDialogsRequest(peers=[await c.get_input_entity(ent)]))
+                if pd.dialogs and pd.dialogs[0].read_outbox_max_id >= mine.id:
+                    print(f"Уже прочитано, не трогаю: @{to}")
+                elif (mine.message or "") != item["text"]:
                     await c.edit_message(ent, mine, item["text"])
                 print(f"Исправлено: @{to}")
             elif new_sent < 5:
