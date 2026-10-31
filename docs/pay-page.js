@@ -98,6 +98,8 @@
     if (!w.cards && !result) { status.className = "status"; status.textContent = "Оплата картой скоро заработает. Пока можно платить звёздами в боте."; }
   };
 
+  // Робокасса возвращает сюда раньше, чем её уведомление дойдёт до воркера: баланс после оплаты переспрашиваем
+  if (result === "ok") for (const ms of [4000, 12000]) setTimeout(() => post({ mode: "web_wallet", ...auth }).then(show).catch(() => {}), ms);
   post({ mode: "web_wallet", ...auth }).then(show).catch((e) => {
     status.className = "status bad";
     status.textContent = e.message;
