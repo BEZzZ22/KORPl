@@ -128,6 +128,8 @@ self.addEventListener("fetch", (e) => {
   if (url.hostname === "raw.githubusercontent.com" && url.pathname.startsWith("/odota/dotaconstants/")) { e.respondWith(staleWhileRevalidate(req, DATA)); return; }
   // файл позиций реплея после разбора не меняется: второй раз открывается без сети. 404 не кэшируем — реплей ещё могут разобрать
   if (url.hostname === "raw.githubusercontent.com" && url.pathname.startsWith("/BEZzZ22/KORPl/replays/")) { e.respondWith(cacheFirstOk(req, DATA)); return; }
+  // справочники через наш воркер (OpenDota и GitHub у провайдера недоступны): тоже нужны без сети
+  if (url.hostname.endsWith(".workers.dev") && url.pathname.startsWith("/od/constants/")) { e.respondWith(staleWhileRevalidate(req, DATA)); return; }
   if (url.hostname !== "api.opendota.com") return;
   if (/^\/api\/matches\/\d+$/.test(url.pathname)) e.respondWith(parsedMatch(req));
   else if (url.pathname.startsWith("/api/constants/") || url.pathname === "/api/benchmarks" || /^\/api\/heroes\/\d+\//.test(url.pathname)) e.respondWith(staleWhileRevalidate(req, DATA));

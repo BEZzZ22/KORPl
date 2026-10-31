@@ -187,6 +187,8 @@ async function handleRoute(route) {
   }
   if (url.hostname === "raw.githubusercontent.com") {
     const mirror = url.pathname.match(/^\/odota\/dotaconstants\/master\/build\/(\w+)\.json$/);
+    // UI_MIRROR_DOWN=1 — GitHub тоже недоступен (бывает у провайдеров): справочники идут через воркер
+    if (mirror && process.env.UI_MIRROR_DOWN) return route.abort("connectionrefused");
     if (mirror) return route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(opendota(new URL(`https://api.opendota.com/api/constants/${mirror[1]}`))) });
     return url.pathname.endsWith(`/r/${match.match_id}.json`) ? route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(REPLAY) }) : route.fulfill({ status: 404, body: "" });
   }
@@ -807,6 +809,7 @@ if (!only || only.has("offline")) {
   await ctx2.addInitScript((acc) => { try { localStorage.setItem("account_id", String(acc)); } catch { /* */ } }, ACCOUNT);
   await ctx2.route("**/*", handleRoute);
   const p2 = await ctx2.newPage();
+  if (process.env.UI_DEBUG_NET) { p2.on("requestfailed", (r) => console.log("FAIL", r.url(), r.failure() && r.failure().errorText)); p2.on("response", (r) => { if (/workers|githubusercontent|constants/.test(r.url())) console.log("RESP", r.status(), r.url(), r.fromServiceWorker()); }); }
   p2.on("pageerror", (e) => errors.push(`offline pageerror: ${e.message}`));
   await step("offline", async () => {
     await p2.goto(`${BASE}/index.html`);
