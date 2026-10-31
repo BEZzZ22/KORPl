@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "code — прислать код, login — войти, rules — снять правила чатов"
+        description: "code — прислать код, login — войти, rules — снять правила чатов, setup — почистить чаты и оформить профиль поддержки"
         type: choice
-        options: [code, login, rules]
+        options: [code, login, rules, setup]
         default: code
       code:
         description: "Код из Телеграма (только для login)"

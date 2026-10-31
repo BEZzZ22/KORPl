@@ -107,12 +107,62 @@ async def rules():
     print(f"Групп разобрано: {sum(1 for v in out.values() if 'error' not in v)}, ошибок: {sum(1 for v in out.values() if 'error' in v)}")
 
 
+PROFILE = {"first_name": "DotaRazbor", "last_name": "| Поддержка",
+           "about": "Поддержка @DotaRazbor_bot — разбор твоей катки Dota 2 за минуту. Вопросы — сюда."}
+USERNAMES = ["dotarazbor_help", "dotarazbor_support", "dotarazbor_helper"]
+
+
+async def setup():
+    """Чистит все чаты акка (кроме служебного чата Telegram с кодами входа) и оформляет профиль поддержки."""
+    from telethon.errors import UsernameNotModifiedError, UsernameOccupiedError
+    from telethon.tl.functions.account import UpdateProfileRequest, UpdateUsernameRequest
+    from telethon.tl.functions.photos import DeletePhotosRequest, UploadProfilePhotoRequest
+
+    saved = promo_tokens.load("tg2", None)
+    if not saved:
+        sys.exit("Акк не подключён.")
+    c = client(saved["session"])
+    await c.connect()
+    gone = 0
+    async for d in c.iter_dialogs():
+        if d.id == 777000:  # Telegram: сюда приходят коды входа
+            continue
+        try:
+            await c.delete_dialog(d.entity)  # группы и каналы — выйти, личка — удалить у себя
+            gone += 1
+        except Exception as e:
+            print(f"не удалился чат: {type(e).__name__}")
+        await asyncio.sleep(1.5)
+    print(f"Чатов удалено: {gone}")
+    await c(UpdateProfileRequest(**PROFILE))
+    old = await c.get_profile_photos("me")
+    if old:
+        await c(DeletePhotosRequest(old))
+    await c(UploadProfilePhotoRequest(file=await c.upload_file(str(ROOT / "promo" / "avatar.png"))))
+    for name in USERNAMES:
+        try:
+            await c(UpdateUsernameRequest(name))
+            print(f"Ник: @{name}")
+            break
+        except UsernameNotModifiedError:
+            print(f"Ник уже @{name}")
+            break
+        except UsernameOccupiedError:
+            continue
+        except Exception as e:
+            print(f"ник {name}: {type(e).__name__}")
+    print("Профиль оформлен.")
+    await c.disconnect()
+
+
 if __name__ == "__main__":
     act = os.environ.get("ACTION", "rules")
     if act == "code" and os.environ.get("CODE", "").strip():
         act = "login"  # код вбит в поле — значит, это вход, даже если action забыли переключить
     if act == "code":
         asyncio.run(send_code())
+    elif act == "setup":
+        asyncio.run(setup())
     elif act == "login":
         asyncio.run(login(os.environ.get("CODE", "")))
     else:
