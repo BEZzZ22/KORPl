@@ -476,7 +476,9 @@ const storage = {
       if (cloud()) {
         const timer = setTimeout(() => resolve(localGet(key)), CLOUD_WAIT);
         try {
-          tg.CloudStorage.getItem(key, (err, value) => { clearTimeout(timer); resolve(err ? localGet(key) : value || null); });
+          // пусто в облаке, а в браузере есть: запись в облако когда-то не дошла (колбэк не пришёл за CLOUD_WAIT).
+          // Без запасного пути человек заново привязывал аккаунт при каждом запуске
+          tg.CloudStorage.getItem(key, (err, value) => { clearTimeout(timer); resolve(err ? localGet(key) : value || localGet(key) || null); });
         } catch { clearTimeout(timer); resolve(localGet(key)); }
         return;
       }
@@ -2894,11 +2896,12 @@ function replayCta(a, intro) {
     haptic("medium");
     step("replay");
     try {
-      const can = tg && tg.initData ? await canMessage() : false;
+      // заявка уходит сразу: окно «разрешить сообщения» клиент может не закрыть до минуты, и кнопка всё это время молчала
+      const canP = tg && tg.initData ? canMessage() : Promise.resolve(false);
       const data = await postCoach({ mode: "replay", match_id: a.facts.match_id, initData: (tg && tg.initData) || "" });
-      status.textContent = data.status === "done"
-        ? "Реплей уже разобран: открой матч заново."
-        : can ? "В очереди. Бот напишет, когда будет готово." : "В очереди. Загляни сюда через полчаса.";
+      if (data.status === "done") { status.textContent = "Реплей уже разобран: открой матч заново."; return; }
+      status.textContent = "В очереди. Реплей разбирается 10–30 минут.";
+      canP.then((can) => { status.textContent = can ? "В очереди. Бот напишет, когда будет готово." : "В очереди. Загляни сюда через полчаса."; });
     } catch (e) {
       btn.disabled = false;
       status.textContent = coachError(e);

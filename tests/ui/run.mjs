@@ -637,6 +637,8 @@ if (!only || only.has("cloud")) {
       CloudStorage: { getItem: noop, setItem: noop } } };
   }, ACCOUNT);
   await ctx7.route("**/*", handleRoute);
+  // в «Телеграме» пробные разборы кончились: обезьяна доходит до пейвола и окна оплаты
+  if (process.env.UI_MONKEY_TG) Object.assign(pay, { on: true, paid: false });
   const p7 = await ctx7.newPage();
   p7.on("pageerror", (e) => errors.push(`cloud pageerror: ${e.message}`));
   await step("cloud", async () => {
@@ -704,7 +706,20 @@ if (process.env.UI_MONKEY) {
   const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
   const ctx7 = await browser.newContext({ viewport: { width: Number(process.env.UI_MONKEY_W) || 375, height: 667 }, deviceScaleFactor: 3, hasTouch: true, isMobile: true, locale: "ru-RU",
     serviceWorkers: "block", colorScheme: "dark", reducedMotion: "no-preference" });
-  await ctx7.addInitScript((acc) => { try { localStorage.setItem("account_id", String(acc)); localStorage.setItem("gate_ok", String(Date.now() + 864e5)); } catch { /* */ } }, ACCOUNT);
+  await ctx7.addInitScript(([acc, inTg]) => {
+    try { localStorage.setItem("account_id", String(acc)); localStorage.setItem("gate_ok", String(Date.now() + 864e5)); } catch { /* */ }
+    // UI_MONKEY_TG=1 — внутри «Телеграма»: тренер, чат, оплата, кнопка «Назад», облако — то, что без него не показывается
+    if (!inTg) return;
+    const noop = () => {};
+    const back = [];
+    window.Telegram = { WebApp: { initData: "query_id=test", initDataUnsafe: {}, platform: "ios", ready: noop, expand: noop, isVersionAtLeast: () => true,
+      setHeaderColor: noop, setBackgroundColor: noop, disableVerticalSwipes: noop, openTelegramLink: noop, openLink: noop, shareToStory: noop, downloadFile: noop,
+      requestWriteAccess: (cb) => setTimeout(() => cb(Math.random() < 0.5), 30),
+      openInvoice: (link, cb) => setTimeout(() => cb(["paid", "cancelled", "failed"][Math.floor(Math.random() * 3)]), 80),
+      CloudStorage: { getItem: (k, cb) => setTimeout(() => cb(null, null), 20), setItem: (k, v, cb) => setTimeout(() => cb && cb(null, true), 20) },
+      BackButton: { show: noop, hide: noop, onClick: (f) => back.push(f) }, HapticFeedback: { impactOccurred: noop, notificationOccurred: noop, selectionChanged: noop } } };
+    window.__tgBack = () => back.forEach((f) => f());
+  }, [ACCOUNT, Boolean(process.env.UI_MONKEY_TG)]);
   await ctx7.route("**/*", async (route) => {
     const u = new URL(route.request().url());
     if (u.hostname === "api.opendota.com" && !u.pathname.startsWith("/api/constants/")) {
@@ -728,8 +743,9 @@ if (process.env.UI_MONKEY) {
       const did = await p7.evaluate(([r, r2]) => {
         const vis = (e) => { const b = e.getBoundingClientRect(); return b.width > 4 && b.height > 4 && b.bottom > 0 && b.top < innerHeight * 3; };
         const pool = [...document.querySelectorAll("button:not([disabled]), a[href]:not([href^=http]):not([target]), [role=button], [role=tab], .match-item, .tab, summary, .aegis, .m3d, .hc")]
-          .filter(vis).filter((e) => !/Закрыть приложение|Оплатить|Купить|звёзд/i.test(e.textContent || ""));
+          .filter(vis).filter((e) => !/Закрыть приложение/i.test(e.textContent || "") && (window.__tgBack || !/Оплатить|Купить|звёзд|⭐|Картой/i.test(e.textContent || "")));
         // «Назад» Телеграма: в браузере его нет, поэтому реже и только внутри приложения
+        if (r < 0.03 && window.__tgBack) { window.__tgBack(); return "tg-back"; }
         if (r < 0.03 && history.length > 2) { history.back(); return "back"; }
         if (r < 0.12) { window.scrollTo(0, r2 * document.body.scrollHeight); return "scroll"; }
         if (!pool.length) return "пусто";
