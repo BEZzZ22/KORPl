@@ -15,6 +15,8 @@ ROOT = Path(__file__).resolve().parent.parent
 QUEUE, POSTED, STATS = ROOT / "promo" / "yt_queue.json", ROOT / "promo" / "yt_posted.json", ROOT / "promo" / "yt_stats.json"
 OWNER = "6603684388"
 METRICS = "views,averageViewDuration,averageViewPercentage,likes,shares,subscribersGained"
+DEAD_HINT = ("Токен YouTube умер: Shorts не загружаются. Google Cloud -> Auth Platform -> Audience -> In production, "
+             "потом на компьютере python tools/yt_token.py и новый токен в секрет YT_REFRESH_TOKEN.")
 SCOPE_HINT = ("Токену YouTube не хватает прав на чтение статистики. Один раз: включи YouTube Analytics API в Google Cloud, "
               "запусти tools/yt_token.py на ПК и положи новый токен в секрет YT_REFRESH_TOKEN.")
 
@@ -94,6 +96,12 @@ def main():
     try:
         rows = fetch(posted, titles)
     except Exception as e:
+        # токен умер (приложение Google в Testing гасит его через 7 дней): Shorts не грузятся — говорим в личку раз в день
+        if "invalid_grant" in str(e):
+            print(DEAD_HINT)
+            if os.environ.get("BOT_TOKEN"):
+                send(DEAD_HINT)
+            return
         # 403 insufficientPermissions / accessNotConfigured: старый токен только на загрузку или API не включён
         if "insufficient" in str(e).lower() or "accessNotConfigured" in str(e) or "403" in str(e):
             print(SCOPE_HINT, "\n", str(e)[:300])
