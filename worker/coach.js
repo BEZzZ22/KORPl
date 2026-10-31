@@ -1480,7 +1480,9 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
     return { refund: text };
   }
   // владелец ответил реплаем на пересланное письмо
-  const to = isOwner(env, msg.from.id) && msg.reply_to_message && FWD_ID.exec(String(msg.reply_to_message.text || ""));
+  // id — последний в первой строке: имя человек пишет сам и может вписать туда чужой «(id …)», а наш идёт после имени
+  const head = isOwner(env, msg.from.id) && msg.reply_to_message && String(msg.reply_to_message.text || "").split("\n")[0];
+  const to = head && /^Письмо в бота от /.test(head) && [...head.matchAll(new RegExp(FWD_ID, "g"))].pop();
   if (to && msg.text) {
     const ok = await sendTelegram(env, "sendMessage", { chat_id: Number(to[1]), text: msg.text }).catch(() => false);
     await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: ok ? "Отправил." : "Не ушло: человек, похоже, остановил бота." }).catch(() => false);
