@@ -79,6 +79,16 @@ export function d1kv(db, kv = null, clock = () => Date.now()) {
       await db.prepare("INSERT OR REPLACE INTO kv (k, v, meta, exp) VALUES (?, ?, ?, ?)")
         .bind(k, encode(v), opts.metadata == null ? null : JSON.stringify(opts.metadata), expOf(opts, now)).run();
     },
+    // Сравнить и записать: v меняется, только если сейчас там expected (null — ключа нет). Для кошельков: два запроса
+    // («списать разбор» и «зачислить оплату») читали одно и то же и последний затирал первого
+    async cas(k, expected, next) {
+      await init(db);
+      const now = clock();
+      const res = expected == null
+        ? await db.prepare("INSERT INTO kv (k, v, meta, exp) VALUES (?, ?, NULL, NULL) ON CONFLICT(k) DO UPDATE SET v = excluded.v, meta = NULL, exp = NULL WHERE kv.exp IS NOT NULL AND kv.exp <= ?").bind(k, encode(next), now).run()
+        : await db.prepare("UPDATE kv SET v = ?, meta = NULL, exp = NULL WHERE k = ? AND CAST(v AS TEXT) = ? AND (exp IS NULL OR exp > ?)").bind(encode(next), k, String(expected), now).run();
+      return Boolean(res && res.meta && res.meta.changes);
+    },
     async delete(k) {
       await init(db);
       await db.prepare("DELETE FROM kv WHERE k = ?").bind(k).run();
@@ -136,6 +146,8 @@ export function withStore(env) {
       put: (k, v, o) => call(k, "put", k, v, o),
       delete: (k) => call(k, "delete", k),
       list: (o = {}) => call(o.prefix || "", "list", o),
+      // только в D1 и без запасного пути: это деньги
+      cas: (k, expected, next) => d1.cas(k, expected, next),
     },
   };
 }

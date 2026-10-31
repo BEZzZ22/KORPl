@@ -27,7 +27,19 @@ export async function getWallet(env, id) {
   const w = await env.COACH_KV.get(walletKey(id), "json").catch(() => null);
   return { c: 0, until: 0, free: 0, d: "", n: 0, ...(w || {}) };
 }
-const putWallet = (env, id, w) => env.COACH_KV.put(walletKey(id), JSON.stringify(w));
+// Изменить кошелёк: change(w) правит его на месте, false — ничего не писать. С D1 — сравнить-и-записать с повтором:
+// списание разбора и зачисление оплаты в ту же секунду читали один кошелёк, и поздняя запись стирала раннюю
+async function updateWallet(env, id, change) {
+  const key = walletKey(id), kv = env.COACH_KV;
+  for (let i = 0; i < 6; i++) {
+    const raw = await kv.get(key);
+    const w = { c: 0, until: 0, free: 0, d: "", n: 0, ...(raw ? JSON.parse(raw) : {}) };
+    if (change(w) === false) return w;
+    if (!kv.cas) { await kv.put(key, JSON.stringify(w)); return w; }
+    if (await kv.cas(key, raw, JSON.stringify(w))) return w;
+  }
+  throw new Error("кошелёк меняется слишком часто");
+}
 
 // Что показать в приложении
 export function walletView(w, now = Date.now()) {
@@ -49,28 +61,30 @@ export async function isOpen(env, id, unit) {
 export async function spendUnit(env, id, unit, now = Date.now()) {
   const ukey = unlockKey(id, unit);
   if (await env.COACH_KV.get(ukey)) return { how: "open", refund: async () => {} };
-  const w = await getWallet(env, id);
   const day = mskDay(now);
-  const before = { ...w };
-  let how;
-  if (w.until > now) {
-    if (w.d !== day) { w.d = day; w.n = 0; }
-    if (w.n >= SUB_PER_DAY) return { limit: true, text: `По подписке до ${SUB_PER_DAY} разборов в сутки. Новые после полуночи по Москве.` };
-    w.n += 1; how = "sub";
-  } else if (w.free < FREE_COACH) { w.free += 1; how = "free"; }
-  else if (w.c > 0) { w.c -= 1; how = "credit"; }
-  else return { paywall: true, wallet: walletView(w, now) };
-  await putWallet(env, id, w);
+  let how, before, stop;
+  const w = await updateWallet(env, id, (w) => {
+    before = { ...w }; how = stop = null;
+    if (w.until > now) {
+      if (w.d !== day) { w.d = day; w.n = 0; }
+      if (w.n >= SUB_PER_DAY) { stop = "limit"; return false; }
+      w.n += 1; how = "sub";
+    } else if (w.free < FREE_COACH) { w.free += 1; how = "free"; }
+    else if (w.c > 0) { w.c -= 1; how = "credit"; }
+    else { stop = "paywall"; return false; }
+  });
+  if (stop === "limit") return { limit: true, text: `По подписке до ${SUB_PER_DAY} разборов в сутки. Новые после полуночи по Москве.` };
+  if (stop === "paywall") return { paywall: true, wallet: walletView(w, now) };
   await env.COACH_KV.put(ukey, "0", { expirationTtl: UNLOCK_TTL });
   return {
     how, wallet: walletView(w, now),
     // ответ не получился — возвращаем ровно то, что списали
     refund: async () => {
-      const cur = await getWallet(env, id);
-      if (how === "sub" && cur.d === w.d) cur.n = Math.max(0, cur.n - 1);
-      if (how === "free") cur.free = Math.max(0, cur.free - 1);
-      if (how === "credit") cur.c += 1;
-      await putWallet(env, id, cur);
+      await updateWallet(env, id, (cur) => {
+        if (how === "sub" && cur.d === w.d) cur.n = Math.max(0, cur.n - 1);
+        if (how === "free") cur.free = Math.max(0, cur.free - 1);
+        if (how === "credit") cur.c += 1;
+      });
       await env.COACH_KV.delete(ukey);
       return before;
     },
@@ -129,10 +143,10 @@ export function checkout(q) {
 async function credit(env, id, pack, charge, rec, now) {
   if (await env.COACH_KV.get(`pay:${charge}`)) return { dup: true };
   const p = PACKS[pack];
-  const w = await getWallet(env, id);
-  if (p.credits) w.c += p.credits;
-  if (p.days) w.until = Math.max(w.until, now) + p.days * DAY_MS;
-  await putWallet(env, id, w);
+  const w = await updateWallet(env, id, (w) => {
+    if (p.credits) w.c += p.credits;
+    if (p.days) w.until = Math.max(w.until, now) + p.days * DAY_MS;
+  });
   const full = { u: String(id), p: pack, t: now, ...rec };
   await env.COACH_KV.put(`pay:${charge}`, JSON.stringify(full));
   await env.COACH_KV.put(`paid:${mskDay(now)}:${charge}`, "1", { metadata: full, expirationTtl: 400 * 86400 });
@@ -243,10 +257,10 @@ export async function refund(env, tg, charge, now = Date.now()) {
   const card = charge.startsWith("rk");
   if (!card && !(await tg("refundStarPayment", { user_id: Number(rec.u), telegram_payment_charge_id: charge }))) return "Телеграм не принял возврат.";
   const pack = PACKS[rec.p];
-  const w = await getWallet(env, rec.u);
-  if (pack.credits) w.c = Math.max(0, w.c - pack.credits);
-  if (pack.days) w.until -= pack.days * DAY_MS;
-  await putWallet(env, rec.u, w);
+  await updateWallet(env, rec.u, (w) => {
+    if (pack.credits) w.c = Math.max(0, w.c - pack.credits);
+    if (pack.days) w.until -= pack.days * DAY_MS;
+  });
   await env.COACH_KV.put(`pay:${charge}`, JSON.stringify({ ...rec, refunded: now }));
   return card ? `Пакет снят. Деньги (${rec.r} ₽) верни в кабинете Робокассы, счёт ${charge.slice(2)}.` : `Вернул ${rec.s} звёзд.`;
 }

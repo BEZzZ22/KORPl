@@ -158,3 +158,33 @@ test("подписки, очередь реплеев и счётчики раб
   assert.deepEqual([act.o, act.s, act.e.home], [1, 15, 2]);
   assert.equal(kv.m.size, 0, "в KV ничего не записано");
 });
+
+test("кошелёк: сравнить-и-записать — списание и оплата в одну секунду не затирают друг друга", async () => {
+  const { spendUnit, grant, getWallet } = await import("./pay.js");
+  const env = withStore({ DB: fakeD1(), COACH_KV: fakeKV() });
+  const kv = env.COACH_KV;
+  // cas сам по себе: пустой ключ, верное и устаревшее ожидание
+  assert.equal(await kv.cas("wallet:1", null, "a"), true);
+  assert.equal(await kv.cas("wallet:1", null, "b"), false);
+  assert.equal(await kv.cas("wallet:1", "x", "b"), false);
+  assert.equal(await kv.cas("wallet:1", "a", "b"), true);
+  assert.equal(await kv.get("wallet:1"), "b");
+  // гонка: пока списание читает кошелёк, приходит оплата 10 разборов
+  await kv.put("wallet:7", JSON.stringify({ c: 3, until: 0, free: 1, d: "", n: 0 }));
+  const realGet = kv.get;
+  let once = true;
+  kv.get = async (k, t) => {
+    const v = await realGet(k, t);
+    if (once && k === "wallet:7") {
+      once = false;
+      await grant(env, { from: { id: 7 }, successful_payment: { invoice_payload: "p10:7", currency: "XTR", total_amount: 49, telegram_payment_charge_id: "ch1" } });
+    }
+    return v;
+  };
+  const r = await spendUnit(env, "7", "m1");
+  kv.get = realGet;
+  assert.equal(r.how, "credit");
+  assert.equal((await getWallet(env, "7")).c, 12); // 3 − 1 + 10: оплата не пропала
+  await r.refund();
+  assert.equal((await getWallet(env, "7")).c, 13);
+});
