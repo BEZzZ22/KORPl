@@ -154,6 +154,184 @@ async def setup():
     print("Профиль оформлен.")
     await c.disconnect()
 
+# ---------- поиск площадок, письма админам, входящие ----------
+TARGETS = ROOT / "promo" / "targets.json"          # найденные Дота-чаты и каналы (публичная инфа)
+OUTBOX = ROOT / "promo" / "outreach.json"          # очередь писем: [{"to": "username", "text": "..."}]
+SENT = ROOT / "promo" / "outreach_sent.json"       # кому уже написали (ник -> дата)
+INBOX = promo_tokens.DIR / "inbox.enc"             # входящие, зашифрованы открытым ключом ассистента
+PUB = promo_tokens.DIR / "inbox_pub.pem"
+DISCOVER = ["dota", "dota 2", "dota2", "дота", "дота 2", "доту", "дотеры", "дотер", "дота мемы", "dota мемы",
+            "дота новости", "dota новости", "дота гайды", "dota гайд", "дота стрим", "dota стримы", "дота киберспорт",
+            "dota киберспорт", "дота пати", "dota пати", "dota чат", "дота чат", "доташка", "дота приколы", "dota ranked",
+            "дота 7.", "dota патч", "дота билды", "dota builds", "дота аккаунты"]
+AD_WORDS = ("реклам", "сотрудн", "пиар", "по вопросам", "ads", "promo", "владел", "админ", "менеджер", "связь", "вп")
+MAX_SEND = 6          # писем за прогон: свежий акк режут за холодные сообщения пачкой
+SEND_GAP = 90         # секунд между письмами
+
+
+def contacts_in(text):
+    import re
+
+    found = []
+    for line in (text or "").splitlines():
+        if any(w in line.lower() for w in AD_WORDS):
+            found += re.findall(r"@([A-Za-z0-9_]{5,32})", line)
+    return list(dict.fromkeys(found))
+
+
+async def connected():
+    saved = promo_tokens.load("tg2", None)
+    if not saved:
+        sys.exit("Акк не подключён.")
+    c = client(saved["session"])
+    await c.connect()
+    return c
+
+
+async def discover():
+    """Только чтение: ищет публичные Дота-каналы и группы, снимает размер, описание и контакты по рекламе."""
+    from telethon.tl.functions.channels import GetFullChannelRequest
+    from telethon.tl.functions.contacts import SearchRequest
+    from telethon.tl.types import Channel
+
+    c = await connected()
+    known = json.loads(TARGETS.read_text(encoding="utf-8")) if TARGETS.exists() else {}
+    found = {}
+    for q in DISCOVER:
+        try:
+            res = await c(SearchRequest(q=q, limit=100))
+        except Exception as e:
+            print(f"поиск «{q}»: {type(e).__name__}")
+            await asyncio.sleep(30)
+            continue
+        for ch in res.chats:
+            if isinstance(ch, Channel) and ch.username:
+                found[ch.username] = ch
+        await asyncio.sleep(4)
+    for name, ch in found.items():
+        if name in known:
+            continue
+        try:
+            full = await c(GetFullChannelRequest(ch))
+            about = full.full_chat.about or ""
+            known[name] = {"title": ch.title, "kind": "group" if ch.megagroup else "channel",
+                           "members": full.full_chat.participants_count, "about": about[:600],
+                           "contacts": contacts_in(about)}
+        except Exception as e:
+            known[name] = {"title": ch.title, "error": type(e).__name__}
+        await asyncio.sleep(3)
+    await c.disconnect()
+    TARGETS.write_text(json.dumps(known, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"Площадок в базе: {len(known)}, с контактом по рекламе: {sum(1 for v in known.values() if v.get('contacts'))}")
+
+
+async def send():
+    """Шлёт письма из очереди promo/outreach.json — только людям (админам и контактам по рекламе), не в группы и каналы."""
+    import datetime
+    from telethon.errors import FloodWaitError, PeerFloodError
+    from telethon.tl.types import User
+
+    queue = json.loads(OUTBOX.read_text(encoding="utf-8")) if OUTBOX.exists() else []
+    sent = json.loads(SENT.read_text(encoding="utf-8")) if SENT.exists() else {}
+    c = await connected()
+    done = 0
+    rest = []
+    for item in queue:
+        to = item["to"].lstrip("@")
+        if done >= MAX_SEND:
+            rest.append(item)
+            continue
+        if to.lower() in (k.lower() for k in sent) and not item.get("reply"):
+            continue
+        try:
+            ent = await c.get_entity(to)
+            if not isinstance(ent, User) or ent.bot:
+                print(f"{to}: не человек — пропуск (в группы и каналы не пишем)")
+                continue
+            await c.send_message(ent, item["text"])
+            sent[to] = datetime.datetime.utcnow().isoformat(timespec="minutes")
+            done += 1
+            print(f"Отправлено: @{to}")
+        except PeerFloodError:
+            print("Телега ограничила холодные сообщения (PeerFlood) — стоп до завтра")
+            rest.append(item)
+            rest += queue[queue.index(item) + 1:]
+            break
+        except FloodWaitError as e:
+            print(f"FloodWait {e.seconds} с — стоп")
+            rest.append(item)
+            rest += queue[queue.index(item) + 1:]
+            break
+        except Exception as e:
+            print(f"{to}: {type(e).__name__}")
+        await asyncio.sleep(SEND_GAP)
+    await c.disconnect()
+    OUTBOX.write_text(json.dumps(rest, ensure_ascii=False, indent=1), encoding="utf-8")
+    SENT.write_text(json.dumps(sent, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"Отправлено за прогон: {done}, в очереди: {len(rest)}")
+
+
+def seal(data):
+    """Шифрует открытым ключом ассистента: прочитать может только тот, у кого закрытый ключ (не в репо)."""
+    import base64
+    from cryptography.fernet import Fernet
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    key = Fernet.generate_key()
+    pub = serialization.load_pem_public_key(PUB.read_bytes())
+    wrapped = pub.encrypt(key, padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None))
+    return json.dumps({"k": base64.b64encode(wrapped).decode(), "d": Fernet(key).encrypt(json.dumps(data, ensure_ascii=False).encode()).decode()})
+
+
+async def inbox():
+    """Личка акка за последние 3 суток (кроме служебного чата) — в зашифрованный promo/tokens/inbox.enc."""
+    import datetime
+    from telethon.tl.types import User
+
+    c = await connected()
+    since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=3)
+    out = {}
+    async for d in c.iter_dialogs(limit=100):
+        if d.id == 777000 or not isinstance(d.entity, User) or d.entity.bot:
+            continue
+        if d.date and d.date < since:
+            continue
+        msgs = []
+        async for m in c.iter_messages(d.entity, limit=30):
+            msgs.append({"me": m.out, "t": m.date.isoformat(timespec="minutes"), "text": text_of(m)})
+        out[d.entity.username or str(d.id)] = {"name": " ".join(filter(None, [d.entity.first_name, d.entity.last_name])),
+                                               "unread": d.unread_count, "msgs": msgs[::-1]}
+    await c.disconnect()
+    INBOX.write_text(seal(out), encoding="utf-8")
+    print(f"Диалогов: {len(out)}, непрочитанных: {sum(v['unread'] for v in out.values())}")
+
+
+async def folder():
+    """Папка «DotaRazbor» с важным: наш канал, чат, бот и все диалоги с админами из outreach_sent.json."""
+    from telethon.tl.functions.messages import UpdateDialogFilterRequest
+    from telethon.tl.types import DialogFilter, TextWithEntities
+
+    c = await connected()
+    names = ["Dota_Razbor", "dotarazbor_chat", "DotaRazbor_bot"]
+    if SENT.exists():
+        names += list(json.loads(SENT.read_text(encoding="utf-8")))
+    peers = []
+    for n in names:
+        try:
+            peers.append(await c.get_input_entity(n))
+        except Exception as e:
+            print(f"{n}: {type(e).__name__}")
+    title = "DotaRazbor"
+    try:
+        f = DialogFilter(id=2, title=TextWithEntities(text=title, entities=[]), pinned_peers=peers[:3],
+                         include_peers=peers[3:], exclude_peers=[])
+    except TypeError:  # старые версии Telethon: title строкой
+        f = DialogFilter(id=2, title=title, pinned_peers=peers[:3], include_peers=peers[3:], exclude_peers=[])
+    await c(UpdateDialogFilterRequest(id=2, filter=f))
+    await c.disconnect()
+    print(f"Папка «{title}»: {len(peers)} чатов")
+
 
 if __name__ == "__main__":
     act = os.environ.get("ACTION", "rules")
@@ -161,6 +339,8 @@ if __name__ == "__main__":
         act = "login"  # код вбит в поле — значит, это вход, даже если action забыли переключить
     if act == "code":
         asyncio.run(send_code())
+    elif act in ("discover", "send", "inbox", "folder"):
+        asyncio.run(globals()[act]())
     elif act == "setup":
         asyncio.run(setup())
     elif act == "login":
