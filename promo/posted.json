@@ -26,5 +26,6 @@
  "deathmap": 31,
  "friday": 32,
  "morning": 33,
- "order": 34
+ "order": 34,
+ "tilt": 35
 }
