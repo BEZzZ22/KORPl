@@ -14,6 +14,11 @@ on:
       code:
         description: "Код из Телеграма (только для login)"
         required: false
+      from:
+        description: "С какого акка слать (send): tg2 — Максим, main — основной акк (не больше 5 писем)"
+        type: choice
+        options: [tg2, main]
+        default: tg2
 
 permissions:
   contents: write
@@ -43,6 +48,8 @@ jobs:
           TG_API_ID: ${{ secrets.TG_API_ID }}
           TG_API_HASH: ${{ secrets.TG_API_HASH }}
           TG2_PHONE: ${{ secrets.TG2_PHONE }}
+          FROM: ${{ inputs.from }}
+          TG_SESSION: ${{ inputs.from == 'main' && secrets.TG_SESSION || '' }}
           TG2_PASSWORD: ${{ secrets.TG2_PASSWORD }}
           PROMO_TOKEN_KEY: ${{ secrets.PROMO_TOKEN_KEY }}
         run: python tools/tg2.py
