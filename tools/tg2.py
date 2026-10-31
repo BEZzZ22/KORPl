@@ -179,7 +179,14 @@ def contacts_in(text):
     return list(dict.fromkeys(found))
 
 
-async def connected():
+FROM_MAIN = os.environ.get("FROM") == "main"   # слать с основного акка Ярика (секрет TG_SESSION, тот же, что ведёт канал)
+
+
+async def connected(allow_main=False):
+    if FROM_MAIN and allow_main:  # основу — только для send, личку и чаты Ярика не трогаем
+        c = client(os.environ["TG_SESSION"])
+        await c.connect()
+        return c
     saved = promo_tokens.load("tg2", None)
     if not saved:
         sys.exit("Акк не подключён.")
@@ -233,12 +240,12 @@ async def send():
 
     queue = json.loads(OUTBOX.read_text(encoding="utf-8")) if OUTBOX.exists() else []
     sent = json.loads(SENT.read_text(encoding="utf-8")) if SENT.exists() else {}
-    c = await connected()
+    c = await connected(allow_main=True)
     done = 0
     rest = []
     for item in queue:
         to = item["to"].lstrip("@")
-        if done >= MAX_SEND:
+        if done >= (5 if FROM_MAIN else MAX_SEND):  # основу бережём: на ней канал
             rest.append(item)
             continue
         if to.lower() in (k.lower() for k in sent) and not item.get("reply"):
