@@ -25,5 +25,6 @@
  "aegis_hi": 30,
  "deathmap": 31,
  "friday": 32,
- "morning": 33
+ "morning": 33,
+ "order": 34
 }
