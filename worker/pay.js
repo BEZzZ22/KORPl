@@ -229,7 +229,9 @@ async function tokenSign(botToken, body) {
   return [...new Uint8Array(await crypto.subtle.sign("HMAC", key, enc.encode(body)))].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
 }
 export async function payUrl(botToken, user, now = Date.now()) {
-  const body = [user.id, Math.floor(now / 1000) + TOKEN_TTL, encodeURIComponent(String(user.first_name || "").slice(0, 32)), encodeURIComponent(String(user.username || "").slice(0, 32))].join(".");
+  // точка в имени («A.K.») разорвала бы токен на лишние части, скобки и «!» не пропускала страница оплаты
+  const enc = (v) => encodeURIComponent(String(v || "").slice(0, 32)).replace(/[.!'()*~]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  const body = [user.id, Math.floor(now / 1000) + TOKEN_TTL, enc(user.first_name), enc(user.username)].join(".");
   return `${PAY_PAGE}#t=${body}.${await tokenSign(botToken, body)}`;
 }
 export async function tokenUser(token, botToken, now = Date.now()) {

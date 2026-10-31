@@ -30,7 +30,7 @@
     store.set(login);
   }
   // ссылка из бота: #t=<подписанный токен>, вход уже выполнен
-  const tok = /^#t=([\w.%-]+)$/.exec(location.hash);
+  const tok = /^#t=([\w.%~!*'()-]+)$/.exec(location.hash);
   if (tok) {
     const parts = tok[1].split(".");
     let name = "", username = "";
