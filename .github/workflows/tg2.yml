@@ -1,0 +1,56 @@
+# Второй Телеграм-аккаунт для Дота-чатов (tools/tg2.py). Запуск руками с телефона: Actions → «Акк для чатов» → Run workflow.
+# 1) action=code — придёт код в Телеграм; 2) action=login + code — вход; 3) action=rules — снять правила чатов (только чтение).
+# Секреты: TG_API_ID, TG_API_HASH (те же, что для канала), TG2_PHONE, TG2_PASSWORD (если есть облачный пароль), PROMO_TOKEN_KEY.
+name: Акк для чатов
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "code — прислать код, login — войти, rules — снять правила чатов"
+        type: choice
+        options: [code, login, rules]
+        default: code
+      code:
+        description: "Код из Телеграма (только для login)"
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tg2
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Спрятать код из логов
+        env:
+          CODE: ${{ inputs.code }}
+        run: '[ -n "$CODE" ] && echo "::add-mask::$CODE" || true'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -q telethon cryptography
+      - name: Запуск
+        env:
+          ACTION: ${{ inputs.action }}
+          CODE: ${{ inputs.code }}
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          TG2_PHONE: ${{ secrets.TG2_PHONE }}
+          TG2_PASSWORD: ${{ secrets.TG2_PASSWORD }}
+          PROMO_TOKEN_KEY: ${{ secrets.PROMO_TOKEN_KEY }}
+        run: python tools/tg2.py
+      - name: Сохранить
+        run: |
+          git config user.name "promo-bot"
+          git config user.email "promo-bot@users.noreply.github.com"
+          git add promo/tokens promo/chats_rules.json 2>/dev/null || true
+          git diff --cached --quiet && exit 0
+          git commit -m "Акк для чатов: ${{ inputs.action }}"
+          for i in 1 2 3 4; do git pull --rebase -q && git push && break; sleep $((i*3)); done
