@@ -1795,6 +1795,8 @@ function paywallBlock(onPaid, text = "Бесплатные разборы тре
     step("buy");
     try {
       const { link } = await postCoach({ mode: "buy", pack: pack.id, initData: tg.initData }, 15000);
+      // докупка поверх остатка: «есть разборы» было правдой и до оплаты, ждём, пока счёт вырастет
+      const before = { c: (walletState && walletState.credits) || 0, u: (walletState && walletState.until) || 0 };
       tg.openInvoice(link, async (result) => {
         btn.disabled = false;
         if (result === "cancelled") { status.textContent = ""; return; }
@@ -1805,7 +1807,7 @@ function paywallBlock(onPaid, text = "Бесплатные разборы тре
         for (let i = 0; i < 6; i++) {
           await new Promise((r) => setTimeout(r, 1500));
           const w = await getWallet(true);
-          if (w && (w.credits || w.until || w.owner)) { haptic("heavy"); onPaid(w); return; }
+          if (w && (w.credits > before.c || w.until > before.u || w.owner)) { haptic("heavy"); onPaid(w); return; }
         }
         status.textContent = "Звёзды списаны, но зачисление задерживается. Открой катку ещё раз через минуту, а если не поможет — напиши боту /paysupport.";
       });
