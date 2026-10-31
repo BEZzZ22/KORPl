@@ -10,6 +10,7 @@
 const SCHEMA = "CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v BLOB, meta TEXT, exp INTEGER)";
 const KV_ONLY = /^(card:|coach:)/;          // остаются в KV
 const MONEY = /^(wallet:|pay:|paid:|robo:|unl:)/; // кошельки и оплаты: без запасного пути в KV
+const FOREVER = /^(wallet:|pay:)/;          // бессрочные: кошелёк и запись об оплате (для возврата)
 const SKIP_COPY = /^(card:|coach:|hint:|ban:)/; // не переносим: живут в KV или своё отживут за часы
 const MIG_CURSOR = "_mig:cursor", MIG_DONE = "_mig:done";
 const MIG_BATCH = 20;                        // ключей за прогон крона: D1 на бесплатном плане — 50 запросов на вызов
@@ -61,8 +62,8 @@ export function d1kv(db, kv = null, clock = () => Date.now()) {
     const got = await kv.getWithMetadata(k, "text");
     if (!got || got.value == null) return null;
     await db.prepare("INSERT OR IGNORE INTO kv (k, v, meta, exp) VALUES (?, ?, ?, ?)")
-      // деньги и оплаты в KV бессрочные: со сроком копии кошелёк с купленными разборами пропал бы через 120 дней
-      .bind(k, got.value, got.metadata == null ? null : JSON.stringify(got.metadata), MONEY.test(k) ? null : clock() + COPY_TTL).run();
+      // кошельки и оплаты в KV бессрочные: со сроком копии кошелёк с купленными разборами пропал бы через 120 дней
+      .bind(k, got.value, got.metadata == null ? null : JSON.stringify(got.metadata), FOREVER.test(k) ? null : clock() + COPY_TTL).run();
     return { v: got.value, meta: got.metadata == null ? null : JSON.stringify(got.metadata) };
   };
   const store = {
@@ -181,6 +182,8 @@ export async function migrateStep(env, now = Date.now()) {
 export async function purgeExpired(env, now = Date.now()) {
   if (!env.DB) return 0;
   await init(env.DB);
+  // копии из KV до 31.10 получили срок 120 дней — кошельки и оплаты снимаем со срока, пока он не вышел
+  await env.DB.prepare("UPDATE kv SET exp = NULL WHERE exp IS NOT NULL AND ((k >= 'wallet:' AND k < 'wallet;') OR (k >= 'pay:' AND k < 'pay;'))").run();
   const res = await env.DB.prepare("DELETE FROM kv WHERE exp IS NOT NULL AND exp <= ?").bind(now).run();
   return (res && res.meta && res.meta.changes) || 0;
 }
