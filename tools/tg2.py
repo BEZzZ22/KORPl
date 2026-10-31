@@ -428,13 +428,60 @@ async def make_folder(c, fid, title, names, pinned=0):
     print(f"Папка «{title}»: {len(peers)}")
 
 
+async def fix():
+    """Переписывает уже отправленные письма: если в диалоге есть наше сообщение за последние 6 ч — правит его на новый текст
+    из promo/outreach.json, иначе отправляет. Двойных писем не будет."""
+    import datetime
+    from telethon.tl.types import User
+
+    queue = json.loads(OUTBOX.read_text(encoding="utf-8")) if OUTBOX.exists() else []
+    sent = json.loads(SENT.read_text(encoding="utf-8")) if SENT.exists() else {}
+    c = await connected(allow_main=True)
+    since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=6)
+    rest, new_sent = [], 0
+    for item in queue:
+        to = item["to"].lstrip("@")
+        try:
+            ent = await c.get_entity(to)
+            if not isinstance(ent, User) or ent.bot:
+                continue
+            mine = None
+            async for m in c.iter_messages(ent, limit=10):
+                if m.out and m.date >= since:
+                    mine = m
+                    break
+            if mine:
+                from telethon.tl.functions.messages import GetPeerDialogsRequest
+                pd = await c(GetPeerDialogsRequest(peers=[await c.get_input_entity(ent)]))
+                if pd.dialogs and pd.dialogs[0].read_outbox_max_id >= mine.id:
+                    print(f"Уже прочитано, не трогаю: @{to}")
+                elif (mine.message or "") != item["text"]:
+                    await c.edit_message(ent, mine, item["text"])
+                print(f"Исправлено: @{to}")
+            elif new_sent < 5:
+                await c.send_message(ent, item["text"])
+                new_sent += 1
+                print(f"Отправлено: @{to}")
+                await asyncio.sleep(SEND_GAP)
+            else:
+                rest.append(item)
+                continue
+            sent[to] = datetime.datetime.utcnow().isoformat(timespec="minutes")
+        except Exception as e:
+            print(f"{to}: {type(e).__name__}")
+            rest.append(item)
+    await c.disconnect()
+    OUTBOX.write_text(json.dumps(rest, ensure_ascii=False, indent=1), encoding="utf-8")
+    SENT.write_text(json.dumps(sent, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
 if __name__ == "__main__":
     act = os.environ.get("ACTION", "rules")
     if act == "code" and os.environ.get("CODE", "").strip():
         act = "login"  # код вбит в поле — значит, это вход, даже если action забыли переключить
     if act == "code":
         asyncio.run(send_code())
-    elif act in ("discover", "send", "inbox", "folder", "test", "join"):
+    elif act in ("discover", "send", "inbox", "folder", "test", "join", "fix"):
         asyncio.run(globals()[act]())
     elif act == "setup":
         asyncio.run(setup())
