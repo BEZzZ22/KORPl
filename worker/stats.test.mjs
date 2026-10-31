@@ -221,3 +221,14 @@ test("вебхук: оплата не зачислилась (база упал�
   try { assert.equal((await send(ok)).status, 200); } finally { globalThis.fetch = real; }
   assert.equal(JSON.parse(store.get("wallet:8")).c, 10);
 });
+
+test("ссылка Steam с ником: steamID64 из XML профиля, мусор и чужие ответы не проходят", async () => {
+  const { steamVanity } = await import("./coach.js");
+  const xml = (body, ok = true) => async () => ({ ok, text: async () => body });
+  assert.equal(await steamVanity("axel", xml("<profile><steamID64>76561198761545766</steamID64></profile>")), "76561198761545766");
+  assert.equal(await steamVanity("nobody", xml("<response><error>The specified profile could not be found.</error></response>")), null);
+  assert.equal(await steamVanity("x", xml("", false)), null);
+  assert.equal(await steamVanity("x", async () => { throw new Error("сеть"); }), null);
+  const res = await worker.fetch(new Request("https://coach.example/", { method: "POST", headers: { Origin: "https://bezzz22.github.io" }, body: JSON.stringify({ mode: "vanity", name: "../admin" }) }), {}, { waitUntil() {} });
+  assert.equal(res.status, 400);
+});

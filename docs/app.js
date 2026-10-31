@@ -703,7 +703,22 @@ function accountForm() {
     else navRoot("home", homeScreen);
   };
   const save = async () => {
-    const id = toAccountId(input.value);
+    let id = toAccountId(input.value);
+    // ссылка с ником (steamcommunity.com/id/ник): Steam отдаёт по ней steamID64, спрашиваем через воркер
+    const vanity = !id && /steamcommunity\.com\/id\/([A-Za-z0-9_-]{2,32})/.exec(input.value);
+    if (vanity && COACH_URL) {
+      status.textContent = "Ищу профиль в Steam…";
+      const seq0 = navSeq;
+      try {
+        const { steam64 } = await postCoach({ mode: "vanity", name: vanity[1] }, 12000);
+        if (stale(seq0)) return;
+        id = toAccountId(steam64);
+        if (id) track("link_vanity_ok");
+      } catch (e) {
+        if (stale(seq0)) return;
+        if (e && e.status === 404) { track("link_vanity_none"); status.textContent = e.message; return; }
+      }
+    }
     if (!id) {
       step("link_bad");
       // что за ввод (без самого текста): по этому видно, какую подсказку дописать
