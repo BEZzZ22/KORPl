@@ -1619,7 +1619,7 @@ async function handlePost(request, env, ctx, origin) {
     const limited = throttle(ip, Date.now(), 30, "vanity", 20000);
     if (limited) return reply(429, { error: limited }, origin);
     const id = await steamVanity(name);
-    return id ? reply(200, { steam64: id }, origin) : reply(404, { error: "Steam не нашёл профиль по этой ссылке. Пришли Friend ID из профиля в Доте." }, origin);
+    return id ? reply(200, { steam64: id }, origin) : reply(404, { error: "По этой ссылке профиль не нашёлся. Пришли Friend ID: в Доте в профиле, цифры под ником." }, origin);
   }
 
   // «Не согласен» из приложения: какой вывод и в каком матче. Видно в ежедневном отчёте

@@ -107,7 +107,7 @@ function coach(body) {
     return { url: "https://coach.example/card/000000000000000000000000.png" };
   }
   if (raw.mode === "watch") return { ok: true };
-  if (raw.mode === "vanity") return raw.name === "axel_dota" ? { steam64: String(76561197960265728n + BigInt(ACCOUNT)) } : { __status: 404, error: "Steam не нашёл профиль по этой ссылке. Пришли Friend ID из профиля в Доте." };
+  if (raw.mode === "vanity") return raw.name === "axel_dota" ? { steam64: String(76561197960265728n + BigInt(ACCOUNT)) } : { __status: 404, error: "По этой ссылке профиль не нашёлся. Пришли Friend ID: в Доте в профиле, цифры под ником." };
   if (raw.mode === "gate") return gateCalls++ === 0 ? { ok: false, channel: true, chat: false } : { ok: true, channel: true, chat: true };
   if (raw.mode === "feedback") return { ok: true };
   // платный тренер: в шаге paywall пробные кончились, пока не «оплатят» в окне Телеграма
@@ -675,7 +675,7 @@ if (!only || only.has("demo")) {
     const ok = p4.locator('input[aria-label="Friend ID"] >> xpath=ancestor::div[contains(@class,"row")]//button');
     await field.fill("https://steamcommunity.com/id/nobody_here/");
     await ok.click();
-    await p4.waitForFunction(() => /Steam не нашёл/.test(document.body.innerText), null, { timeout: 5000 });
+    await p4.waitForFunction(() => /профиль не нашёлся/.test(document.body.innerText), null, { timeout: 5000 });
     await field.fill("https://steamcommunity.com/id/axel_dota/");
     await ok.click();
     await p4.waitForSelector(".match-item", { timeout: 15000 });
