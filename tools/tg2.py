@@ -333,13 +333,33 @@ async def folder():
     print(f"Папка «{title}»: {len(peers)} чатов")
 
 
+TEST_TEXT = ("Всем привет! Я Максим, менеджер DotaRazbor. Если бот где-то тупит или есть идея, что добавить в разбор, "
+             "пишите сюда или мне в личку. Кто хочет разбор своей катки — кидайте ID матча в @DotaRazbor_bot.")
+
+
+async def test():
+    """Проверка, что акк пишет: вступает в НАШ чат @dotarazbor_chat и здоровается. И закрывает добавление в левые группы."""
+    from telethon.tl.functions.account import SetPrivacyRequest
+    from telethon.tl.functions.channels import JoinChannelRequest
+    from telethon.tl.types import InputPrivacyKeyChatInvite, InputPrivacyValueAllowContacts
+
+    c = await connected()
+    await c(SetPrivacyRequest(key=InputPrivacyKeyChatInvite(), rules=[InputPrivacyValueAllowContacts()]))
+    print("Добавлять в группы: только контакты")
+    chat = await c.get_entity("dotarazbor_chat")
+    await c(JoinChannelRequest(chat))
+    await c.send_message(chat, TEST_TEXT)
+    print("Сообщение в @dotarazbor_chat отправлено")
+    await c.disconnect()
+
+
 if __name__ == "__main__":
     act = os.environ.get("ACTION", "rules")
     if act == "code" and os.environ.get("CODE", "").strip():
         act = "login"  # код вбит в поле — значит, это вход, даже если action забыли переключить
     if act == "code":
         asyncio.run(send_code())
-    elif act in ("discover", "send", "inbox", "folder"):
+    elif act in ("discover", "send", "inbox", "folder", "test"):
         asyncio.run(globals()[act]())
     elif act == "setup":
         asyncio.run(setup())
