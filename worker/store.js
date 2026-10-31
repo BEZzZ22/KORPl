@@ -10,6 +10,7 @@
 const SCHEMA = "CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v BLOB, meta TEXT, exp INTEGER)";
 const KV_ONLY = /^(card:|coach:)/;          // остаются в KV
 const MONEY = /^(wallet:|pay:|paid:|robo:|unl:)/; // кошельки и оплаты: без запасного пути в KV
+const FOREVER = /^(wallet:|pay:)/;          // бессрочные: кошелёк и запись об оплате (для возврата)
 const SKIP_COPY = /^(card:|coach:|hint:|ban:)/; // не переносим: живут в KV или своё отживут за часы
 const MIG_CURSOR = "_mig:cursor", MIG_DONE = "_mig:done";
 const MIG_BATCH = 20;                        // ключей за прогон крона: D1 на бесплатном плане — 50 запросов на вызов
@@ -61,7 +62,8 @@ export function d1kv(db, kv = null, clock = () => Date.now()) {
     const got = await kv.getWithMetadata(k, "text");
     if (!got || got.value == null) return null;
     await db.prepare("INSERT OR IGNORE INTO kv (k, v, meta, exp) VALUES (?, ?, ?, ?)")
-      .bind(k, got.value, got.metadata == null ? null : JSON.stringify(got.metadata), clock() + COPY_TTL).run();
+      // кошельки и оплаты в KV бессрочные: со сроком копии кошелёк с купленными разборами пропал бы через 120 дней
+      .bind(k, got.value, got.metadata == null ? null : JSON.stringify(got.metadata), FOREVER.test(k) ? null : clock() + COPY_TTL).run();
     return { v: got.value, meta: got.metadata == null ? null : JSON.stringify(got.metadata) };
   };
   const store = {
@@ -78,6 +80,16 @@ export function d1kv(db, kv = null, clock = () => Date.now()) {
       const now = clock();
       await db.prepare("INSERT OR REPLACE INTO kv (k, v, meta, exp) VALUES (?, ?, ?, ?)")
         .bind(k, encode(v), opts.metadata == null ? null : JSON.stringify(opts.metadata), expOf(opts, now)).run();
+    },
+    // Сравнить и записать: v меняется, только если сейчас там expected (null — ключа нет). Для кошельков: два запроса
+    // («списать разбор» и «зачислить оплату») читали одно и то же и последний затирал первого
+    async cas(k, expected, next) {
+      await init(db);
+      const now = clock();
+      const res = expected == null
+        ? await db.prepare("INSERT INTO kv (k, v, meta, exp) VALUES (?, ?, NULL, NULL) ON CONFLICT(k) DO UPDATE SET v = excluded.v, meta = NULL, exp = NULL WHERE kv.exp IS NOT NULL AND kv.exp <= ?").bind(k, encode(next), now).run()
+        : await db.prepare("UPDATE kv SET v = ?, meta = NULL, exp = NULL WHERE k = ? AND CAST(v AS TEXT) = ? AND (exp IS NULL OR exp > ?)").bind(encode(next), k, String(expected), now).run();
+      return Boolean(res && res.meta && res.meta.changes);
     },
     async delete(k) {
       await init(db);
@@ -136,6 +148,8 @@ export function withStore(env) {
       put: (k, v, o) => call(k, "put", k, v, o),
       delete: (k) => call(k, "delete", k),
       list: (o = {}) => call(o.prefix || "", "list", o),
+      // только в D1 и без запасного пути: это деньги
+      cas: (k, expected, next) => d1.cas(k, expected, next),
     },
   };
 }
@@ -168,6 +182,8 @@ export async function migrateStep(env, now = Date.now()) {
 export async function purgeExpired(env, now = Date.now()) {
   if (!env.DB) return 0;
   await init(env.DB);
+  // копии из KV до 31.10 получили срок 120 дней — кошельки и оплаты снимаем со срока, пока он не вышел
+  await env.DB.prepare("UPDATE kv SET exp = NULL WHERE exp IS NOT NULL AND ((k >= 'wallet:' AND k < 'wallet;') OR (k >= 'pay:' AND k < 'pay;'))").run();
   const res = await env.DB.prepare("DELETE FROM kv WHERE exp IS NOT NULL AND exp <= ?").bind(now).run();
   return (res && res.meta && res.meta.changes) || 0;
 }

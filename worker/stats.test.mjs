@@ -195,6 +195,16 @@ test("новичку на /start — приветствие с кнопкой, �
     assert.equal((await handleBotUpdate(env, reply)).answered, 1);
   } finally { globalThis.fetch = real; }
   assert.deepEqual(sent.map((m) => [m.chat_id, m.text]), [[7, "Звёзды вернул"], [5, "Отправил."]]);
+  // имя с чужим «(id …)» не уводит ответ владельца к другому человеку
+  sent.length = 0;
+  globalThis.fetch = async (url, init) => { sent.push(JSON.parse(init.body)); return { ok: true, text: async () => "{}" }; };
+  try {
+    await handleBotUpdate(env, { message: { from: { id: 8, first_name: "Хитрый (id 9)" }, chat: { id: 8, type: "private" }, text: "привет" } });
+    const fwd = sent.find((m) => m.chat_id === 5);
+    sent.length = 0;
+    await handleBotUpdate(env, { message: { from: { id: 5 }, chat: { id: 5, type: "private" }, text: "ответ", reply_to_message: { text: fwd.text } } });
+  } finally { globalThis.fetch = real; }
+  assert.equal(sent[0].chat_id, 8);
   assert.ok(!sent.some((m) => /^Отчёт/.test(m.text)));
 });
 
