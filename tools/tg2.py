@@ -109,6 +109,8 @@ async def rules():
 
 if __name__ == "__main__":
     act = os.environ.get("ACTION", "rules")
+    if act == "code" and os.environ.get("CODE", "").strip():
+        act = "login"  # код вбит в поле — значит, это вход, даже если action забыли переключить
     if act == "code":
         asyncio.run(send_code())
     elif act == "login":
