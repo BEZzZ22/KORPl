@@ -38,7 +38,17 @@ def main():
 
         creds = Credentials(None, refresh_token=env["YT_REFRESH_TOKEN"], client_id=env["YT_CLIENT_ID"], client_secret=env["YT_CLIENT_SECRET"],
                             token_uri="https://oauth2.googleapis.com/token")
-        creds.refresh(Request())
+        from google.auth.exceptions import RefreshError
+
+        try:
+            creds.refresh(Request())
+        except RefreshError as e:
+            if "invalid_grant" not in str(e):
+                raise
+            # в статусе Testing Google гасит refresh-токен через 7 дней — так и было 30.10
+            print("::error::Токен YouTube умер (invalid_grant). Google Cloud -> Auth Platform -> Audience: статус In production, "
+                  "потом на компьютере python tools/yt_token.py и новый токен в секрет YT_REFRESH_TOKEN.")
+            sys.exit(1)
         print("Токен YouTube живой.")
         if "--check" in sys.argv:
             return
