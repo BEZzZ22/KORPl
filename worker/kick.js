@@ -10,7 +10,7 @@ const LOCK_TTL = 25 * 60;              // пока прогон идёт и ко
 export function ytDue(queue, posted, now) {
   const last = Math.max(0, ...Object.values(posted || {}).map((v) => Date.parse(v && v.at) || 0));
   if (last && now - last < MIN_GAP) return null;
-  return (queue || []).find((p) => p && p.id && !(p.id in (posted || {})) && !p.retired && Date.parse(p.at) <= now) || null;
+  return (Array.isArray(queue) ? queue : []).find((p) => p && p.id && !(p.id in (posted || {})) && !p.retired && Date.parse(p.at) <= now) || null;
 }
 
 async function gh(env, path, init = {}) {

@@ -8,24 +8,24 @@
   "sha": "fa104be1129fe933"
  },
  "app.js": {
-  "v": "111",
-  "sha": "7289be4ad1dfed63"
+  "v": "115",
+  "sha": "7befd1a688697a54"
  },
  "blame.js": {
-  "v": "7",
-  "sha": "32acb1f7cee22f8d"
+  "v": "8",
+  "sha": "1bd0400fe57acc08"
  },
  "counterpick.json": {
   "v": "1",
   "sha": "74206e20e99cc707"
  },
  "dotamap.js": {
-  "v": "4",
-  "sha": "8daf377bacd44bbd"
+  "v": "5",
+  "sha": "a6df040ab69c8d0a"
  },
  "engine.js": {
-  "v": "41",
-  "sha": "934b2672a75b0f21"
+  "v": "42",
+  "sha": "287fc56baf3a5c72"
  },
  "herocard3d.js": {
   "v": "5",
@@ -36,8 +36,8 @@
   "sha": "4cafbe1e014e4309"
  },
  "map3d.js": {
-  "v": "9",
-  "sha": "6a9e0ba56740a6ce"
+  "v": "10",
+  "sha": "db8335e6f395d8b5"
  },
  "medal3d.js": {
   "v": "7",

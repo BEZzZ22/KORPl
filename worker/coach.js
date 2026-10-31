@@ -1114,6 +1114,16 @@ export async function gateCheck(env, userId, fetcher = fetch) {
   return { ok: (channel ?? true) && (chat ?? true), channel: channel ?? true, chat: chat ?? true, ...(unknown ? { unknown: true } : {}) };
 }
 
+// steamID64 по нику из ссылки профиля; null — нет профиля или Steam не ответил
+export async function steamVanity(name, fetcher = fetch) {
+  try {
+    const res = await fetcher(`https://steamcommunity.com/id/${encodeURIComponent(name)}/?xml=1`, { signal: AbortSignal.timeout(8000), headers: { "User-Agent": "dotacoach" } });
+    if (!res.ok) return null;
+    const m = /<steamID64>\s*(7656\d{13})\s*<\/steamID64>/.exec(await res.text());
+    return m ? m[1] : null;
+  } catch { return null; }
+}
+
 const FEEDBACK_TTL = 60 * 86400;
 export async function saveFeedback(env, user, raw, now = Date.now()) {
   const meta = { m: Number(raw.match_id) || 0, k: clip(raw.kind, 20), x: clip(raw.text, 200), n: clip([user.first_name, user.last_name].filter(Boolean).join(" "), 40), u: clip(user.username, 32) };
@@ -1140,7 +1150,7 @@ const EVENT_LABELS = {
   design_v2: "включили новый дизайн", design_classic: "вернули классику", paid: "оплатили тренера", paywall: "упёрлись в оплату",
 };
 const STEP_LABELS = {
-  home: "главная", home_list: "список игр", home_empty: "«матчей не видно»", match: "открыл матч", link_bad_empty: "пустой ID", link_bad_vanity: "ссылка с ником", link_bad_url: "не та ссылка", link_bad_num: "не те цифры", link_bad_text: "ввёл ник", empty_retry: "жмёт «Проверить снова»", empty_found: "матчи нашлись", match_parsing: "ждёт разбор реплея",
+  home: "главная", home_list: "список игр", home_empty: "«матчей не видно»", match: "открыл матч", link_bad_empty: "пустой ID", link_bad_vanity: "ссылка с ником", link_bad_url: "не та ссылка", link_bad_num: "не те цифры", link_bad_text: "ввёл ник", link_vanity_ok: "ссылка с ником сработала", link_vanity_none: "ссылка с ником: нет профиля", empty_retry: "жмёт «Проверить снова»", empty_found: "матчи нашлись", match_parsing: "ждёт разбор реплея",
   analysis: "разбор", not_yours: "чужой матч", link: "привязал аккаунт", link_bad: "неверный ID", link_unknown: "OpenDota не знает аккаунт", link_anyway: "привязал неизвестный ID", write_ok: "разрешил сообщения бота", write_no: "запретил сообщения бота",
   profile: "профиль", hero_stats: "статы героя", draft: "драфт", coach: "тренер", chat: "вопрос тренеру", compare: "сравнение", buy: "открыл оплату", buy_card: "оплата картой", paywall: "упёрся в оплату",
   replay: "реплей", share: "поделился", blame: "«кто слил»", share_blame: "поделился итогом", demo: "пример разбора", disagree_blame: "не согласен", err_opendota: "ОШИБКА OpenDota", err_no_match: "ОШИБКА нет матча", err_replay: "ОШИБКА реплей",
@@ -1599,6 +1609,17 @@ async function handlePost(request, env, ctx, origin) {
     const limited = throttle(String(user.id), Date.now(), 120, "gate", 100000);
     if (limited) return reply(200, { ok: true, unknown: true }, origin);
     return reply(200, { ...(await gateCheck(env, user.id)), ...COMMUNITY.links }, origin);
+  }
+
+  // Ссылка на профиль Steam с ником (steamcommunity.com/id/<ник>): по ней id не видно, а люди копируют именно её.
+  // У Steam есть открытый XML профиля без ключа API, в нём steamID64. Ник — только [A-Za-z0-9_-], как у Steam
+  if (mode === "vanity") {
+    const name = String(raw.name || "");
+    if (!/^[A-Za-z0-9_-]{2,32}$/.test(name)) return reply(400, { error: "Не похоже на ник из ссылки Steam." }, origin);
+    const limited = throttle(ip, Date.now(), 30, "vanity", 20000);
+    if (limited) return reply(429, { error: limited }, origin);
+    const id = await steamVanity(name);
+    return id ? reply(200, { steam64: id }, origin) : reply(404, { error: "Steam не нашёл профиль по этой ссылке. Пришли Friend ID из профиля в Доте." }, origin);
   }
 
   // «Не согласен» из приложения: какой вывод и в каком матче. Видно в ежедневном отчёте

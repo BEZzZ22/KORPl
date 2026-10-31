@@ -107,6 +107,7 @@ function coach(body) {
     return { url: "https://coach.example/card/000000000000000000000000.png" };
   }
   if (raw.mode === "watch") return { ok: true };
+  if (raw.mode === "vanity") return raw.name === "axel_dota" ? { steam64: String(76561197960265728n + BigInt(ACCOUNT)) } : { __status: 404, error: "Steam не нашёл профиль по этой ссылке. Пришли Friend ID из профиля в Доте." };
   if (raw.mode === "gate") return gateCalls++ === 0 ? { ok: false, channel: true, chat: false } : { ok: true, channel: true, chat: true };
   if (raw.mode === "feedback") return { ok: true };
   // платный тренер: в шаге paywall пробные кончились, пока не «оплатят» в окне Телеграма
@@ -120,6 +121,16 @@ function coach(body) {
 
 // Настоящий разбор реплея этого матча (GitHub Actions + odota/parser)
 const REPLAY = gz("replay_9052987576.json.gz");
+// UI_REPLAY_BROKEN=1 — кривой файл позиций: трёх героев нет, у остальных дыры и обрезанный конец (вылет из игры, сбой парсера)
+if (process.env.UI_REPLAY_BROKEN) {
+  const slots = Object.keys(REPLAY.pos);
+  for (const s of slots.slice(5, 8)) delete REPLAY.pos[s];
+  for (const s of Object.keys(REPLAY.pos)) {
+    const tr = REPLAY.pos[s];
+    REPLAY.pos[s] = tr.slice(0, Math.floor(tr.length * (0.4 + Math.random() * 0.6))).map((p, i) => (i % 7 < 3 ? null : p));
+  }
+  delete REPLAY.heroes[slots[1]];
+}
 const PLACEHOLDER = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
 
 const errors = [];
@@ -218,6 +229,13 @@ const step = async (name, fn) => {
     return el ? `${el.tagName.toLowerCase()}.${String(el.className.baseVal ?? el.className).split(" ").join(".")} (${Math.round(el.getBoundingClientRect().right)} > ${innerWidth})` : "?";
   }).catch(() => null);
   if (wide) errors.push(`${name}: шире экрана: ${wide}`);
+  // UI_A11Y=1 — кнопки и ссылки без имени: диктор VoiceOver читает их как «кнопка» без смысла
+  if (process.env.UI_A11Y) {
+    const unnamed = await page.evaluate(() => [...document.querySelectorAll("button, a[href], [role=button]")]
+      .filter((e) => e.offsetParent !== null && !(e.getAttribute("aria-label") || e.getAttribute("title") || e.textContent.trim() || e.querySelector("img[alt]:not([alt=''])")))
+      .map((e) => `${e.tagName.toLowerCase()}.${String(e.className).split(" ").join(".")}`)).catch(() => []);
+    if (unnamed.length) errors.push(`${name}: без имени для диктора: ${[...new Set(unnamed)].join(", ")}`);
+  }
   const text = await page.evaluate(() => document.body.innerText).catch(() => "");
   // регистр важен: утёкшие значения JS пишутся строчными, а «Gem of True Sight» — название предмета
   const junk = /(^|[^a-zA-Zа-яё])(undefined|NaN|null|false|true|\[object Object\])([^a-zA-Zа-яё]|$)/.exec(text);
@@ -413,7 +431,7 @@ for (const [i, name] of ["blame", "phases", "deaths", "map", "build", "charts"].
       // повтор: все десять героев на карте в разгар драки, плей двигает время
       await page.waitForSelector(".live-map .lm-h[display=inline]", { timeout: 5000 });
       const heroes = await page.evaluate(() => { document.querySelector(".live-map").seek(1030); return document.querySelectorAll(".lm-h[display=inline]").length; });
-      if (heroes < 8) throw new Error(`на карте героев: ${heroes}`);
+      if (heroes < 8 && !process.env.UI_REPLAY_BROKEN) throw new Error(`на карте героев: ${heroes}`);
       await page.locator(".live-map").scrollIntoViewIfNeeded();
       await page.waitForTimeout(200);
       await page.locator(".live-card").screenshot({ path: join(OUT, "map-live.png") });
@@ -620,6 +638,8 @@ if (!only || only.has("cloud")) {
       CloudStorage: { getItem: noop, setItem: noop } } };
   }, ACCOUNT);
   await ctx7.route("**/*", handleRoute);
+  // в «Телеграме» пробные разборы кончились: обезьяна доходит до пейвола и окна оплаты
+  if (process.env.UI_MONKEY_TG) Object.assign(pay, { on: true, paid: false });
   const p7 = await ctx7.newPage();
   p7.on("pageerror", (e) => errors.push(`cloud pageerror: ${e.message}`));
   await step("cloud", async () => {
@@ -649,6 +669,17 @@ if (!only || only.has("demo")) {
   });
   // привязка: Friend ID, скопированный с пробелами, тоже подходит
   await step("link", async () => {
+    await p4.goto(`${BASE}/index.html`);
+    // ссылка с ником: неизвестный — понятный отказ, известный — привязка через steamID64 от воркера
+    const field = p4.locator('input[aria-label="Friend ID"]');
+    const ok = p4.locator('input[aria-label="Friend ID"] >> xpath=ancestor::div[contains(@class,"row")]//button');
+    await field.fill("https://steamcommunity.com/id/nobody_here/");
+    await ok.click();
+    await p4.waitForFunction(() => /Steam не нашёл/.test(document.body.innerText), null, { timeout: 5000 });
+    await field.fill("https://steamcommunity.com/id/axel_dota/");
+    await ok.click();
+    await p4.waitForSelector(".match-item", { timeout: 15000 });
+    await p4.evaluate(() => { localStorage.removeItem("account_id"); });
     await p4.goto(`${BASE}/index.html`);
     const spaced = String(ACCOUNT).replace(/(\d{3})(?=\d)/g, "$1 ");
     await p4.locator('input[aria-label="Friend ID"]').fill(spaced);
@@ -687,7 +718,20 @@ if (process.env.UI_MONKEY) {
   const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
   const ctx7 = await browser.newContext({ viewport: { width: Number(process.env.UI_MONKEY_W) || 375, height: 667 }, deviceScaleFactor: 3, hasTouch: true, isMobile: true, locale: "ru-RU",
     serviceWorkers: "block", colorScheme: "dark", reducedMotion: "no-preference" });
-  await ctx7.addInitScript((acc) => { try { localStorage.setItem("account_id", String(acc)); localStorage.setItem("gate_ok", String(Date.now() + 864e5)); } catch { /* */ } }, ACCOUNT);
+  await ctx7.addInitScript(([acc, inTg]) => {
+    try { localStorage.setItem("account_id", String(acc)); localStorage.setItem("gate_ok", String(Date.now() + 864e5)); } catch { /* */ }
+    // UI_MONKEY_TG=1 — внутри «Телеграма»: тренер, чат, оплата, кнопка «Назад», облако — то, что без него не показывается
+    if (!inTg) return;
+    const noop = () => {};
+    const back = [];
+    window.Telegram = { WebApp: { initData: "query_id=test", initDataUnsafe: {}, platform: "ios", ready: noop, expand: noop, isVersionAtLeast: () => true,
+      setHeaderColor: noop, setBackgroundColor: noop, disableVerticalSwipes: noop, openTelegramLink: noop, openLink: noop, shareToStory: noop, downloadFile: noop,
+      requestWriteAccess: (cb) => setTimeout(() => cb(Math.random() < 0.5), 30),
+      openInvoice: (link, cb) => setTimeout(() => cb(["paid", "cancelled", "failed"][Math.floor(Math.random() * 3)]), 80),
+      CloudStorage: { getItem: (k, cb) => setTimeout(() => cb(null, null), 20), setItem: (k, v, cb) => setTimeout(() => cb && cb(null, true), 20) },
+      BackButton: { show: noop, hide: noop, onClick: (f) => back.push(f) }, HapticFeedback: { impactOccurred: noop, notificationOccurred: noop, selectionChanged: noop } } };
+    window.__tgBack = () => back.forEach((f) => f());
+  }, [ACCOUNT, Boolean(process.env.UI_MONKEY_TG)]);
   await ctx7.route("**/*", async (route) => {
     const u = new URL(route.request().url());
     if (u.hostname === "api.opendota.com" && !u.pathname.startsWith("/api/constants/")) {
@@ -711,8 +755,9 @@ if (process.env.UI_MONKEY) {
       const did = await p7.evaluate(([r, r2]) => {
         const vis = (e) => { const b = e.getBoundingClientRect(); return b.width > 4 && b.height > 4 && b.bottom > 0 && b.top < innerHeight * 3; };
         const pool = [...document.querySelectorAll("button:not([disabled]), a[href]:not([href^=http]):not([target]), [role=button], [role=tab], .match-item, .tab, summary, .aegis, .m3d, .hc")]
-          .filter(vis).filter((e) => !/Закрыть приложение|Оплатить|Купить|звёзд/i.test(e.textContent || ""));
+          .filter(vis).filter((e) => !/Закрыть приложение/i.test(e.textContent || "") && (window.__tgBack || !/Оплатить|Купить|звёзд|⭐|Картой/i.test(e.textContent || "")));
         // «Назад» Телеграма: в браузере его нет, поэтому реже и только внутри приложения
+        if (r < 0.03 && window.__tgBack) { window.__tgBack(); return "tg-back"; }
         if (r < 0.03 && history.length > 2) { history.back(); return "back"; }
         if (r < 0.12) { window.scrollTo(0, r2 * document.body.scrollHeight); return "scroll"; }
         if (!pool.length) return "пусто";

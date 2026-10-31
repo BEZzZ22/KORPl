@@ -29,7 +29,7 @@ const METRICS = [
     bad: (v, p, x) => `${x.noTrade} из ${x.heroDeaths} ${plural(x.heroDeaths, "смерти", "смертей", "смертей")} от героев без размена` },
 ];
 
-import { assignRoles } from "./engine.js?v=41";
+import { assignRoles } from "./engine.js?v=42";
 
 // heroKey(id) -> "npc_dota_hero_tusk" (так жертва записана в kills_log), heroName(id) -> "Tusk"
 export function matchVerdicts(match, meAccount, { heroName, heroKey }) {
@@ -49,7 +49,7 @@ export function matchVerdicts(match, meAccount, { heroName, heroKey }) {
     const deathsT = (killsByVictim.get(heroKey(p.hero_id)) || []).map((k) => k.t);
     const noTrade = deathsT.filter((t) => !teamKillTimes[radiant].some((kt) => Math.abs(kt - t) <= TRADE_WINDOW)).length;
     return { i, p, radiant, won: radiant === match.radiant_win, hero_id: p.hero_id, name: heroName(p.hero_id), me: Boolean(meAccount) && p.account_id === meAccount,
-      deaths: p.deaths || 0, heroDeaths: deathsT.length, noTrade, kda: `${p.kills}/${p.deaths}/${p.assists}` };
+      deaths: p.deaths || 0, heroDeaths: deathsT.length, noTrade, kda: `${p.kills || 0}/${p.deaths || 0}/${p.assists || 0}` };
   });
   // роли — те же, что в разборе (позиции 1–3 коры, 4–5 саппорты): по фарму, линии и вардам
   for (const side of [true, false]) {

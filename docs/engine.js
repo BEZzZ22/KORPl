@@ -3071,7 +3071,8 @@ export function mapZone(x, y, radiant) {
 // Позиции из файла реплея (tools/replay-summary.mjs): кто где стоял, кто был рядом в каждой смерти,
 // сколько времени на своей половине, на реке и на чужой. null — файла нет или игрока в нём нет
 export function replayInsights(match, player, replay) {
-  if (!replay || replay.v !== 1 || !replay.pos) return null;
+  // шаг 0 или мусор — циклы по времени ниже никогда бы не кончились
+  if (!replay || replay.v !== 1 || !replay.pos || !(replay.step > 0) || !Number.isFinite(replay.start)) return null;
   const mine = replay.pos[player.player_slot];
   if (!Array.isArray(mine) || !mine.length) return null;
   const { step, start } = replay;

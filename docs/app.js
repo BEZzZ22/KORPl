@@ -2,13 +2,13 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan, skillPlan,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
-} from "./engine.js?v=41";
+} from "./engine.js?v=42";
 import { aegisBadge, openShowcase } from "./aegis.js?v=9";
-import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=4";
-import { matchVerdicts } from "./blame.js?v=7";
+import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=5";
+import { matchVerdicts } from "./blame.js?v=8";
 import { rankMedal3d } from "./medal3d.js?v=7";
 import { heroCard3d } from "./herocard3d.js?v=5";
-import { tacticalTable } from "./map3d.js?v=9";
+import { tacticalTable } from "./map3d.js?v=10";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -476,7 +476,9 @@ const storage = {
       if (cloud()) {
         const timer = setTimeout(() => resolve(localGet(key)), CLOUD_WAIT);
         try {
-          tg.CloudStorage.getItem(key, (err, value) => { clearTimeout(timer); resolve(err ? localGet(key) : value || null); });
+          // пусто в облаке, а в браузере есть: запись в облако когда-то не дошла (колбэк не пришёл за CLOUD_WAIT).
+          // Без запасного пути человек заново привязывал аккаунт при каждом запуске
+          tg.CloudStorage.getItem(key, (err, value) => { clearTimeout(timer); resolve(err ? localGet(key) : value || localGet(key) || null); });
         } catch { clearTimeout(timer); resolve(localGet(key)); }
         return;
       }
@@ -701,7 +703,22 @@ function accountForm() {
     else navRoot("home", homeScreen);
   };
   const save = async () => {
-    const id = toAccountId(input.value);
+    let id = toAccountId(input.value);
+    // ссылка с ником (steamcommunity.com/id/ник): Steam отдаёт по ней steamID64, спрашиваем через воркер
+    const vanity = !id && /steamcommunity\.com\/id\/([A-Za-z0-9_-]{2,32})/.exec(input.value);
+    if (vanity && COACH_URL) {
+      status.textContent = "Ищу профиль в Steam…";
+      const seq0 = navSeq;
+      try {
+        const { steam64 } = await postCoach({ mode: "vanity", name: vanity[1] }, 12000);
+        if (stale(seq0)) return;
+        id = toAccountId(steam64);
+        if (id) track("link_vanity_ok");
+      } catch (e) {
+        if (stale(seq0)) return;
+        if (e && e.status === 404) { track("link_vanity_none"); status.textContent = e.message; return; }
+      }
+    }
     if (!id) {
       step("link_bad");
       // что за ввод (без самого текста): по этому видно, какую подсказку дописать
@@ -2894,11 +2911,12 @@ function replayCta(a, intro) {
     haptic("medium");
     step("replay");
     try {
-      const can = tg && tg.initData ? await canMessage() : false;
+      // заявка уходит сразу: окно «разрешить сообщения» клиент может не закрыть до минуты, и кнопка всё это время молчала
+      const canP = tg && tg.initData ? canMessage() : Promise.resolve(false);
       const data = await postCoach({ mode: "replay", match_id: a.facts.match_id, initData: (tg && tg.initData) || "" });
-      status.textContent = data.status === "done"
-        ? "Реплей уже разобран: открой матч заново."
-        : can ? "В очереди. Бот напишет, когда будет готово." : "В очереди. Загляни сюда через полчаса.";
+      if (data.status === "done") { status.textContent = "Реплей уже разобран: открой матч заново."; return; }
+      status.textContent = "В очереди. Реплей разбирается 10–30 минут.";
+      canP.then((can) => { status.textContent = can ? "В очереди. Бот напишет, когда будет готово." : "В очереди. Загляни сюда через полчаса."; });
     } catch (e) {
       btn.disabled = false;
       status.textContent = coachError(e);
