@@ -2896,8 +2896,10 @@ async function fetchReplay(matchId) {
     try {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 15000);
-      const res = await fetch(`${REPLAY_RAW}/${matchId}.json`, { signal: ctrl.signal });
-      data = res.ok ? await res.json() : null;
+      let res = await fetch(`${REPLAY_RAW}/${matchId}.json`, { signal: ctrl.signal }).catch(() => null);
+      // GitHub не открылся (не 404, а сеть): у части провайдеров он закрыт — тот же файл через воркер
+      if (!res && COACH_URL && !ctrl.signal.aborted) res = await fetch(`${COACH_URL}/rp/${matchId}.json`, { signal: ctrl.signal });
+      data = res && res.ok ? await res.json() : null;
       clearTimeout(timer);
     } catch { data = null; }
     if (data) replayCache.set(matchId, data);

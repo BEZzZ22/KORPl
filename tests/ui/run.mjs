@@ -175,6 +175,10 @@ async function handleRoute(route) {
     const data = opendota(url);
     return data === null ? route.fulfill({ status: 404, body: "{}" }) : route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(data) });
   }
+  // файл позиций через воркер (/rp/<матч>.json), когда GitHub недоступен
+  if (url.hostname.endsWith("workers.dev") && url.pathname.startsWith("/rp/")) {
+    return url.pathname === `/rp/${match.match_id}.json` ? route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(REPLAY) }) : route.fulfill({ status: 404, headers: { "Access-Control-Allow-Origin": "*" }, body: "" });
+  }
   // запасной путь к OpenDota через воркер (/od/...) отвечает тем же, что OpenDota
   if (url.hostname.endsWith("workers.dev") && url.pathname.startsWith("/od/")) {
     const data = opendota(new URL(`https://api.opendota.com/api${url.pathname.slice(3)}${url.search}`));
@@ -187,8 +191,8 @@ async function handleRoute(route) {
   }
   if (url.hostname === "raw.githubusercontent.com") {
     const mirror = url.pathname.match(/^\/odota\/dotaconstants\/master\/build\/(\w+)\.json$/);
-    // UI_MIRROR_DOWN=1 — GitHub тоже недоступен (бывает у провайдеров): справочники идут через воркер
-    if (mirror && process.env.UI_MIRROR_DOWN) return route.abort("connectionrefused");
+    // UI_MIRROR_DOWN=1 — GitHub тоже недоступен (бывает у провайдеров): справочники и позиции идут через воркер
+    if (process.env.UI_MIRROR_DOWN) return route.abort("connectionrefused");
     if (mirror) return route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(opendota(new URL(`https://api.opendota.com/api/constants/${mirror[1]}`))) });
     return url.pathname.endsWith(`/r/${match.match_id}.json`) ? route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(REPLAY) }) : route.fulfill({ status: 404, body: "" });
   }

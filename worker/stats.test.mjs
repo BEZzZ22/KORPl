@@ -232,3 +232,16 @@ test("ссылка Steam с ником: steamID64 из XML профиля, му�
   const res = await worker.fetch(new Request("https://coach.example/", { method: "POST", headers: { Origin: "https://bezzz22.github.io" }, body: JSON.stringify({ mode: "vanity", name: "../admin" }) }), {}, { waitUntil() {} });
   assert.equal(res.status, 400);
 });
+
+test("файл позиций через воркер: только наш Origin, 404 как есть", async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url) => (String(url).endsWith("/123456789.json") ? new Response('{"v":1}') : new Response("", { status: 404 }));
+  try {
+    const get = (id, origin = "https://bezzz22.github.io") => worker.fetch(new Request(`https://coach.example/rp/${id}.json`, { headers: { Origin: origin } }), {}, { waitUntil() {} });
+    const ok = await get(123456789);
+    assert.equal(ok.status, 200);
+    assert.deepEqual(await ok.json(), { v: 1 });
+    assert.equal((await get(987654321)).status, 404);
+    assert.equal((await get(123456789, "https://evil.example")).status, 403);
+  } finally { globalThis.fetch = real; }
+});
