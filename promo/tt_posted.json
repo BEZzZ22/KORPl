@@ -70,5 +70,11 @@
   "status": "SEND_TO_USER_INBOX",
   "mode": "inbox",
   "at": "2026-10-30T18:50:00.937077+00:00"
+ },
+ "ganked": {
+  "publish_id": "v_inbox_file~v2.7702768031055300611",
+  "status": "PROCESSING_UPLOAD",
+  "mode": "inbox",
+  "at": "2026-10-31T10:05:59.373107+00:00"
  }
 }
