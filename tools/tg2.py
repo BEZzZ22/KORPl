@@ -541,6 +541,32 @@ async def main_code():
     print(f"Код отправлен, способ: {type(sent.type).__name__}, следующий: {type(sent.next_type).__name__ if sent.next_type else '-'}")
 
 
+async def main_qr():
+    """Вход дежурного без кода (Ярик разрешил 01.11): QR-токен нового входа подтверждаем старой сессией основы."""
+    from telethon.errors import SessionPasswordNeededError
+    from telethon.tl.functions.auth import AcceptLoginTokenRequest
+
+    old = client(os.environ["TG_SESSION"])
+    new = client()
+    await old.connect()
+    await new.connect()
+    qr = await new.qr_login()
+    await old(AcceptLoginTokenRequest(token=qr.token))
+    await old.disconnect()
+    try:
+        await qr.wait(60)
+    except SessionPasswordNeededError:
+        pw = os.environ.get("MAIN_PASSWORD")
+        if not pw:
+            sys.exit("На основе облачный пароль: нужен секрет MAIN_PASSWORD.")
+        await new.sign_in(password=pw)
+    if not await new.is_user_authorized():
+        sys.exit("Вход не подтвердился.")
+    promo_tokens.save("main_listen", {"session": new.session.save()})
+    await new.disconnect()
+    print("Сессия дежурного сохранена.")
+
+
 async def main_whoami():
     """Диагностика: какой акк за TG_SESSION и дошёл ли код в служебный чат (сам код в лог не пишем)."""
     c = client(os.environ["TG_SESSION"])
@@ -698,7 +724,7 @@ if __name__ == "__main__":
         act = "main_login"  # код вбит в поле — значит, это вход, даже если action забыли переключить
     if act == "code":
         asyncio.run(send_code())
-    elif act in ("discover", "send", "inbox", "folder", "test", "join", "fix", "mute", "main_code", "main_login", "main_whoami", "listen"):
+    elif act in ("discover", "send", "inbox", "folder", "test", "join", "fix", "mute", "main_code", "main_login", "main_whoami", "main_qr", "listen"):
         asyncio.run(globals()[act]())
     elif act == "setup":
         asyncio.run(setup())
