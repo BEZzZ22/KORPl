@@ -18,7 +18,7 @@ concurrency:
 jobs:
   upload:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 350             # прогон может ждать ролик до 5,5 ч: расписание GitHub срабатывает раз в 5–7 ч
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -31,7 +31,7 @@ jobs:
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
         run: |
           if [ -n "$YT_REFRESH_TOKEN" ]; then pip install -q google-api-python-client google-auth requests; fi
-          python tools/promo_yt.py
+          python tools/promo_yt.py --wait
       - name: Сохранить, что вышло
         run: |
           git config user.name "promo-bot"
