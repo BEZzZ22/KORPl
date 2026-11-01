@@ -297,14 +297,23 @@ async def inbox():
     from telethon.tl.types import User
 
     c = await connected(allow_main=True)
-    # с основы читаем ТОЛЬКО диалоги с теми, кому писали по работе — личку Ярика не трогаем
+    n, unread = await dump_inbox(c, FROM_MAIN)
+    await c.disconnect()
+    print(f"Диалогов: {n}, непрочитанных: {unread}")
+
+
+async def dump_inbox(c, main):
+    """Пишет зашифрованную выгрузку лички. С основы — ТОЛЬКО диалоги с теми, кому писали по работе, личку Ярика не трогаем."""
+    import datetime
+    from telethon.tl.types import User
+
     work = {k.lower() for k in json.loads(SENT.read_text(encoding="utf-8"))} if SENT.exists() else set()
     since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=3)
     out = {}
     async for d in c.iter_dialogs(limit=200):
         if d.id == 777000 or not isinstance(d.entity, User) or d.entity.bot:
             continue
-        if FROM_MAIN and (d.entity.username or "").lower() not in work:
+        if main and (d.entity.username or "").lower() not in work:
             continue
         if d.date and d.date < since:
             continue
@@ -313,9 +322,8 @@ async def inbox():
             msgs.append({"me": m.out, "t": m.date.isoformat(timespec="minutes"), "text": text_of(m)})
         out[d.entity.username or str(d.id)] = {"name": " ".join(filter(None, [d.entity.first_name, d.entity.last_name])),
                                                "unread": d.unread_count, "msgs": msgs[::-1]}
-    await c.disconnect()
-    (promo_tokens.DIR / ("inbox_main.enc" if FROM_MAIN else "inbox.enc")).write_text(seal(out), encoding="utf-8")
-    print(f"Диалогов: {len(out)}, непрочитанных: {sum(v['unread'] for v in out.values())}")
+    (promo_tokens.DIR / ("inbox_main.enc" if main else "inbox.enc")).write_text(seal(out), encoding="utf-8")
+    return len(out), sum(v["unread"] for v in out.values())
 
 
 async def folder():
@@ -500,13 +508,184 @@ async def mute():
     print(f"Заглушено чатов: {n}")
 
 
+# ---------- дежурный на основе: сразу видит ответы админов и шлёт ответы из очереди ----------
+# Отдельная сессия основы (promo/tokens/main_listen.enc), вход по коду, который Ярик присылает сам.
+# TG_SESSION для постоянного онлайна не берём: один ключ с двух серверов одновременно Телега считает угоном
+# (AUTH_KEY_DUPLICATED) и убивает сессию, а на TG_SESSION по крону ведётся канал.
+QUEUE_BRANCH = "claude/project-thread-d0uspr"      # очередь ответов берётся отсюда, без мержа
+DONE = ROOT / "promo" / "outreach_done.json"       # id уже отправленных элементов очереди
+LISTEN_MIN = float(os.environ.get("LISTEN_MIN") or 340)
+COLD_MAX = 5                                       # холодных писем (не ответов) за смену дежурного
+
+
+def sh(*cmd):
+    import subprocess
+
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode:
+        print(f"{cmd[0]} {cmd[1] if len(cmd) > 1 else ''}: код {r.returncode}")
+    return r.stdout.strip()
+
+
+async def main_code():
+    """Шаг 1: Телега шлёт код входа на основу. Номер берём из сессии канала (короткое подключение)."""
+    old = client(os.environ["TG_SESSION"])
+    await old.connect()
+    phone = "+" + (await old.get_me()).phone
+    await old.disconnect()
+    c = client()
+    await c.connect()
+    sent = await c.send_code_request(phone)
+    promo_tokens.save("main_listen_pending", {"session": c.session.save(), "hash": sent.phone_code_hash, "phone": phone})
+    await c.disconnect()
+    print("Код отправлен в Телеграм основы.")
+
+
+async def main_login():
+    """Шаг 2: вход с кодом от Ярика (поле code)."""
+    from telethon.errors import SessionPasswordNeededError
+
+    pend = promo_tokens.load("main_listen_pending", None)
+    if not pend:
+        sys.exit("Сначала action=main_code.")
+    c = client(pend["session"])
+    await c.connect()
+    try:
+        await c.sign_in(pend["phone"], os.environ.get("CODE", "").strip(), phone_code_hash=pend["hash"])
+    except SessionPasswordNeededError:
+        pw = os.environ.get("MAIN_PASSWORD")
+        if not pw:
+            sys.exit("На основе облачный пароль: положи его в секрет MAIN_PASSWORD и повтори main_code.")
+        await c.sign_in(password=pw)
+    promo_tokens.save("main_listen", {"session": c.session.save()})
+    (promo_tokens.DIR / "main_listen_pending.enc").unlink(missing_ok=True)
+    await c.disconnect()
+    print("Сессия дежурного сохранена.")
+
+
+def git_save(msg):
+    files = [str(f) for f in (promo_tokens.DIR / "inbox_main.enc", SENT, DONE) if f.exists()]
+    sh("git", "add", *files)
+    if not sh("git", "diff", "--cached", "--name-only"):
+        return
+    sh("git", "commit", "-q", "-m", msg)
+    for _ in range(4):
+        sh("git", "pull", "--rebase", "-q")
+        sh("git", "push", "-q")
+        if "ahead" not in sh("git", "status", "-sb"):
+            return
+
+
+def notify():
+    """Комментарий в открытом PR очереди будит ассистента. Без имён и текста переписки."""
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    owner = repo.split("/")[0]
+    num = sh("gh", "api", f"repos/{repo}/pulls?state=open&head={owner}:{QUEUE_BRANCH}", "--jq", ".[0].number")
+    if num and num != "null":
+        sh("gh", "api", f"repos/{repo}/issues/{num}/comments", "-f", "body=Новое сообщение в рабочей переписке.")
+        print("Разбудил ассистента")
+    else:
+        print("Нет открытого PR очереди — будить некого")
+
+
+async def process_queue(c, state):
+    """Шлёт новые элементы очереди (с полем id) из ветки QUEUE_BRANCH. Ответы сразу, холодные — не больше COLD_MAX."""
+    import datetime
+    from telethon.tl.types import User
+
+    sh("git", "fetch", "-q", "origin", f"+refs/heads/{QUEUE_BRANCH}:refs/remotes/origin/{QUEUE_BRANCH}")
+    raw = sh("git", "show", f"origin/{QUEUE_BRANCH}:promo/outreach.json")
+    try:
+        queue = json.loads(raw) if raw else []
+    except ValueError:
+        return False
+    done = set(json.loads(DONE.read_text(encoding="utf-8"))) if DONE.exists() else set()
+    sent = json.loads(SENT.read_text(encoding="utf-8")) if SENT.exists() else {}
+    changed = False
+    for item in queue:
+        iid = item.get("id")
+        if not iid or iid in done:
+            continue
+        to = item["to"].lstrip("@")
+        cold = not item.get("reply")
+        if cold and (state["cold"] >= COLD_MAX or to.lower() in (k.lower() for k in sent)):
+            continue
+        try:
+            ent = await c.get_entity(to)
+            if isinstance(ent, User) and not ent.bot:
+                await c.send_message(ent, item["text"])
+                sent[to] = datetime.datetime.utcnow().isoformat(timespec="minutes")
+                state["cold"] += cold
+                print("Отправлено")
+            else:
+                print("не человек — пропуск")
+        except Exception as e:
+            print(f"ошибка отправки: {type(e).__name__}")
+        done.add(iid)
+        changed = True
+        await asyncio.sleep(15)
+    if changed:
+        DONE.write_text(json.dumps(sorted(done), ensure_ascii=False, indent=1), encoding="utf-8")
+        SENT.write_text(json.dumps(sent, ensure_ascii=False, indent=1), encoding="utf-8")
+    return changed
+
+
+async def listen():
+    import time
+    from telethon import events
+    from telethon.tl.types import User
+
+    saved = promo_tokens.load("main_listen", None)
+    if not saved:
+        sys.exit("Нет сессии дежурного: сначала main_code и main_login.")
+    c = client(saved["session"])
+    await c.connect()
+    if not await c.is_user_authorized():
+        sys.exit("Сессия дежурного слетела: нужен новый вход (main_code → main_login).")
+    state = {"new": False, "cold": 0}
+
+    @c.on(events.NewMessage(incoming=True))
+    async def on_msg(ev):
+        if not ev.is_private:
+            return
+        who = await ev.get_sender()
+        work = {k.lower() for k in json.loads(SENT.read_text(encoding="utf-8"))} if SENT.exists() else set()
+        if isinstance(who, User) and not who.bot and (who.username or "").lower() in work:
+            state["new"] = True
+
+    end = time.time() + LISTEN_MIN * 60
+    print(f"Дежурю {LISTEN_MIN:.0f} мин")
+    while time.time() < end:
+        await asyncio.sleep(20)
+        try:
+            sent_any = await process_queue(c, state)
+        except Exception as e:
+            print(f"очередь: {type(e).__name__}")
+            sent_any = False
+        if state["new"]:
+            state["new"] = False
+            await asyncio.sleep(15)  # человек часто пишет несколькими сообщениями подряд
+            await dump_inbox(c, True)
+            git_save("Дежурный: входящие")
+            notify()
+        elif sent_any:
+            git_save("Дежурный: отправлено")
+    await c.disconnect()
+    ref = os.environ.get("GITHUB_REF_NAME", "")
+    if ref:  # следующая смена
+        sh("gh", "workflow", "run", "tg2.yml", "--ref", ref, "-f", "action=listen", "-f", "from=main")
+        print("Запустил следующую смену")
+
+
 if __name__ == "__main__":
     act = os.environ.get("ACTION", "rules")
     if act == "code" and os.environ.get("CODE", "").strip():
-        act = "login"  # код вбит в поле — значит, это вход, даже если action забыли переключить
+        act = "login"
+    if act == "main_code" and os.environ.get("CODE", "").strip():
+        act = "main_login"  # код вбит в поле — значит, это вход, даже если action забыли переключить
     if act == "code":
         asyncio.run(send_code())
-    elif act in ("discover", "send", "inbox", "folder", "test", "join", "fix", "mute"):
+    elif act in ("discover", "send", "inbox", "folder", "test", "join", "fix", "mute", "main_code", "main_login", "listen"):
         asyncio.run(globals()[act]())
     elif act == "setup":
         asyncio.run(setup())
