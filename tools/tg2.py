@@ -541,6 +541,19 @@ async def main_code():
     print(f"Код отправлен, способ: {type(sent.type).__name__}, следующий: {type(sent.next_type).__name__ if sent.next_type else '-'}")
 
 
+async def main_whoami():
+    """Диагностика: какой акк за TG_SESSION и дошёл ли код в служебный чат (сам код в лог не пишем)."""
+    c = client(os.environ["TG_SESSION"])
+    await c.connect()
+    me = await c.get_me()
+    u = me.username or "-"
+    print(f"Акк: @{u[:3]}…{u[-2:]}, premium={bool(me.premium)}")
+    async for m in c.iter_messages(777000, limit=3):
+        t = (m.message or "")
+        print(f"служебный чат: {m.date:%H:%M} UTC, похоже на код входа: {any(w in t.lower() for w in ('код', 'code'))}")
+    await c.disconnect()
+
+
 async def main_login():
     """Шаг 2: вход с кодом от Ярика (поле code)."""
     from telethon.errors import SessionPasswordNeededError
@@ -685,7 +698,7 @@ if __name__ == "__main__":
         act = "main_login"  # код вбит в поле — значит, это вход, даже если action забыли переключить
     if act == "code":
         asyncio.run(send_code())
-    elif act in ("discover", "send", "inbox", "folder", "test", "join", "fix", "mute", "main_code", "main_login", "listen"):
+    elif act in ("discover", "send", "inbox", "folder", "test", "join", "fix", "mute", "main_code", "main_login", "main_whoami", "listen"):
         asyncio.run(globals()[act]())
     elif act == "setup":
         asyncio.run(setup())
