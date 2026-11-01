@@ -567,6 +567,20 @@ async def main_qr():
     print("Сессия дежурного сохранена.")
 
 
+async def main_join():
+    """Основа вступает в чат партнёра (TARGET), когда админ просит зайти для выдачи прав."""
+    from telethon.tl.functions.channels import JoinChannelRequest
+
+    target = os.environ.get("TARGET", "").strip().lstrip("@").replace("https://t.me/", "")
+    if not target:
+        sys.exit("Нужен target.")
+    c = client(os.environ["TG_SESSION"])
+    await c.connect()
+    await c(JoinChannelRequest(await c.get_entity(target)))
+    await c.disconnect()
+    print(f"Вступил: @{target}")
+
+
 async def main_whoami():
     """Диагностика: какой акк за TG_SESSION и дошёл ли код в служебный чат (сам код в лог не пишем)."""
     c = client(os.environ["TG_SESSION"])
@@ -724,7 +738,7 @@ if __name__ == "__main__":
         act = "main_login"  # код вбит в поле — значит, это вход, даже если action забыли переключить
     if act == "code":
         asyncio.run(send_code())
-    elif act in ("discover", "send", "inbox", "folder", "test", "join", "fix", "mute", "main_code", "main_login", "main_whoami", "main_qr", "listen"):
+    elif act in ("discover", "send", "inbox", "folder", "test", "join", "fix", "mute", "main_code", "main_login", "main_whoami", "main_qr", "main_join", "listen"):
         asyncio.run(globals()[act]())
     elif act == "setup":
         asyncio.run(setup())
