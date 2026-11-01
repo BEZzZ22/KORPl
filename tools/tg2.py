@@ -538,7 +538,7 @@ async def main_code():
     sent = await c.send_code_request(phone)
     promo_tokens.save("main_listen_pending", {"session": c.session.save(), "hash": sent.phone_code_hash, "phone": phone})
     await c.disconnect()
-    print("Код отправлен в Телеграм основы.")
+    print(f"Код отправлен, способ: {type(sent.type).__name__}, следующий: {type(sent.next_type).__name__ if sent.next_type else '-'}")
 
 
 async def main_login():
