@@ -9,14 +9,18 @@ on:
       action:
         description: "code — прислать код, login — войти, rules — снять правила чатов, setup — почистить чаты и оформить профиль менеджера"
         type: choice
-        options: [code, login, rules, setup, discover, send, inbox, folder, test, join, fix, mute, main_code, main_login, main_whoami, main_qr, main_join, listen]
+        options: [code, login, rules, setup, discover, send, inbox, folder, test, join, fix, mute, main_code, main_login, main_whoami, main_qr, main_join, main_post, listen]
         default: code
       code:
         description: "Код из Телеграма (только для login)"
         required: false
       target:
-        description: "Чат для main_join"
+        description: "Чат для main_join / main_post"
         required: false
+      pin:
+        description: "Закрепить пост (main_post)"
+        type: boolean
+        default: false
       from:
         description: "С какого акка слать (send): tg2 — Максим, main — основной акк (не больше 5 писем)"
         type: choice
@@ -56,6 +60,7 @@ jobs:
           TG2_PHONE: ${{ secrets.TG2_PHONE }}
           FROM: ${{ inputs.from }}
           TARGET: ${{ inputs.target }}
+          PIN: ${{ inputs.pin && '1' || '' }}
           TG_SESSION: ${{ inputs.from == 'main' && secrets.TG_SESSION || '' }}
           TG2_PASSWORD: ${{ secrets.TG2_PASSWORD }}
           PROMO_TOKEN_KEY: ${{ secrets.PROMO_TOKEN_KEY }}
@@ -70,6 +75,7 @@ jobs:
           git config user.name "promo-bot"
           git config user.email "promo-bot@users.noreply.github.com"
           git add -A promo/tokens
+          git add -A promo/posts || true
           for f in promo/targets.json promo/outreach.json promo/outreach_sent.json promo/outreach_done.json promo/joined.json; do [ -f $f ] && git add $f; done
           [ -f promo/chats_rules.json ] && git add promo/chats_rules.json || true
           git diff --cached --quiet && exit 0

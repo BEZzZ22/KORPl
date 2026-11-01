@@ -581,6 +581,38 @@ async def main_join():
     print(f"Вступил: @{target}")
 
 
+PARTNERS = ROOT / "promo" / "partners.json"   # чаты, где админ дал добро на наши посты
+
+
+async def main_post():
+    """Пост с основы в чат партнёра (TARGET) — только если он в promo/partners.json.
+    Текст — promo/posts/<TARGET>.txt; файла нет — только показать инфо о чате (название, участники, описание)."""
+    from telethon.tl.functions.channels import GetFullChannelRequest
+
+    target = os.environ.get("TARGET", "").strip().lstrip("@").replace("https://t.me/", "")
+    allowed = {x.lower() for x in json.loads(PARTNERS.read_text(encoding="utf-8"))} if PARTNERS.exists() else set()
+    if target.lower() not in allowed:
+        sys.exit(f"@{target} нет в promo/partners.json — без добра админа не постим.")
+    c = client(os.environ["TG_SESSION"])
+    await c.connect()
+    ent = await c.get_entity(target)
+    full = await c(GetFullChannelRequest(ent))
+    print(f"Чат: {ent.title}, участников: {full.full_chat.participants_count}")
+    print("Описание:", (full.full_chat.about or "-")[:500])
+    post = ROOT / "promo" / "posts" / f"{target}.txt"
+    if post.exists() and post.read_text(encoding="utf-8").strip():
+        m = await c.send_message(ent, post.read_text(encoding="utf-8").strip(), link_preview=False)
+        print(f"Опубликовано, id {m.id}")
+        if os.environ.get("PIN") == "1":
+            try:
+                await c.pin_message(ent, m, notify=False)
+                print("Закреплено")
+            except Exception as e:
+                print(f"закреп: {type(e).__name__}")
+        post.unlink()
+    await c.disconnect()
+
+
 async def main_whoami():
     """Диагностика: какой акк за TG_SESSION и дошёл ли код в служебный чат (сам код в лог не пишем)."""
     c = client(os.environ["TG_SESSION"])
@@ -738,7 +770,7 @@ if __name__ == "__main__":
         act = "main_login"  # код вбит в поле — значит, это вход, даже если action забыли переключить
     if act == "code":
         asyncio.run(send_code())
-    elif act in ("discover", "send", "inbox", "folder", "test", "join", "fix", "mute", "main_code", "main_login", "main_whoami", "main_qr", "main_join", "listen"):
+    elif act in ("discover", "send", "inbox", "folder", "test", "join", "fix", "mute", "main_code", "main_login", "main_whoami", "main_qr", "main_join", "main_post", "listen"):
         asyncio.run(globals()[act]())
     elif act == "setup":
         asyncio.run(setup())
