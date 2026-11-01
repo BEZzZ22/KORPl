@@ -479,13 +479,34 @@ async def fix():
     SENT.write_text(json.dumps(sent, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
+async def mute():
+    """Глушит уведомления во всех чатах акка навсегда (кроме служебного Телеграма)."""
+    from telethon.tl.functions.account import UpdateNotifySettingsRequest
+    from telethon.tl.types import InputNotifyPeer, InputPeerNotifySettings
+
+    c = await connected()
+    n = 0
+    async for d in c.iter_dialogs():
+        if d.id == 777000:
+            continue
+        try:
+            await c(UpdateNotifySettingsRequest(peer=InputNotifyPeer(d.input_entity),
+                                                settings=InputPeerNotifySettings(mute_until=2**31 - 1)))
+            n += 1
+        except Exception as e:
+            print(f"{d.name}: {type(e).__name__}")
+        await asyncio.sleep(1)
+    await c.disconnect()
+    print(f"Заглушено чатов: {n}")
+
+
 if __name__ == "__main__":
     act = os.environ.get("ACTION", "rules")
     if act == "code" and os.environ.get("CODE", "").strip():
         act = "login"  # код вбит в поле — значит, это вход, даже если action забыли переключить
     if act == "code":
         asyncio.run(send_code())
-    elif act in ("discover", "send", "inbox", "folder", "test", "join", "fix"):
+    elif act in ("discover", "send", "inbox", "folder", "test", "join", "fix", "mute"):
         asyncio.run(globals()[act]())
     elif act == "setup":
         asyncio.run(setup())
