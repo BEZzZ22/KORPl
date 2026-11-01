@@ -57,8 +57,6 @@ def main():
     if not dry and not all(env.values()):
         print("Нет YT_CLIENT_ID, YT_CLIENT_SECRET или YT_REFRESH_TOKEN: загружать некуда, пропускаю.")
         return
-    if "--wait" in sys.argv and "--check" not in sys.argv:
-        wait_for_next()
     if not dry:
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
@@ -79,6 +77,8 @@ def main():
         print("Токен YouTube живой.")
         if "--check" in sys.argv:
             return
+    if "--wait" in sys.argv:
+        wait_for_next()             # токен проверен до ожидания; протухший access-токен клиент Google обновит сам
     queue = json.loads(QUEUE.read_text(encoding="utf-8"))
     posted = json.loads(POSTED.read_text(encoding="utf-8")) if POSTED.exists() else {}
     posts = due(queue, posted)
