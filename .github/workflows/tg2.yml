@@ -9,10 +9,13 @@ on:
       action:
         description: "code — прислать код, login — войти, rules — снять правила чатов, setup — почистить чаты и оформить профиль менеджера"
         type: choice
-        options: [code, login, rules, setup, discover, send, inbox, folder, test, join, fix, mute, main_code, main_login, main_whoami, main_qr, listen]
+        options: [code, login, rules, setup, discover, send, inbox, folder, test, join, fix, mute, main_code, main_login, main_whoami, main_qr, main_join, listen]
         default: code
       code:
         description: "Код из Телеграма (только для login)"
+        required: false
+      target:
+        description: "Чат для main_join"
         required: false
       from:
         description: "С какого акка слать (send): tg2 — Максим, main — основной акк (не больше 5 писем)"
@@ -52,6 +55,7 @@ jobs:
           TG_API_HASH: ${{ secrets.TG_API_HASH }}
           TG2_PHONE: ${{ secrets.TG2_PHONE }}
           FROM: ${{ inputs.from }}
+          TARGET: ${{ inputs.target }}
           TG_SESSION: ${{ inputs.from == 'main' && secrets.TG_SESSION || '' }}
           TG2_PASSWORD: ${{ secrets.TG2_PASSWORD }}
           PROMO_TOKEN_KEY: ${{ secrets.PROMO_TOKEN_KEY }}
