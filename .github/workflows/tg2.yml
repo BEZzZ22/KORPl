@@ -9,7 +9,7 @@ on:
       action:
         description: "code — прислать код, login — войти, rules — снять правила чатов, setup — почистить чаты и оформить профиль менеджера"
         type: choice
-        options: [code, login, rules, setup, discover, send, inbox, folder, test, join, fix, mute, main_code, main_login, main_whoami, main_qr, main_join, main_post, listen]
+        options: [code, login, rules, setup, discover, send, inbox, folder, test, join, fix, mute, main_code, main_login, main_whoami, main_qr, main_join, main_post, main_comments, listen]
         default: code
       code:
         description: "Код из Телеграма (только для login)"
