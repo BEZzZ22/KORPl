@@ -8,7 +8,7 @@
 import LORE from "./lore.json" with { type: "json" };
 import { withStore, migrateStep, purgeExpired } from "./store.js";
 import { kickShorts } from "./kick.js";
-import { matchFromText, matchButton, MATCH_TEXT, noteReferral, rewardReferral, bumpStreak, growthView, weeklyDigest } from "./growth.js";
+import { matchFromText, matchButton, MATCH_TEXT, accountFromText, linkButton, LINK_TEXT, OD_HEADERS, noteReferral, rewardReferral, bumpStreak, growthView, weeklyDigest } from "./growth.js";
 import { CHAT_ID, handleChatUpdate, chatChores, chatStatus, releaseIfPending } from "./chatguard.js";
 import { spendUnit, spendChat, isOpen, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT, loginUser, roboLink, roboResult, robokassaOn, payUrl, tokenUser } from "./pay.js";
 
@@ -814,10 +814,18 @@ async function addWatch(env, match, user, now = Date.now()) {
 
 // Заявка OpenDota на разбор реплея. С сервера она доходит всегда, а с телефона в РФ запрос к OpenDota часто
 // не проходит вовсе: GET приложение повторяет через воркер, а POST раньше просто терялся — и реплей не разбирался никогда
+// код последнего ответа OpenDota: уходит в ответ 502, чтобы снаружи было видно, что именно не так
+let lastOdStatus = 0;
 export async function requestParse(env, match) {
   const key = env.OPENDOTA_KEY ? `?api_key=${encodeURIComponent(env.OPENDOTA_KEY)}` : "";
-  const res = await fetch(`https://api.opendota.com/api/request/${match}${key}`, { method: "POST", signal: AbortSignal.timeout(10000) }).catch(() => null);
+  // один повтор: под нагрузкой OpenDota отвечает 429/5xx, через секунду обычно принимает
+  let res = null;
+  for (let i = 0; i < 2 && !(res && res.ok); i++) {
+    if (i) await new Promise((r) => setTimeout(r, 1000));
+    res = await fetch(`https://api.opendota.com/api/request/${match}${key}`, { method: "POST", headers: OD_HEADERS, signal: AbortSignal.timeout(10000) }).catch(() => null);
+  }
   if (!res || !res.ok) console.log(`request ${match}: ${res ? res.status : "сеть"}`);
+  lastOdStatus = res ? res.status : 0;
   return Boolean(res && res.ok);
 }
 
@@ -869,7 +877,7 @@ export async function checkWatches(env, now = Date.now()) {
       if (parsed.size >= WATCH_MATCHES_PER_RUN) continue;
       let ok = null; // null — OpenDota не ответила, спросим на следующем кроне
       try {
-        const res = await fetch(`https://api.opendota.com/api/matches/${match}`, { signal: AbortSignal.timeout(15000) });
+        const res = await fetch(`https://api.opendota.com/api/matches/${match}`, { headers: OD_HEADERS, signal: AbortSignal.timeout(15000) });
         const m = res.ok ? await res.json() : null;
         if (m) ok = Boolean(m.players && m.players.length && m.players[0].lh_t != null);
         else console.log(`watch: OpenDota ${res.status} по матчу ${match}`);
@@ -1527,6 +1535,11 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
     await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: MATCH_TEXT(matchId), reply_markup: matchButton(matchId) }).catch(() => false);
     return { match: matchId };
   }
+  const acc = !msg.reply_to_message && !isOwner(env, msg.from.id) && accountFromText(msg.text);
+  if (acc) {
+    await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: LINK_TEXT(acc), reply_markup: linkButton(acc) }).catch(() => false);
+    return { link: acc };
+  }
   // владелец ответил реплаем на пересланное письмо
   // id — последний в первой строке: имя человек пишет сам и может вписать туда чужой «(id …)», а наш идёт после имени
   const head = isOwner(env, msg.from.id) && msg.reply_to_message && String(msg.reply_to_message.text || "").split("\n")[0];
@@ -1864,11 +1877,11 @@ export async function proxyOpenDota(env, url, ip, origin, now = Date.now(), cach
   let res = null;
   for (let i = 0; i < 2 && !(res && (res.ok || res.status === 404)); i++) {
     if (i) await new Promise((r) => setTimeout(r, 1000));
-    res = await fetch(withKey, { signal: AbortSignal.timeout(15000) }).catch(() => null);
+    res = await fetch(withKey, { headers: OD_HEADERS, signal: AbortSignal.timeout(15000) }).catch(() => null);
   }
   if (!res || !(res.ok || res.status === 404)) {
     console.log(`od ${path}: ${res ? res.status : "сеть"}`);
-    return reply(502, { error: "OpenDota не отвечает." }, origin);
+    return reply(502, { error: "OpenDota не отвечает.", od: res ? res.status : 0 }, origin);
   }
   if (res.status === 404) return reply(404, null, origin);
   const text = await res.text();
@@ -1935,7 +1948,7 @@ export default {
       recent.push(Date.now());
       odStamps.set(ip, recent);
       const ok = await requestParse(env, Number(parseReq[1]));
-      return reply(ok ? 200 : 502, ok ? { ok: true } : { error: "OpenDota не приняла заявку." }, origin);
+      return reply(ok ? 200 : 502, ok ? { ok: true } : { error: "OpenDota не приняла заявку.", od: lastOdStatus }, origin);
     }
     // запасной путь к OpenDota: свой лимит без банов, чтобы сбой OpenDota не забанил человека и у тренера
     if (request.method === "GET" && new URL(request.url).pathname.startsWith("/od/")) {

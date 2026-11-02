@@ -2,10 +2,10 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan, skillPlan,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
-} from "./engine.js?v=43";
+} from "./engine.js?v=44";
 import { aegisBadge, openShowcase } from "./aegis.js?v=9";
 import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=5";
-import { matchVerdicts } from "./blame.js?v=9";
+import { matchVerdicts } from "./blame.js?v=10";
 import { rankMedal3d } from "./medal3d.js?v=7";
 import { heroCard3d } from "./herocard3d.js?v=5";
 import { tacticalTable } from "./map3d.js?v=10";
@@ -31,7 +31,9 @@ const STEAM64_OFFSET = 76561197960265728n;
 const PARSE_POLL_MS = 15000;
 // 10 опросов по 15 с: OpenDota разбирает реплей за 20–60 секунд, дольше — показываем быстрый разбор
 // по итогам матча, а полный ждём тихо в фоне (LITE_POLL_MAX опросов по LITE_POLL_MS)
-const PARSE_POLL_MAX = 10;
+// Ждём реплей 30 с, дальше сразу быстрый разбор: живая проверка 02.11 — OpenDota не разобрала 3 из 3 свежих реплеев
+// и за 6 минут, а 2,5 минуты на крутилке человек не ждёт. Полный разбор догоняет в фоне (плашка «Открыть»)
+const PARSE_POLL_MAX = 2;
 const LITE_POLL_MS = 30000;
 const LITE_POLL_MAX = 40;
 const V2 = document.documentElement.classList.contains("v2");
@@ -616,10 +618,11 @@ async function homeScreen() {
       h("span", { class: "de-icon", "aria-hidden": "true" }, svg("svg", { viewBox: "0 0 24 24" }, svg("path", { d: "M12 3 4 7v5c0 5 3.4 7.6 8 9 4.6-1.4 8-4 8-9V7l-8-4ZM9 12l2 2 4-4" }))),
       h("div", { class: "grow" }, h("b", {}, "Драфт перед игрой"), h("span", {}, "Кого пикнуть и что собирать"))),
   ];
-  if (!account) {
+  if (!account || (pendingLink && String(pendingLink) !== String(account))) {
     render(...nodes, accountForm(), demoEntry());
     return;
   }
+  pendingLink = null;
   const list = h("div", {}, h("div", { class: "center" }, h("div", { class: "spinner" })));
   render(...nodes,
     h("div", { class: "row" },
@@ -701,7 +704,11 @@ function hiddenMatchesCard(account) {
   );
 }
 
-function accountForm() {
+// Friend ID из бота (?link=): форма подставит его и сразу проверит
+let pendingLink = null;
+
+// after — куда вернуть после привязки (катка, ради которой привязывали); без него — на главную или в профиль
+function accountForm(after = null) {
   const input = h("input", { inputmode: "numeric", placeholder: "Friend ID или ссылка на профиль", "aria-label": "Friend ID" });
   const status = h("div", { class: "small muted" }, "Friend ID есть в Доте в профиле под ником. Подойдёт и ссылка на Steam, Dotabuff, OpenDota или Stratz.");
   const bind = async (id, seq = null) => {
@@ -709,7 +716,8 @@ function accountForm() {
     step("link");
     if (seq !== null && stale(seq)) return;
     haptic("medium");
-    if (section === "profile") navRoot("profile", profileScreen);
+    if (after) after();
+    else if (section === "profile") navRoot("profile", profileScreen);
     else navRoot("home", homeScreen);
   };
   const save = async () => {
@@ -761,6 +769,12 @@ function accountForm() {
       status.textContent = "OpenDota не отвечает. Попробуй ещё раз.";
     }
   };
+  if (pendingLink) {
+    input.value = String(pendingLink);
+    pendingLink = null;
+    step("link_from_bot");
+    setTimeout(save, 0);
+  }
   return h("div", { class: "card" },
     h("div", { class: "display" }, "Привяжи аккаунт"),
     h("div", { class: "row" }, h("div", { class: "grow" }, input), h("button", { onclick: save }, "Ок")),
@@ -1303,9 +1317,12 @@ function requestParse(matchId, viaWorker = false) {
 
 // Матчи, где человек сам попросил быстрый разбор, не дожидаясь реплея
 const liteNow = new Set();
+// Сколько раз матч не нашёлся у OpenDota подряд: ждём до MISS_TRIES проверок (по PARSE_POLL_MS), потом честная ошибка
+const missTries = new Map();
+const MISS_TRIES = 8;
 
 async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false, quiet = false) {
-  if (attempt === 0 && !quiet) loading("Призываю матч…");
+  if (attempt === 0 && !quiet && !missTries.has(matchId)) loading("Призываю матч…");
   const seq = navSeq;
   // файл позиций качается вместе с матчем, а не после него
   const replayP = quiet ? null : fetchReplay(matchId);
@@ -1338,10 +1355,34 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false, 
     if (attempt < LITE_POLL_MAX) pollTimer = setTimeout(() => matchScreen(matchId, slot, accountId, attempt + 1, demo, true), LITE_POLL_MS);
     return;
   }
-  if (!match || !match.players) {
-    errorScreen("Такого матча нет. Проверь ID.", () => navRoot("home", homeScreen));
+  // катка ещё идёт или OpenDota не получила её итоги: длительность 0 и герои #0 — разбирать нечего, ждём как свежую
+  const unfinished = match && Array.isArray(match.players) && (!match.duration || match.players.every((p) => !p.hero_id));
+  if (!match || !match.players || unfinished) {
+    // Только что закончившуюся катку OpenDota подтягивает из Steam не сразу: раньше человек, скинувший свежий ID,
+    // сразу видел «Такого матча нет» и уходил. Теперь просим OpenDota забрать матч и пару минут ищем сами
+    const tries = (missTries.get(matchId) || 0) + 1;
+    missTries.set(matchId, tries);
+    if (tries === 1) requestParse(matchId);
+    if (tries <= MISS_TRIES) {
+      if (tries === 1) step("match_wait");
+      render(h("div", { class: "center" },
+        h("div", { class: "spinner" }),
+        h("p", { class: "display" }, "Ищу катку"),
+        h("p", { class: "small muted" }, "OpenDota ещё не видит этот матч. Если катка только что закончилась, он появится через пару минут — я проверяю сам."),
+        h("button", { type: "button", class: "ghost", onclick: () => navRoot("home", homeScreen) }, "На главную")));
+      pollTimer = setTimeout(() => matchScreen(matchId, slot, accountId, 0, demo), PARSE_POLL_MS);
+      return;
+    }
+    missTries.delete(matchId);
+    step("err_no_match");
+    render(h("div", { class: "center" },
+      h("p", { class: "error" }, `Катку ${matchId} OpenDota так и не нашла.`),
+      h("p", { class: "small muted" }, "Проверь ID: он есть в Доте в истории матчей или в ссылке на Dotabuff. Если катка закончилась только что, попробуй через пару минут."),
+      h("button", { type: "button", onclick: () => go(matchScreen, matchId, slot, accountId, 0, demo) }, "Попробовать ещё раз"),
+      h("button", { type: "button", class: "ghost", onclick: () => navRoot("home", homeScreen) }, "На главную")));
     return;
   }
+  missTries.delete(matchId);
   const lite = !isParsed(match);
   if (lite && attempt < PARSE_POLL_MAX && !liteNow.has(matchId)) {
     if (attempt === 0) step("match_parsing");
@@ -1350,11 +1391,11 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false, 
       watchParse(matchId);
     }
     // заявка могла потеряться по дороге: повторяем через воркер
-    if (attempt === 4 || attempt === 8) requestParse(matchId, true);
+    if (attempt === 1) requestParse(matchId, true);
     render(h("div", { class: "center" },
       h("div", { class: "spinner" }),
       h("p", { class: "display" }, "Реплей разбирается"),
-      h("p", { class: "small muted" }, "Обычно до минуты. Страница обновится сама."),
+      h("p", { class: "small muted" }, "Жду реплей до 30 секунд, потом сразу покажу быстрый разбор, а полный подтянется сам."),
       watchOk.has(matchId) && h("p", { class: "small muted" }, "Можешь закрыть приложение: бот напишет в Телеграм, когда разбор будет готов."),
       watchNo.has(matchId) && h("p", { class: "small muted" }, "Сообщения от бота ты не разрешил, поэтому он не напишет. Оставь приложение открытым или загляни сюда через пару минут."),
       attempt >= 1 && h("button", { type: "button", class: "ghost", onclick: () => {
@@ -1375,7 +1416,7 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false, 
     if (stale(seq)) return;
     if (saved) player = match.players.find((p) => p.account_id === saved);
   }
-  if (!player) { step("not_yours"); notYourMatch(); return; }
+  if (!player) { step("not_yours"); notYourMatch(matchId, slot, demo); return; }
 
   // Сравнение с про, нормы героя, матчапы и позиции — дополнения: медленная OpenDota или GitHub не держат разбор.
   // Опоздавший файл позиций всё равно попадёт на «Карту» (берётся из replayCache)
@@ -1450,17 +1491,25 @@ function canMessage() {
   return writeAsk;
 }
 
-// Разбираем только свои игры: либо аккаунт не привязан, либо тебя нет в матче
-async function notYourMatch() {
+// Разбираем только свои игры: либо аккаунт не привязан, либо тебя нет в матче.
+// Привязал аккаунт отсюда — сразу обратно в эту катку: раньше кидало на главную, и катку из бота приходилось искать заново
+async function notYourMatch(matchId, slot = null, demo = false) {
   const seq = navSeq;
   const saved = Number(await storage.get("account_id"));
   if (stale(seq)) return;
+  const reopen = () => navRoot("match", matchScreen, matchId, slot, null, 0, demo);
+  // привязан не тот аккаунт (опечатка, второй акк): без этой кнопки человек упирался в «не твоя игра» на каждой катке
+  const other = h("div", {});
   render(
     h("h1", {}, saved ? "Это не твоя игра" : "Привяжи аккаунт"),
     h("p", { class: "muted" }, saved
-      ? "Тебя нет в этом матче, а чужие игры я не разбираю. Если игра твоя, в ней мог быть скрыт профиль: включи в Доте Настройки (шестерёнка) → «Социальное» (в старом меню: «Расширенные настройки» → «Социальное») → «Expose Public Match Data» (публичные данные матчей)."
-      : "Я разбираю только твои игры. Укажи Friend ID или Steam ID."),
-    saved ? h("button", { onclick: () => navRoot("home", homeScreen) }, "На главную") : accountForm(),
+      ? `Аккаунта ${saved} нет в этом матче, а чужие игры я не разбираю. Если игра твоя, в ней мог быть скрыт профиль: включи в Доте Настройки (шестерёнка) → «Социальное» (в старом меню: «Расширенные настройки» → «Социальное») → «Expose Public Match Data» (публичные данные матчей). Скрытыми останутся только старые катки, новые будут видны.`
+      : "Я разбираю только твои игры. Укажи Friend ID или Steam ID — и сразу открою эту катку."),
+    saved ? h("div", { class: "row" },
+      h("button", { onclick: () => navRoot("home", homeScreen) }, "На главную"),
+      h("button", { class: "ghost", onclick: () => { haptic(); step("not_yours_relink"); other.replaceChildren(accountForm(reopen)); } }, "Привязать другой аккаунт"))
+      : accountForm(reopen),
+    other,
   );
 }
 
@@ -3676,7 +3725,9 @@ function startParams() {
   const matchId = q.get("match") || (sm && sm[1]);
   const slot = q.get("slot") || (sm && sm[2]);
   const account = q.get("account");
+  const link = q.get("link");
   return {
+    link: link ? toAccountId(link) : null,
     matchId: /^\d{7,11}$/.test(matchId || "") ? Number(matchId) : null,
     slot: /^\d{1,3}$/.test(slot || "") ? Number(slot) : null,
     account: account ? toAccountId(account) : null,
@@ -3822,7 +3873,9 @@ async function boot() {
     return;
   }
   await gate;
-  const { matchId, slot, account } = startParams();
+  const { matchId, slot, account, link } = startParams();
+  // кнопка из бота «Привязать»: человек кинул боту Friend ID — форма на главной сама его проверит и привяжет
+  if (link && !matchId) pendingLink = link;
   // ?account= из ссылки нужен только, чтобы найти игрока в матче: в привязку его не пишем.
   // Старый бот вшивал аккаунт в кнопку меню, и каждый запуск возвращал его поверх «Сменить»
   // история и задачи с других устройств: в фоне, экран не ждёт
