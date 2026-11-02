@@ -2,10 +2,10 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan, skillPlan,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
-} from "./engine.js?v=43";
+} from "./engine.js?v=44";
 import { aegisBadge, openShowcase } from "./aegis.js?v=9";
 import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=5";
-import { matchVerdicts } from "./blame.js?v=9";
+import { matchVerdicts } from "./blame.js?v=10";
 import { rankMedal3d } from "./medal3d.js?v=7";
 import { heroCard3d } from "./herocard3d.js?v=5";
 import { tacticalTable } from "./map3d.js?v=10";
@@ -31,7 +31,9 @@ const STEAM64_OFFSET = 76561197960265728n;
 const PARSE_POLL_MS = 15000;
 // 10 опросов по 15 с: OpenDota разбирает реплей за 20–60 секунд, дольше — показываем быстрый разбор
 // по итогам матча, а полный ждём тихо в фоне (LITE_POLL_MAX опросов по LITE_POLL_MS)
-const PARSE_POLL_MAX = 10;
+// Ждём реплей 30 с, дальше сразу быстрый разбор: живая проверка 02.11 — OpenDota не разобрала 3 из 3 свежих реплеев
+// и за 6 минут, а 2,5 минуты на крутилке человек не ждёт. Полный разбор догоняет в фоне (плашка «Открыть»)
+const PARSE_POLL_MAX = 2;
 const LITE_POLL_MS = 30000;
 const LITE_POLL_MAX = 40;
 const V2 = document.documentElement.classList.contains("v2");
@@ -1353,7 +1355,9 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false, 
     if (attempt < LITE_POLL_MAX) pollTimer = setTimeout(() => matchScreen(matchId, slot, accountId, attempt + 1, demo, true), LITE_POLL_MS);
     return;
   }
-  if (!match || !match.players) {
+  // катка ещё идёт или OpenDota не получила её итоги: длительность 0 и герои #0 — разбирать нечего, ждём как свежую
+  const unfinished = match && Array.isArray(match.players) && (!match.duration || match.players.every((p) => !p.hero_id));
+  if (!match || !match.players || unfinished) {
     // Только что закончившуюся катку OpenDota подтягивает из Steam не сразу: раньше человек, скинувший свежий ID,
     // сразу видел «Такого матча нет» и уходил. Теперь просим OpenDota забрать матч и пару минут ищем сами
     const tries = (missTries.get(matchId) || 0) + 1;
@@ -1387,11 +1391,11 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false, 
       watchParse(matchId);
     }
     // заявка могла потеряться по дороге: повторяем через воркер
-    if (attempt === 4 || attempt === 8) requestParse(matchId, true);
+    if (attempt === 1) requestParse(matchId, true);
     render(h("div", { class: "center" },
       h("div", { class: "spinner" }),
       h("p", { class: "display" }, "Реплей разбирается"),
-      h("p", { class: "small muted" }, "Обычно до минуты. Страница обновится сама."),
+      h("p", { class: "small muted" }, "Жду реплей до 30 секунд, потом сразу покажу быстрый разбор, а полный подтянется сам."),
       watchOk.has(matchId) && h("p", { class: "small muted" }, "Можешь закрыть приложение: бот напишет в Телеграм, когда разбор будет готов."),
       watchNo.has(matchId) && h("p", { class: "small muted" }, "Сообщения от бота ты не разрешил, поэтому он не напишет. Оставь приложение открытым или загляни сюда через пару минут."),
       attempt >= 1 && h("button", { type: "button", class: "ghost", onclick: () => {

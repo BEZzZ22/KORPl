@@ -485,7 +485,8 @@ class MatchAnalyzer {
 
   collectMetrics() {
     const p = this.p;
-    const minutes = this.duration / 60;
+    // матч без длительности (OpenDota ещё не получила итоги) — делим на минуту, а не на ноль
+    const minutes = Math.max(1, this.duration) / 60;
     const teamKills = sum(this.match.players.filter((x) => x.isRadiant === p.isRadiant).map((x) => x.kills));
     const first = this.firstBigItem();
     this.firstItem = first;
@@ -1052,7 +1053,8 @@ class MatchAnalyzer {
     for (const r of rows) counts[r.kind] = (counts[r.kind] || 0) + 1;
     // смерти по пятиминуткам: видно, в какой части игры сыпался
     const buckets = Array.from({ length: Math.max(1, Math.ceil(this.duration / 300)) }, () => 0);
-    for (const r of rows) buckets[Math.min(buckets.length - 1, Math.floor(r.t / 300))]++;
+    // смерть до 0:00 (драка за руну) — в первую пятиминутку, а не в buckets[-1]
+    for (const r of rows) buckets[Math.max(0, Math.min(buckets.length - 1, Math.floor(r.t / 300)))]++;
     const r = this.rank && this.rank.dead_share;
     return {
       total: rows.length, rows, counts, buckets,

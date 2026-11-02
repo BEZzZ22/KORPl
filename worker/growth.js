@@ -9,6 +9,9 @@
 import { giftCredits } from "./pay.js";
 
 export const APP_URL = "https://bezzz22.github.io/KORPl/";
+// Запросы воркера к OpenDota — с User-Agent: fetch из Cloudflare Workers сам его не ставит, а OpenDota стоит за защитой
+// от ботов, и пустой UA там похож на бота (живая проверка 02.11: заявки и запасной путь через воркер — 502)
+export const OD_HEADERS = { "User-Agent": "DotaRazbor/1.0 (+https://t.me/DotaRazbor_bot)", Accept: "application/json" };
 const BOT = "DotaRazbor_bot";
 export const REF_BONUS = 1;        // разбор тренера и другу, и тому, кто позвал
 export const REF_MAX = 20;         // больше двадцати друзей — другу бонус, пригласившему уже нет (ИИ стоит денег)
@@ -169,7 +172,7 @@ export async function weeklyDigest(env, tg, now = Date.now(), fetcher = fetch) {
       if (!acc) continue;
       let matches = null;
       try {
-        const res = await fetcher(`https://api.opendota.com/api/players/${acc}/recentMatches`, { signal: AbortSignal.timeout(8000) });
+        const res = await fetcher(`https://api.opendota.com/api/players/${acc}/recentMatches`, { headers: OD_HEADERS, signal: AbortSignal.timeout(8000) });
         matches = res.ok ? await res.json() : null;
       } catch { /* OpenDota не ответила — в эту неделю без сводки */ }
       const s = weekSummary(matches, now);

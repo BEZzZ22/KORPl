@@ -184,10 +184,10 @@ async function parseRun() {
   }
   for (const x of res) console.log(`реплей ${x.id} (${x.viaWorker ? "воркер" : "напрямую"}): ${x.done ? `готов через ${x.done} с` : "не разобрался за 6 минут"}`);
   // запасной путь: GET матча через воркер
-  if (picks[0]) {
-    const r = await raw(`${WORKER}/od/matches/${picks[0]}`, { cache: false });
-    console.log(`воркер GET /od/matches: ${r.status} за ${r.ms} мс`);
-    if (r.status !== 200) bad("воркер /od/matches", `ответ ${r.status}`);
+  for (const path of [picks[0] && `/matches/${picks[0]}`, "/matches/9073589444", "/players/801280038", "/constants/heroes"].filter(Boolean)) {
+    const r = await raw(`${WORKER}/od${path}`, { cache: false });
+    console.log(`воркер GET /od${path}: ${r.status} за ${r.ms} мс ${r.status === 200 ? "" : Buffer.from(r.body, "base64").toString("utf8").slice(0, 120)}`);
+    if (r.status !== 200) bad(`воркер /od${path}`, `ответ ${r.status}`);
   }
   return res;
 }
