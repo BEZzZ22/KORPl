@@ -330,7 +330,7 @@ test("уведомления: подписка не теряется, если �
   assert.ok(!kv.m.has("watch:5:7000002") && kv.m.has("watch:5:7000003"));
 });
 
-test("уведомления: не дождались за 3 часа — пишем, а не молчим; через 20 минут просим OpenDota ещё раз", async (t) => {
+test("уведомления: не дождались за 3 часа — пишем, а не молчим; через 4 минуты просим OpenDota ещё раз", async (t) => {
   t.after(restore);
   const kv = fakeKV();
   const now = Date.now();
@@ -958,4 +958,28 @@ test("владелец: «баланс» — звёзды от Телеграм�
   mockFetch({ tg: [new Response("{}")] });
   const other = await handleBotUpdate(e, { message: { chat: { id: 8, type: "private" }, from: { id: 8 }, text: "баланс" } }, now);
   assert.equal(other && other.balance, undefined);
+});
+
+test("заявка на разбор реплея через воркер: с телефона POST к OpenDota часто не доходит", async (t) => {
+  t.after(restore);
+  const calls = mockFetch({ od: [new Response("{\"job\":{\"jobId\":1}}")] });
+  const res = await worker.fetch(new Request("https://coach.example/od/request/9072082096", { method: "POST", headers: { Origin: ORIGIN, "CF-Connecting-IP": "198.51.100.9" } }), { ...env, OPENDOTA_KEY: "k" });
+  assert.equal(res.status, 200);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /^https:\/\/api\.opendota\.com\/api\/request\/9072082096\?api_key=k$/);
+  // чужой сайт — нельзя
+  const bad = await worker.fetch(new Request("https://coach.example/od/request/9072082096", { method: "POST", headers: { Origin: "https://evil.example" } }), env);
+  assert.equal(bad.status, 403);
+  // OpenDota не приняла — честный 502
+  mockFetch({ od: [new Response("", { status: 500 })] });
+  assert.equal((await worker.fetch(new Request("https://coach.example/od/request/9072082096", { method: "POST", headers: { Origin: ORIGIN } }), env)).status, 502);
+});
+
+test("подписка на уведомление сразу шлёт заявку на разбор с сервера", async (t) => {
+  t.after(restore);
+  const e = { ...env, COACH_KV: fakeKV(), BOT_TOKEN: "123:abc" };
+  const init = await signInit({ auth_date: String(Math.floor(Date.now() / 1000)), user: JSON.stringify({ id: 77 }) }, "123:abc");
+  const calls = mockFetch({ od: [new Response("{}")] });
+  assert.equal((await worker.fetch(req({ mode: "watch", match_id: 9072082096, initData: init }), e)).status, 200);
+  assert.ok(calls.some((c) => c.who === "od" && c.url.includes("/request/9072082096")));
 });
