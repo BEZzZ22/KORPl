@@ -29,9 +29,10 @@ jobs:
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          PROMO_TOKEN_KEY: ${{ secrets.PROMO_TOKEN_KEY }}
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: |
-          pip install -q google-api-python-client google-auth requests
+          pip install -q google-api-python-client google-auth requests cryptography
           python tools/yt_stats.py
       - name: Сохранить историю
         run: |

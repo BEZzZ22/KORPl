@@ -11,12 +11,14 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import promo_tokens
+
 ROOT = Path(__file__).resolve().parent.parent
 QUEUE, POSTED, STATS = ROOT / "promo" / "yt_queue.json", ROOT / "promo" / "yt_posted.json", ROOT / "promo" / "yt_stats.json"
 OWNER = "6603684388"
 METRICS = "views,averageViewDuration,averageViewPercentage,likes,shares,subscribersGained"
 DEAD_HINT = ("Токен YouTube умер: Shorts не загружаются. Google Cloud -> Auth Platform -> Audience -> In production, "
-             "потом на компьютере python tools/yt_token.py и новый токен в секрет YT_REFRESH_TOKEN.")
+             "потом новый токен кнопкой: GitHub Actions -> «YouTube: новый токен» (инструкция в tools/yt_code.py).")
 SCOPE_HINT = ("Токену YouTube не хватает прав на чтение статистики. Один раз: включи YouTube Analytics API в Google Cloud, "
               "запусти tools/yt_token.py на ПК и положи новый токен в секрет YT_REFRESH_TOKEN.")
 
@@ -83,6 +85,7 @@ def send(text):
 
 
 def main():
+    promo_tokens.yt_env()
     history = json.loads(STATS.read_text(encoding="utf-8")) if STATS.exists() else []
     prev = history[-1]["rows"] if history else None
     if "--dry" in sys.argv:

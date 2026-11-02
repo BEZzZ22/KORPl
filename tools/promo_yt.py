@@ -13,6 +13,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import promo_tokens
+
 ROOT = Path(__file__).resolve().parent.parent
 QUEUE, POSTED = ROOT / "promo" / "yt_queue.json", ROOT / "promo" / "yt_posted.json"
 MIN_GAP = timedelta(hours=5)
@@ -52,6 +54,7 @@ def wait_for_next():
 
 
 def main():
+    promo_tokens.yt_env()
     dry = "--dry" in sys.argv
     env = {k: os.environ.get(k, "") for k in ("YT_CLIENT_ID", "YT_CLIENT_SECRET", "YT_REFRESH_TOKEN")}
     if not dry and not all(env.values()):
@@ -72,7 +75,7 @@ def main():
                 raise
             # в статусе Testing Google гасит refresh-токен через 7 дней — так и было 30.10
             print("::error::Токен YouTube умер (invalid_grant). Google Cloud -> Auth Platform -> Audience: статус In production, "
-                  "потом на компьютере python tools/yt_token.py и новый токен в секрет YT_REFRESH_TOKEN.")
+                  "потом новый токен кнопкой: GitHub Actions -> «YouTube: новый токен» (инструкция в tools/yt_code.py).")
             sys.exit(1)
         print("Токен YouTube живой.")
         if "--check" in sys.argv:
