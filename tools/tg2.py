@@ -610,6 +610,10 @@ async def main_post():
             except Exception as e:
                 print(f"закреп: {type(e).__name__}")
         post.unlink()
+    elif os.environ.get("PIN") == "1":  # текста нет — закрепить наш последний пост в чате
+        async for m in c.iter_messages(ent, from_user="me", limit=1):
+            await c.pin_message(ent, m, notify=False)
+            print(f"Закреплено сообщение {m.id}")
     await c.disconnect()
 
 
