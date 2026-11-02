@@ -1,6 +1,6 @@
 // Рост и удержание: ID матча в личку боту, рефералка, серия дней с разборами и сводка недели в боте.
 //
-// Ключи: ref:<tg id> — кто пригласил (пишется один раз, когда человек впервые открыл приложение по ссылке r<id>);
+// Ключи: ref:<tg id> — кто пригласил (пишется один раз, когда человек впервые запустил бота или приложение по ссылке r<id>);
 // refdone:<tg id> — бонус за этого друга уже выдан; refn:<tg id> — скольких привёл; streak:<tg id> — серия
 // { d: последний день МСК с разбором, n: дней подряд, best }; streakprize:<tg id>:<день> — приз за день выдан;
 // digest:<понедельник>:<tg id> — сводка недели отправлена; digest:<понедельник>:end — все обойдены; nodigest:<tg id> — отписался.
@@ -63,16 +63,19 @@ export const MATCH_TEXT = (id) => `Катка ${id}. Жми кнопку — о�
 export const refLink = (id) => `https://t.me/${BOT}?startapp=r${id}`;
 export const refOf = (src) => { const m = /^r(\d{1,20})$/.exec(String(src || "")); return m ? m[1] : null; };
 
-// Первое открытие приложения: запомнить, кто позвал. Себя не зовут, старых юзеров не переписываем
+// Первый запуск бота или приложения по ссылке r<id>: запомнить, кто позвал. Себя не зовут; кто уже пользовался
+// ботом (привязал аккаунт или уже пришёл от кого-то) — не реферал
 export async function noteReferral(env, userId, src) {
-  const by = refOf(src);
+  const by = refOf(src), kv = env.COACH_KV;
   if (!by || by === String(userId)) return null;
-  await env.COACH_KV.put(`ref:${userId}`, by);
+  if (await kv.get(`ref:${userId}`) || await kv.get(`user:${userId}`)) return null;
+  await kv.put(`ref:${userId}`, by);
   return by;
 }
 
-// Друг посмотрел свой первый разбор — бонус обоим. Один раз на друга, даже если пачки событий пришли разом
-export async function rewardReferral(env, tg, userId, now = Date.now()) {
+// Друг впервые запустил бота по ссылке — бонус обоим (решение Ярика 02.11: за запуск, а не за отправленную ссылку).
+// Один раз на друга, даже если пачки событий пришли разом. name — имя друга для письма пригласившему
+export async function rewardReferral(env, tg, userId, now = Date.now(), name = "") {
   const kv = env.COACH_KV;
   const by = await kv.get(`ref:${userId}`);
   if (!by || await kv.get(`refdone:${userId}`)) return null;
@@ -86,11 +89,21 @@ export async function rewardReferral(env, tg, userId, now = Date.now()) {
   await tg("sendMessage", { chat_id: Number(userId), text: "Ты пришёл по приглашению друга — держи бесплатный разбор ИИ-тренера. Он уже на счету.",
     reply_markup: { inline_keyboard: [[{ text: "Открыть разбор", web_app: { url: APP_URL } }]] } });
   if (inviter) {
-    await tg("sendMessage", { chat_id: Number(by), text: `Друг, которого ты позвал, разобрал первую катку. Тебе +${REF_BONUS} разбор ИИ-тренера, уже на счету. `
-      + `Всего привёл: ${n}. Зови ещё — ссылка в приложении, раздел «Профиль».`,
-      reply_markup: { inline_keyboard: [[{ text: "Открыть разбор", web_app: { url: APP_URL } }]] } });
+    const who = String(name || "").trim().slice(0, 40);
+    await tg("sendMessage", { chat_id: Number(by), text: `${who ? `${who} запустил` : "Друг запустил"} бота по твоей ссылке. Тебе +${REF_BONUS} разбор ИИ-тренера, уже на счету. `
+      + `Всего привёл: ${n}. Зови ещё — ссылка во вкладке «Бонусы».`,
+      reply_markup: { inline_keyboard: [[{ text: "Бонусы", web_app: { url: `${APP_URL}?tab=bonus` } }]] } });
   }
   return { by, n, inviter };
+}
+
+// /start r<id> в личке бота — тот же реферал, что и открытие приложения по ссылке. Только для тех, кто бота ещё не видел
+export const startPayload = (text) => { const m = /^\/start(?:@\w+)?\s+(\S{1,64})/i.exec(String(text || "").trim()); return m ? m[1] : null; };
+export async function referralFromStart(env, tg, user, text, now = Date.now()) {
+  const src = startPayload(text);
+  if (!refOf(src) || !user || !user.id || await env.COACH_KV.get(`seen:${user.id}`)) return null;
+  if (!(await noteReferral(env, user.id, src))) return null;
+  return rewardReferral(env, tg, user.id, now, user.first_name);
 }
 
 // ---------- серия дней ----------

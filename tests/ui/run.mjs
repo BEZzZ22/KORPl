@@ -664,18 +664,24 @@ if (!only || only.has("paywall")) {
     if (!/inv_p10/.test(await p8.evaluate(() => window.__invoice || ""))) throw new Error("счёт не открылся");
     if (await p8.locator(".paywall").count()) throw new Error("после оплаты пейвол не убрался");
   });
-  // профиль: серия дней и «позвать друга» со своей ссылкой
+  // вкладка «Бонусы»: заметный вход на главной, серия дней и «позвать друга» со своей ссылкой
   await step("grow", async () => {
-    await p8.locator('.tabbtn[data-tab="profile"]').click();
-    await p8.waitForSelector(".grow-card button", { timeout: 15000 });
-    const text = await p8.locator(".grow-card").innerText();
-    if (!/Серия: 4 дня/.test(text) || !/Уже привёл: 2/.test(text)) throw new Error(`блок серии: ${text}`);
-    await p8.locator(".grow-card button").click();
+    await p8.locator('.tabbtn[data-tab="home"]').click();
+    await p8.waitForSelector(".bonus-entry", { timeout: 15000 });
+    if (!(await p8.locator('.tabbtn[data-tab="bonus"].has-new').count())) throw new Error("нет точки на вкладке «Бонусы»");
+    let file = join(OUT, `${String(shots.length + 1).padStart(2, "0")}-bonus-home.png`);
+    await p8.screenshot({ path: file });
+    shots.push(file);
+    await p8.locator(".bonus-entry").click();
+    await p8.waitForSelector(".bonus-card button", { timeout: 15000 });
+    const text = await p8.locator("#app").innerText();
+    if (!/4 дня подряд/.test(text) || !/2\s+друга пришли/.test(text)) throw new Error(`вкладка бонусов: ${text}`);
+    if (await p8.locator('.tabbtn[data-tab="bonus"].has-new').count()) throw new Error("точка не убралась");
+    await p8.locator(".bonus-card button").first().click();
     const link = await p8.evaluate(() => window.__tglink || "");
     if (!link.includes(encodeURIComponent("startapp=r1"))) throw new Error(`ссылка-приглашение: ${link}`);
-    await p8.locator(".grow-card").scrollIntoViewIfNeeded();
-    const file = join(OUT, `${String(shots.length + 1).padStart(2, "0")}-grow.png`);
-    await p8.screenshot({ path: file });
+    file = join(OUT, `${String(shots.length + 1).padStart(2, "0")}-bonus.png`);
+    await p8.screenshot({ path: file, fullPage: true });
     shots.push(file);
   });
   Object.assign(pay, { on: false, paid: false });

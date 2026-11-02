@@ -20,6 +20,7 @@ const NAV_ICONS = {
   home: "M3 11.5 12 4l9 7.5M5 10v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9",
   match: "M4 5h16M4 5v14M4 19h16M8 15l3-4 2 2 3-5",
   profile: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM5 20a7 7 0 0 1 14 0",
+  bonus: "M4 11h16v9H4zM3 7h18v4H3zM12 7v13M12 7C10.5 3.5 7 3.5 7 5.5S10 7 12 7Zm0 0c1.5-3.5 5-3.5 5-1.5S14 7 12 7Z",
 };
 
 const API = "https://api.opendota.com/api";
@@ -541,7 +542,7 @@ function navRoot(sec, screen, ...args) {
 }
 
 // Нижняя навигация: собираем один раз, держим вне #app, чтобы не пересобирать при каждом рендере
-const NAV_TABS = ["home", "match", "profile"];
+const NAV_TABS = ["home", "match", "bonus", "profile"];
 
 function tabButton(tab, label) {
   const icon = svg("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, svg("path", { d: NAV_ICONS[tab] }));
@@ -553,6 +554,7 @@ function goTab(tab) {
   if (!dictionary) { if (document.querySelector("#app .error")) boot(); return; }
   if (tab === "home") navRoot("home", homeScreen);
   else if (tab === "profile") navRoot("profile", profileScreen);
+  else if (tab === "bonus") navRoot("bonus", bonusScreen);
   else if (tab === "match") lastAnalysis ? navRoot("match", analysisScreen, lastAnalysis) : navRoot("match", matchEmpty);
 }
 
@@ -560,7 +562,7 @@ let tabLens = null;
 
 function buildTabbar() {
   tabbar = h("nav", { class: "tabbar", "aria-label": "Разделы" },
-    tabButton("home", "Главная"), tabButton("match", "Разбор"), tabButton("profile", "Профиль"));
+    tabButton("home", "Главная"), tabButton("match", "Разбор"), tabButton("bonus", "Бонусы"), tabButton("profile", "Профиль"));
   document.body.append(tabbar);
   tabLens = glassBar(tabbar, ".tabbtn", { live: false, onPick: (i) => { haptic(); goTab(NAV_TABS[i]); } });
 }
@@ -573,6 +575,8 @@ function updateTabbar() {
     // для экранного диктора: какой раздел открыт
     if (t === section) btn.setAttribute("aria-current", "page"); else btn.removeAttribute("aria-current");
     if (t === "match") btn.classList.toggle("disabled", !lastAnalysis);
+    // точка на «Бонусах», пока человек туда ни разу не заглянул
+    if (t === "bonus") btn.classList.toggle("has-new", !safeLocal.get("bonus_seen") && section !== "bonus");
   }
   if (tabLens) tabLens.place(Math.max(0, NAV_TABS.indexOf(section)), tabLens.current() < 0);
 }
@@ -617,6 +621,7 @@ async function homeScreen() {
     h("button", { class: "draft-entry", type: "button", onclick: () => { haptic(); go(draftScreen); } },
       h("span", { class: "de-icon", "aria-hidden": "true" }, svg("svg", { viewBox: "0 0 24 24" }, svg("path", { d: "M12 3 4 7v5c0 5 3.4 7.6 8 9 4.6-1.4 8-4 8-9V7l-8-4ZM9 12l2 2 4-4" }))),
       h("div", { class: "grow" }, h("b", {}, "Драфт перед игрой"), h("span", {}, "Кого пикнуть и что собирать"))),
+    bonusEntry(),
   ];
   if (!account || (pendingLink && String(pendingLink) !== String(account))) {
     render(...nodes, accountForm(), demoEntry());
@@ -1632,36 +1637,84 @@ function heroCardBack(a) {
     h("div", { class: "hcb-hint" }, "Тап — перевернуть обратно"));
 }
 
-// Своя ссылка-приглашение: друг открыл по ней и разобрал катку — обоим по разбору тренера
+// Своя ссылка-приглашение: друг впервые запустил бота по ней — обоим по разбору тренера
 function refLink() {
   const me = tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id;
   return me ? `https://t.me/${BOT_USERNAME}?startapp=r${me}` : `https://t.me/${BOT_USERNAME}?startapp`;
 }
 
-// Профиль: серия дней с разборами и «позови друга». Данные — из кошелька воркера; нет Телеграма — блока нет
-function growBlock() {
+const GIFT_ICON = () => svg("svg", { viewBox: "0 0 24 24" }, svg("path", { d: NAV_ICONS.bonus }));
+const REF_TEXT = "Разбирает твои катки в Доте: кто слил, ошибки по таймкодам, повтор на карте. Заходи по ссылке — дадут бесплатный разбор ИИ-тренера.";
+
+// Главная: заметный вход во вкладку «Бонусы» (иконку в профиле никто не находил)
+function bonusEntry() {
   if (!tg || !tg.initData || !COACH_URL) return null;
-  const box = h("div", { class: "card grow-card" });
+  return h("button", { class: "draft-entry bonus-entry", type: "button", onclick: () => { haptic(); step("bonus_home"); goTab("bonus"); } },
+    h("span", { class: "de-icon", "aria-hidden": "true" }, GIFT_ICON()),
+    h("div", { class: "grow" }, h("b", {}, "Бонусы: бесплатные разборы тренера"), h("span", {}, "Позови друга или держи серию — разбор в подарок")));
+}
+
+// Профиль: короткая ссылка на «Бонусы» вместо целого блока
+function growBlock() {
+  return bonusEntry();
+}
+
+// Вкладка «Бонусы»: что на счету, позвать друга, серия дней. Данные — из кошелька воркера
+async function bonusScreen() {
+  section = "bonus";
+  safeLocal.set("bonus_seen", "1");
   const seq = navSeq;
-  (async () => {
-    const w = await getWallet(true);
-    if (stale(seq) || !w || !w.ref_link) { box.remove(); return; }
-    const n = Number(w.streak) || 0, friends = Number(w.ref_n) || 0;
-    const nextPrize = n < 3 ? 3 : 3 + Math.ceil((n - 2) / 7) * 7;
-    const streakText = n
-      ? `Серия: ${n} ${plural(n, "день", "дня", "дней")} подряд с разборами${w.streak_today ? "" : " — разбери катку сегодня, чтобы не сгорела"}. Подарок — разбор тренера на ${nextPrize}-й день.`
-      : "Разбирай хотя бы одну катку в день: на 3-й день подряд — разбор тренера в подарок, дальше каждую неделю.";
-    box.append(
-      h("div", { class: "grow-row" }, h("b", {}, n ? `🔥 ${n}` : "🔥 0"), h("span", { class: "small" }, streakText)),
-      h("p", { class: "small muted" }, `Позови друга: когда он разберёт первую катку, вам обоим по разбору тренера.${friends ? ` Уже привёл: ${friends}.` : ""}`),
-      h("button", { type: "button", onclick: () => {
-        haptic(); step("ref_share");
-        const url = `https://t.me/share/url?url=${encodeURIComponent(w.ref_link)}&text=${encodeURIComponent("Разбирает твои катки в Доте: кто слил, ошибки по таймкодам, повтор на карте. Заходи по ссылке — дадут бесплатный разбор ИИ-тренера.")}`;
-        if (tg.openTelegramLink) tg.openTelegramLink(url); else window.open(url, "_blank");
-      } }, "Позвать друга"),
-    );
-  })();
-  return box;
+  const head = h("div", { class: "page-head" }, h("h1", {}, "Бонусы"));
+  if (!tg || !tg.initData || !COACH_URL) {
+    render(head, h("div", { class: "card muted" }, "Бонусы работают внутри Телеграма: открой приложение через бота @" + BOT_USERNAME + "."));
+    return;
+  }
+  loading("Считаю бонусы…");
+  const w = await getWallet(true);
+  if (stale(seq)) return;
+  if (!w || !w.ref_link) {
+    errorScreen("Бонусы не загрузились. Проверь интернет.", () => navRoot("bonus", bonusScreen));
+    return;
+  }
+  const n = Number(w.streak) || 0, friends = Number(w.ref_n) || 0, bonus = Number(w.ref_bonus) || 1;
+  const nextPrize = n < 3 ? 3 : 3 + Math.ceil((n - 2) / 7) * 7;
+  const status = h("p", { class: "small muted", role: "status" });
+  const share = () => {
+    haptic(); step("ref_share");
+    const url = `https://t.me/share/url?url=${encodeURIComponent(w.ref_link)}&text=${encodeURIComponent(REF_TEXT)}`;
+    if (tg.openTelegramLink) tg.openTelegramLink(url); else window.open(url, "_blank");
+  };
+  const copy = async () => {
+    haptic("light"); step("ref_copy");
+    try { await navigator.clipboard.writeText(w.ref_link); status.textContent = "Ссылка скопирована."; }
+    catch { status.textContent = w.ref_link; }
+  };
+  const rule = (num, text) => h("li", {}, h("b", {}, num), h("span", {}, text));
+  render(
+    head,
+    h("div", { class: "card bonus-balance" },
+      h("span", { class: "bb-icon", "aria-hidden": "true" }, GIFT_ICON()),
+      h("div", { class: "grow" }, h("div", { class: "small muted" }, "Тренер"), h("b", {}, walletLine(w)))),
+    h("h2", {}, "Позови друга"),
+    h("div", { class: "card bonus-card" },
+      h("div", { class: "bonus-big" }, `+${bonus}`, h("span", {}, `${plural(bonus, "разбор", "разбора", "разборов")} тренера тебе и другу`)),
+      h("ol", { class: "bonus-steps" },
+        rule("1", "Отправь другу свою ссылку."),
+        rule("2", "Он запускает бота по ней."),
+        rule("3", "Обоим сразу падает разбор тренера, бот напишет.")),
+      h("p", { class: "small muted" }, "Считается только новый человек, который раньше бота не открывал. Просто отправить ссылку мало, себя позвать нельзя."),
+      h("div", { class: "bonus-count" }, h("b", {}, String(friends)), h("span", {}, `${plural(friends, "друг пришёл", "друга пришли", "друзей пришли")} по твоей ссылке`)),
+      h("button", { type: "button", onclick: share }, "Позвать друга"),
+      h("button", { type: "button", class: "ghost", onclick: copy }, "Скопировать ссылку"),
+      status),
+    h("h2", {}, "Серия дней"),
+    h("div", { class: "card" },
+      h("div", { class: "grow-row" }, h("b", {}, `🔥 ${n}`), h("span", { class: "small" }, n
+        ? `${n} ${plural(n, "день", "дня", "дней")} подряд с разборами${w.streak_today ? "" : " — разбери катку сегодня, чтобы серия не сгорела"}.`
+        : "Разбирай хотя бы одну катку в день.")),
+      h("p", { class: "small muted" }, `Подарок — разбор тренера на ${nextPrize}-й день подряд, дальше каждую неделю.`),
+      h("button", { type: "button", class: "ghost", onclick: () => { haptic(); goTab("home"); } }, "Разобрать катку")),
+  );
 }
 
 function shareLink(a, custom = null) {
@@ -1996,7 +2049,7 @@ function isPaywall(e) {
 // ---------- счётчики для владельца: что делают в приложении (воркер копит по дням и шлёт отчёт) ----------
 
 // Экраны через go(); разбор открывается из matchScreen напрямую, поэтому отмечается в analysisScreen
-const SCREEN_EVENTS = { homeScreen: "home", matchScreen: "match", profileScreen: "profile", heroStatsScreen: "hero_stats", draftScreen: "draft" };
+const SCREEN_EVENTS = { homeScreen: "home", matchScreen: "match", profileScreen: "profile", bonusScreen: "bonus", heroStatsScreen: "hero_stats", draftScreen: "draft" };
 const ERROR_STEPS = [["OpenDota не отвечает", "err_opendota"], ["Такого матча нет", "err_no_match"], ["Реплей так и не", "err_replay"],
   ["Не смог разобрать", "err_parse"], ["Не удалось загрузить", "err_boot"]];
 const stats = { open: true, events: {}, secs: 0, since: Date.now(), dirty: true, start: Date.now(), path: [], jsError: "" };
@@ -3883,6 +3936,8 @@ async function boot() {
   if (matchId) {
     navStack.push([homeScreen, []]);
     go(matchScreen, matchId, slot, account);
+  } else if (new URLSearchParams(location.search).get("tab") === "bonus") {
+    navRoot("bonus", bonusScreen);
   } else {
     go(homeScreen);
   }

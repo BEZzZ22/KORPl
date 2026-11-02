@@ -333,3 +333,7 @@ html.v2 .hero-banner.hc::after { display: none; }
 .m3d-pin.on { --pc: #fff; }
 .m3d-info { margin: 0 18px; min-height: 20px; font-size: 13px; color: var(--muted); text-align: center; }
 @media (prefers-reduced-motion: reduce) { .grown .m3d-ring { animation: none; } }
+
+/* ---------- вкладка «Бонусы»: вход на главной выделен золотом ---------- */
+html.v2 .bonus-entry { background: linear-gradient(100deg, rgba(230, 184, 88, 0.14), rgba(230, 184, 88, 0.02)), var(--slab); box-shadow: inset 0 0 0 1px rgba(230, 184, 88, 0.35); }
+html.v2 .bonus-entry b { color: var(--aegis); }
