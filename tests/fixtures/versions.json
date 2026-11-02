@@ -8,8 +8,8 @@
   "sha": "fa104be1129fe933"
  },
  "app.js": {
-  "v": "123",
-  "sha": "a0dbac0f3e982fe1"
+  "v": "124",
+  "sha": "777576ecec8fd9db"
  },
  "blame.js": {
   "v": "10",
@@ -52,8 +52,8 @@
   "sha": "877f05546d693107"
  },
  "style.css": {
-  "v": "62",
-  "sha": "1531cf959d1ac01d"
+  "v": "63",
+  "sha": "9a337552258c8d0d"
  },
  "texts.json": {
   "v": "19",
@@ -64,7 +64,7 @@
   "sha": "3d541bf996c9f8d6"
  },
  "v2.css": {
-  "v": "9",
-  "sha": "d2dab8cd6a1f9db1"
+  "v": "10",
+  "sha": "95d864c8a6e873a4"
  }
 }

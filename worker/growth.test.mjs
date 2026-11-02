@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { withStore } from "./store.js";
-import { matchFromText, accountFromText, refOf, noteReferral, rewardReferral, bumpStreak, streakPrize, growthView, weekSummary, digestText, weeklyDigest } from "./growth.js";
+import { matchFromText, accountFromText, refOf, noteReferral, rewardReferral, referralFromStart, startPayload, bumpStreak, streakPrize, growthView, weekSummary, digestText, weeklyDigest } from "./growth.js";
 import { getWallet } from "./pay.js";
 import { trackUser, onRealAnalysis } from "./coach.js";
 
@@ -72,34 +72,74 @@ test("Friend ID и ссылки на профиль в личку — кнопк
   assert.equal(matchFromText("https://www.dotabuff.com/matches/8012800381"), 8012800381);
 });
 
-test("рефералка: друг пришёл по ссылке и разобрал катку — обоим по разбору, один раз", async () => {
-  const env = env0(), { sent, tg } = tgLog();
+// trackUser шлёт письма через fetch Телеграма: подменяем и собираем, кому ушло
+async function withTgFetch(fn) {
+  const real = globalThis.fetch, calls = [];
+  globalThis.fetch = async (url, init) => { calls.push(JSON.parse(init.body)); return { ok: true, json: async () => ({ ok: true, result: {} }), text: async () => "{}" }; };
+  try { await fn(calls); } finally { globalThis.fetch = real; }
+  return calls;
+}
+
+test("рефералка: бонус обоим, как только друг впервые запустил по ссылке; один раз", async () => {
+  const env = env0(), { tg } = tgLog();
+  env.BOT_TOKEN = "1:x";
   assert.equal(refOf("r42"), "42");
   assert.equal(refOf("m123_s1"), null);
-  // первый заход по ссылке друга 42
-  await trackUser(env, { id: 77, first_name: "Друг" }, { open: true, src: "r42" });
+  // ссылку только отправили — ничего
+  assert.equal((await getWallet(env, 42)).c, 0);
+  const calls = await withTgFetch(async () => {
+    // первый запуск по ссылке друга 42 — сразу обоим по разбору
+    await trackUser(env, { id: 77, first_name: "Пудж" }, { open: true, src: "r42" });
+    // повторный заход по другой ссылке ничего не меняет и второй бонус не даёт
+    await trackUser(env, { id: 77 }, { open: true, src: "r43" });
+    await trackUser(env, { id: 77 }, { open: true, src: "r42" });
+  });
   assert.equal(await env.COACH_KV.get("ref:77"), "42");
-  // повторный заход по другой ссылке пригласившего не меняет
-  await trackUser(env, { id: 77 }, { open: true, src: "r43" });
-  assert.equal(await env.COACH_KV.get("ref:77"), "42");
+  assert.equal((await getWallet(env, 77)).c, 1);
+  assert.equal((await getWallet(env, 42)).c, 1);
+  assert.equal((await getWallet(env, 43)).c, 0);
+  assert.equal(await env.COACH_KV.get("refn:42"), "1");
+  assert.deepEqual(calls.map((x) => x.chat_id).sort(), [42, 77]);
+  assert.match(calls.find((x) => x.chat_id === 42).text, /^Пудж запустил бота по твоей ссылке/);
+  // и разбор потом второй раз не даёт
+  assert.equal(await rewardReferral(env, tg, 77), null);
   // сам себя не зовёт
   assert.equal(await noteReferral(env, 9, "r9"), null);
   // старый юзер по ссылке — не реферал
   await trackUser(env, { id: 88 }, { open: true });
   await trackUser(env, { id: 88 }, { open: true, src: "r42" });
   assert.equal(await env.COACH_KV.get("ref:88"), null);
-  // два разбора разом — бонус один раз
-  const [a, b] = await Promise.all([rewardReferral(env, tg, 77), rewardReferral(env, tg, 77)]);
-  assert.ok(Boolean(a) !== Boolean(b));
-  assert.equal(await rewardReferral(env, tg, 77), null);
-  assert.equal((await getWallet(env, 77)).c, 1);
-  assert.equal((await getWallet(env, 42)).c, 1);
-  assert.equal(await env.COACH_KV.get("refn:42"), "1");
-  assert.deepEqual(sent.map((x) => x.chat_id).sort(), [42, 77]);
+  assert.equal(await rewardReferral(env, tg, 88), null);
+  // уже привязал аккаунт через бота — тоже не новый
+  await env.COACH_KV.put("user:99", JSON.stringify({ account_id: 1 }));
+  assert.equal(await noteReferral(env, 99, "r42"), null);
   assert.equal((await growthView(env, 42)).ref_n, 1);
   assert.equal((await growthView(env, 42)).ref_link, "https://t.me/DotaRazbor_bot?startapp=r42");
-  // без пригласившего — ничего
-  assert.equal(await rewardReferral(env, tg, 88), null);
+});
+
+test("рефералка: два события разом — бонус один раз", async () => {
+  const env = env0(), { tg } = tgLog();
+  await noteReferral(env, 77, "r42");
+  const [a, b] = await Promise.all([rewardReferral(env, tg, 77), rewardReferral(env, tg, 77)]);
+  assert.ok(Boolean(a) !== Boolean(b));
+  assert.equal((await getWallet(env, 42)).c, 1);
+});
+
+test("рефералка через /start r<id> в боте: новый человек — бонус, повтор и старый — нет", async () => {
+  const env = env0(), { sent, tg } = tgLog();
+  assert.equal(startPayload("/start r42"), "r42");
+  assert.equal(startPayload("/start"), null);
+  assert.equal((await referralFromStart(env, tg, { id: 55, first_name: "Инвокер" }, "/start r42")).by, "42");
+  assert.equal(await referralFromStart(env, tg, { id: 55 }, "/start r42"), null);
+  assert.equal(await referralFromStart(env, tg, { id: 42 }, "/start r42"), null);
+  await env.COACH_KV.put("seen:66", "1");
+  assert.equal(await referralFromStart(env, tg, { id: 66 }, "/start r42"), null);
+  assert.equal((await getWallet(env, 55)).c, 1);
+  assert.equal((await getWallet(env, 42)).c, 1);
+  assert.equal(sent.length, 2);
+  // потом открыл приложение — второго бонуса нет
+  await withTgFetch(async () => { env.BOT_TOKEN = "1:x"; await trackUser(env, { id: 55 }, { open: true, src: "r42" }); });
+  assert.equal((await getWallet(env, 42)).c, 1);
 });
 
 test("рефералка: после 20 друзей пригласившему больше не капает, другу — да", async () => {
@@ -141,7 +181,9 @@ test("разбор из приложения (match_real): серия и бон�
   globalThis.fetch = async (url, init) => { calls.push(JSON.parse(init.body)); return { ok: true, json: async () => ({ ok: true, result: {} }), text: async () => "{}" }; };
   try {
     env.BOT_TOKEN = "1:x";
-    await trackUser(env, { id: 77 }, { open: true, src: "r42" });
+    // пришёл по ссылке до 03.11: ref записан, бонуса не было — выдаётся на первом разборе
+    await env.COACH_KV.put("ref:77", "42");
+    await trackUser(env, { id: 77 }, { open: true });
     const got = await onRealAnalysis(env, 77, at("2026-11-02"));
     assert.equal(got.streak.n, 1);
     assert.equal(got.ref.by, "42");

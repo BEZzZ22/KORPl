@@ -8,7 +8,7 @@
 import LORE from "./lore.json" with { type: "json" };
 import { withStore, migrateStep, purgeExpired } from "./store.js";
 import { kickShorts } from "./kick.js";
-import { matchFromText, matchButton, MATCH_TEXT, accountFromText, linkButton, LINK_TEXT, OD_HEADERS, noteReferral, rewardReferral, bumpStreak, growthView, weeklyDigest } from "./growth.js";
+import { matchFromText, matchButton, MATCH_TEXT, accountFromText, linkButton, LINK_TEXT, OD_HEADERS, noteReferral, rewardReferral, referralFromStart, bumpStreak, growthView, weeklyDigest } from "./growth.js";
 import { CHAT_ID, handleChatUpdate, chatChores, chatStatus, releaseIfPending } from "./chatguard.js";
 import { spendUnit, spendChat, isOpen, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT, loginUser, roboLink, roboResult, robokassaOn, payUrl, tokenUser } from "./pay.js";
 
@@ -1097,7 +1097,8 @@ export function mergeAct(cur, batch) {
   return out;
 }
 
-// Человек досмотрел настоящий разбор: день в серию (приз на 3-й день и каждые 7 дальше), бонус другу-пригласившему
+// Человек досмотрел настоящий разбор: день в серию (приз на 3-й день и каждые 7 дальше). Рефералка тут — добивка
+// для тех, кто пришёл по ссылке до 03.11, когда бонус давали за первый разбор (refdone не даст выдать дважды)
 export async function onRealAnalysis(env, id, now = Date.now()) {
   const tg = (m, b) => tgCall(env, m, b);
   const streak = await bumpStreak(env, tg, id, now).catch((e) => { console.log(`серия: ${e && e.message || e}`); return null; });
@@ -1111,8 +1112,10 @@ export async function trackUser(env, user, batch, now = Date.now()) {
   if (!(await env.COACH_KV.get(seenKey))) {
     const meta = { t: now, n: clip([user.first_name, user.last_name].filter(Boolean).join(" "), 40), u: clip(user.username, 32), src: clip(batch && batch.src, 40) };
     await env.COACH_KV.put(seenKey, "1", { metadata: meta });
-    // пришёл по ссылке друга (startapp=r<id>) — запомнить, бонус обоим после первого разбора
-    if (!isOwner(env, id)) await noteReferral(env, id, batch && batch.src).catch(() => null);
+    // впервые запустил по ссылке друга (startapp=r<id>) — бонус обоим сразу: человек реально пришёл, а не просто получил ссылку
+    if (!isOwner(env, id) && await noteReferral(env, id, batch && batch.src).catch(() => null)) {
+      await rewardReferral(env, (m, b) => tgCall(env, m, b), id, now, user.first_name).catch((e) => console.log(`рефералка: ${e && e.message || e}`));
+    }
   }
   const key = `act:${mskDay(now)}:${id}`;
   const got = await env.COACH_KV.getWithMetadata(key);
@@ -1555,6 +1558,7 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
   const day = isOwner(env, msg.from.id) ? reportCommandDay(msg.text, now) : null;
   if (!day) {
     const fwd = !isOwner(env, msg.from.id) && await forwardToOwner(env, msg, now);
+    if (!isOwner(env, msg.from.id)) await referralFromStart(env, (m, b) => tgCall(env, m, b), msg.from, msg.text, now).catch(() => null);
     const got = await greet(env, msg);
     return fwd ? { ...(got || {}), forwarded: 1 } : got;
   }
