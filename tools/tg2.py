@@ -781,6 +781,7 @@ async def forget():
     print("Файлы акка менеджера удалены.")
 
 
+if __name__ == "__main__":
     act = os.environ.get("ACTION", "rules")
     if act == "code" and os.environ.get("CODE", "").strip():
         act = "login"
