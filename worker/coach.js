@@ -8,6 +8,7 @@
 import LORE from "./lore.json" with { type: "json" };
 import { withStore, migrateStep, purgeExpired } from "./store.js";
 import { kickShorts } from "./kick.js";
+import { CHAT_ID, handleChatUpdate, chatChores, chatStatus, releaseIfPending } from "./chatguard.js";
 import { spendUnit, spendChat, isOpen, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT, loginUser, roboLink, roboResult, robokassaOn, payUrl, tokenUser } from "./pay.js";
 
 const ALLOWED_ORIGINS = ["https://bezzz22.github.io"];
@@ -1091,7 +1092,7 @@ export async function trackUser(env, user, batch, now = Date.now()) {
 
 // Канал и чат проекта (создан workflow «Чат канала», ссылки и id — docs/community.json)
 export const COMMUNITY = {
-  channel: -1003943596949, chat: -1003744417862,
+  channel: -1003943596949, chat: CHAT_ID,
   links: { channel_url: "https://t.me/Dota_Razbor", chat_url: "https://t.me/dotarazbor_chat" },
 };
 const MEMBER = new Set(["creator", "administrator", "member"]);
@@ -1349,7 +1350,7 @@ export async function dailyReport(env, now = Date.now()) {
 // Апдейты бота приходят вебхуком на /tg (крон сам ставит его один раз). Отчёт — только владельцу в личке,
 // остальным приветствие с кнопкой приложения. «отчёт» — за сегодня до текущей минуты, «отчёт вчера», «отчёт 26.10»
 const WORKER_URL = "https://dotacoach.2007rggg.workers.dev";
-const WEBHOOK_VERSION = "2"; // меняется вместе с allowed_updates: крон переставит вебхук
+const WEBHOOK_VERSION = "3"; // меняется вместе с allowed_updates: крон переставит вебхук
 async function webhookSecret(token) {
   const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`tg-hook:${token}`)));
   return [...hash.slice(0, 20)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -1359,7 +1360,7 @@ export async function ensureWebhook(env) {
   if (!env.COACH_KV || !env.BOT_TOKEN) return false;
   if ((await env.COACH_KV.get("tg_webhook")) === WEBHOOK_VERSION) return true;
   const ok = await sendTelegram(env, "setWebhook", {
-    url: `${env.WORKER_URL || WORKER_URL}/tg`, secret_token: await webhookSecret(env.BOT_TOKEN), allowed_updates: ["message", "pre_checkout_query"],
+    url: `${env.WORKER_URL || WORKER_URL}/tg`, secret_token: await webhookSecret(env.BOT_TOKEN), allowed_updates: ["message", "edited_message", "callback_query", "chat_member", "pre_checkout_query"],
     // висящие апдейты не выбрасываем: среди них может быть оплата звёздами, которую иначе не зачислим
     drop_pending_updates: false,
   }).catch(() => false);
@@ -1448,8 +1449,13 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
     const ok = await sendTelegram(env, "answerPreCheckoutQuery", checkout(update.pre_checkout_query)).catch(() => false);
     return { checkout: ok ? 1 : 0 };
   }
+  // чат канала: капча, приветствие, антиспам (worker/chatguard.js)
+  const guarded = await handleChatUpdate(env, (m, b) => tgCall(env, m, b), update, now);
+  if (guarded) return { chat: guarded };
   const msg = update && update.message;
   if (!msg || !msg.from || !msg.chat || msg.chat.type !== "private") return null;
+  // написал боту, а в чате висит неподтверждённым — снимаем ограничение
+  if (!msg.successful_payment) await releaseIfPending(env, (m, b) => tgCall(env, m, b), msg.from, now).catch(() => false);
   if (msg.successful_payment) {
     const got = await grant(env, msg, now);
     if (got && got.pack) await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: thanksText(got.pack, got.wallet), reply_markup: appButton }).catch(() => false);
@@ -1472,6 +1478,11 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
     const text = await moneyText(env, now);
     await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text, disable_web_page_preview: true }).catch(() => false);
     return { balance: text };
+  }
+  if (isOwner(env, msg.from.id) && /^\/?(?:чат|chat)(?:@\w+)?$/i.test(cmd)) {
+    const text = await chatStatus(env, (m, b) => tgCall(env, m, b), String(env.BOT_TOKEN).split(":")[0], now);
+    await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text }).catch(() => false);
+    return { chat_status: text };
   }
   const back = isOwner(env, msg.from.id) && /^\/refund(?:@\w+)?\s+(\S+)$/i.exec(cmd);
   if (back) {
@@ -1613,7 +1624,10 @@ async function handlePost(request, env, ctx, origin) {
     if (isOwner(env, user.id)) return reply(200, { ok: true, channel: true, chat: true, ...COMMUNITY.links }, origin);
     const limited = throttle(String(user.id), Date.now(), 120, "gate", 100000);
     if (limited) return reply(200, { ok: true, unknown: true }, origin);
-    return reply(200, { ...(await gateCheck(env, user.id)), ...COMMUNITY.links }, origin);
+    const gate = await gateCheck(env, user.id);
+    // открыл приложение — живой человек: если в чате висит без нажатой кнопки, снимаем ограничение
+    if (gate.chat && env.COACH_KV) later(releaseIfPending(env, (m, b) => tgCall(env, m, b), user));
+    return reply(200, { ...gate, ...COMMUNITY.links }, origin);
   }
 
   // Ссылка на профиль Steam с ником (steamcommunity.com/id/<ник>): по ней id не видно, а люди копируют именно её.
@@ -1938,6 +1952,7 @@ export default {
     const chores = [migrateStep(env, now).catch((e) => console.log(`перенос из KV: ${e && e.message || e}`))];
     if (new Date(now).getUTCMinutes() < 3) chores.push(purgeExpired(env, now).catch(() => 0));
     if (new Date(now).getUTCMinutes() % 15 < 3) chores.push(kickShorts(env, now).catch((e) => console.log(`пинок Shorts: ${e && e.message || e}`)));
+    chores.push(chatChores(env, (m, b) => tgCall(env, m, b), now).catch((e) => console.log(`чат: ${e && e.message || e}`)));
     ctx.waitUntil(Promise.all([checkWatches(env), checkReplays(env), reportOnRequest(env), ensureWebhook(env), ...chores]));
   },
 };
