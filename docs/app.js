@@ -2,10 +2,10 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan, skillPlan,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
-} from "./engine.js?v=42";
+} from "./engine.js?v=43";
 import { aegisBadge, openShowcase } from "./aegis.js?v=9";
 import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=5";
-import { matchVerdicts } from "./blame.js?v=8";
+import { matchVerdicts } from "./blame.js?v=9";
 import { rankMedal3d } from "./medal3d.js?v=7";
 import { heroCard3d } from "./herocard3d.js?v=5";
 import { tacticalTable } from "./map3d.js?v=10";
@@ -29,7 +29,11 @@ const STEAM_CDN = "https://cdn.cloudflare.steamstatic.com";
 const STEAM_MIRROR = "https://cdn.akamai.steamstatic.com";
 const STEAM64_OFFSET = 76561197960265728n;
 const PARSE_POLL_MS = 15000;
-const PARSE_POLL_MAX = 20;
+// 10 опросов по 15 с: OpenDota разбирает реплей за 20–60 секунд, дольше — показываем быстрый разбор
+// по итогам матча, а полный ждём тихо в фоне (LITE_POLL_MAX опросов по LITE_POLL_MS)
+const PARSE_POLL_MAX = 10;
+const LITE_POLL_MS = 30000;
+const LITE_POLL_MAX = 40;
 const V2 = document.documentElement.classList.contains("v2");
 const BG_COLOR = V2 ? "#09090b" : "#08090c";
 const DAMAGE_TYPES = { Physical: "физический", Magical: "магический", Pure: "чистый" };
@@ -1251,7 +1255,7 @@ function freshMatchCard(m, account) {
   const flag = `req:${m.match_id}`;
   if (!safeLocal.get(flag)) {
     safeLocal.set(flag, "1");
-    api(`/request/${m.match_id}`, { method: "POST" }).catch(() => {});
+    requestParse(m.match_id);
   }
   const won = (m.player_slot < 128) === m.radiant_win;
   const ago = Math.max(1, Math.round((Date.now() / 1000 - m.start_time - (m.duration || 0)) / 60));
@@ -1288,11 +1292,22 @@ const upTo = (promise, ms, fallback) => Promise.race([promise.catch(() => fallba
 // Пример разбора до привязки аккаунта: настоящая катка с разобранным реплеем, смотрим за Tusk
 const DEMO_MATCH = 9052987576, DEMO_ACCOUNT = 163061132;
 
-async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false) {
-  if (attempt === 0) loading("Призываю матч…");
+// Заявка OpenDota на разбор реплея. У части провайдеров в РФ запрос к OpenDota с телефона не проходит:
+// GET мы давно повторяем через воркер, а POST терялся молча — и реплей не разбирался никогда. Теперь тоже через воркер
+function requestParse(matchId, viaWorker = false) {
+  const worker = () => fetch(`${API_PROXY}/request/${matchId}`, { method: "POST" }).catch(() => {});
+  if (viaWorker) return worker();
+  return api(`/request/${matchId}`, { method: "POST", timeout: 10000 }).catch(worker);
+}
+
+// Матчи, где человек сам попросил быстрый разбор, не дожидаясь реплея
+const liteNow = new Set();
+
+async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false, quiet = false) {
+  if (attempt === 0 && !quiet) loading("Призываю матч…");
   const seq = navSeq;
   // файл позиций качается вместе с матчем, а не после него
-  const replayP = fetchReplay(matchId);
+  const replayP = quiet ? null : fetchReplay(matchId);
   let match;
   try {
     // ссылка на разбор: матч уже качается со старта (boot), второй раз не просим
@@ -1302,6 +1317,11 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false) 
     if (stale(seq)) return;
   } catch {
     if (stale(seq)) return;
+    // быстрый разбор уже на экране: молча пробуем позже
+    if (quiet) {
+      if (attempt < LITE_POLL_MAX) pollTimer = setTimeout(() => matchScreen(matchId, slot, accountId, attempt + 1, demo, true), LITE_POLL_MS);
+      return;
+    }
     // ждём разбор реплея: один сбой OpenDota не повод бросать ожидание, просто опрашиваем дальше
     if (attempt > 0 && attempt < PARSE_POLL_MAX) {
       pollTimer = setTimeout(() => matchScreen(matchId, slot, accountId, attempt + 1, demo), PARSE_POLL_MS);
@@ -1310,30 +1330,42 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false) 
     errorScreen("OpenDota не отвечает.", () => go(matchScreen, matchId, slot, accountId, 0, demo));
     return;
   }
+  if (quiet) {
+    // фоновая проверка под быстрым разбором: реплей разобрался — предлагаем полный, сами экран не дёргаем
+    if (match && isParsed(match)) { liteNow.delete(matchId); liteReady(matchId, slot, accountId, demo); return; }
+    if (attempt % 6 === 0) requestParse(matchId, true);
+    if (attempt < LITE_POLL_MAX) pollTimer = setTimeout(() => matchScreen(matchId, slot, accountId, attempt + 1, demo, true), LITE_POLL_MS);
+    return;
+  }
   if (!match || !match.players) {
     errorScreen("Такого матча нет. Проверь ID.", () => navRoot("home", homeScreen));
     return;
   }
-  if (!isParsed(match)) {
+  const lite = !isParsed(match);
+  if (lite && attempt < PARSE_POLL_MAX && !liteNow.has(matchId)) {
     if (attempt === 0) step("match_parsing");
     if (attempt === 0) {
-      api(`/request/${matchId}`, { method: "POST" }).catch(() => {});
+      requestParse(matchId);
       watchParse(matchId);
     }
-    if (attempt >= PARSE_POLL_MAX) {
-      errorScreen("Реплей так и не разобрался. Попробуй позже.", () => go(matchScreen, matchId, slot, accountId, 0, demo));
-      return;
-    }
+    // заявка могла потеряться по дороге: повторяем через воркер
+    if (attempt === 4 || attempt === 8) requestParse(matchId, true);
     render(h("div", { class: "center" },
       h("div", { class: "spinner" }),
       h("p", { class: "display" }, "Реплей разбирается"),
-      h("p", { class: "small muted" }, "Обычно 1–5 минут. Страница обновится сама."),
+      h("p", { class: "small muted" }, "Обычно до минуты. Страница обновится сама."),
       watchOk.has(matchId) && h("p", { class: "small muted" }, "Можешь закрыть приложение: бот напишет в Телеграм, когда разбор будет готов."),
       watchNo.has(matchId) && h("p", { class: "small muted" }, "Сообщения от бота ты не разрешил, поэтому он не напишет. Оставь приложение открытым или загляни сюда через пару минут."),
+      attempt >= 1 && h("button", { type: "button", class: "ghost", onclick: () => {
+        haptic(); liteNow.add(matchId);
+        if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+        matchScreen(matchId, slot, accountId, PARSE_POLL_MAX, demo);
+      } }, "Показать быстрый разбор сейчас"),
     ));
     pollTimer = setTimeout(() => matchScreen(matchId, slot, accountId, attempt + 1, demo), PARSE_POLL_MS);
     return;
   }
+  if (lite) step("match_lite");
 
   let player = null;
   if (!player && accountId) player = match.players.find((p) => p.account_id === accountId);
@@ -1362,9 +1394,22 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false) 
   // для блока «Обычно у тебя»: сырые цифры этой игры и чей аккаунт
   rawOf.set(a, { match, replay });
   a.demo = demo;
+  if (a.lite) a.reopen = () => go(matchScreen, matchId, slot, accountId, 0, demo);
   a.hist_self = { account: player.account_id, duration: match.duration, kills: player.kills, deaths: player.deaths,
     assists: player.assists, gold_per_min: player.gold_per_min, xp_per_min: player.xp_per_min, last_hits: player.last_hits };
   analysisScreen(a);
+  // реплей ещё не разобран: тихо ждём его под быстрым разбором
+  if (a.lite) pollTimer = setTimeout(() => matchScreen(matchId, slot, accountId, 1, demo, true), LITE_POLL_MS);
+}
+
+// Полный разбор готов, а человек читает быстрый: меняем плашку на кнопку, а не перерисовываем экран под пальцем
+function liteReady(matchId, slot, accountId, demo) {
+  const banner = app.querySelector(".lite-banner");
+  if (!banner || !lastAnalysis || !lastAnalysis.lite || lastAnalysis.facts.match_id !== matchId) return;
+  haptic("medium");
+  banner.replaceChildren(
+    h("div", { class: "grow" }, h("b", {}, "Реплей разобран"), h("span", {}, "Полный разбор с таймингами, смертями и картой готов.")),
+    h("button", { type: "button", onclick: () => { haptic(); go(matchScreen, matchId, slot, accountId, 0, demo); } }, "Открыть"));
 }
 
 // Сырые данные разбора для карты и «Кто слил»: в сам разбор не кладём, он уходит в память и тренеру
@@ -1420,7 +1465,7 @@ async function notYourMatch() {
 
 // ---------- экран разбора ----------
 
-const TABS = [
+const ALL_TABS = [
   ["Обзор", overviewTab],
   ["Кто слил", blameTab],
   ["Фазы", phasesTab],
@@ -1439,6 +1484,8 @@ function analysisScreen(a) {
   const tabs = h("div", { class: "tabs", role: "tablist" });
   let index = -1, lens = null;
   const pages = new Map();
+  // без реплея есть только итоги матча: фазы, смерти, карта и графики пустые — эти вкладки не показываем
+  const TABS = a.lite ? ALL_TABS.filter(([name]) => name === "Обзор" || name === "Сборка") : ALL_TABS;
   const select = (i) => {
     if (i === index) return;
     const dir = index < 0 ? 0 : Math.sign(i - index);
@@ -1455,8 +1502,9 @@ function analysisScreen(a) {
   };
   a._select = (i) => { select(i); if (lens) lens.place(i); };
   // пример — чужая катка: в задачи, сравнение и облако её не пишем
-  if (COACH_URL && !a.demo) rememberForCompare(a);
-  if (a._goalResult === undefined && !a.demo) { a._goalResult = trackProgress(a); if (a.hist_self) syncSoon(a.hist_self.account); }
+  // быстрый разбор (без реплея) в историю, задачи и сравнение не пишем: там нет половины цифр
+  if (COACH_URL && !a.demo && !a.lite) rememberForCompare(a);
+  if (a._goalResult === undefined && !a.demo && !a.lite) { a._goalResult = trackProgress(a); if (a.hist_self) syncSoon(a.hist_self.account); }
   TABS.forEach(([name]) => tabs.append(h("button", { class: "tab", role: "tab" }, name)));
   lens = glassBar(tabs, ".tab", { live: true, onPick: select });
   // Свайп по содержимому листает вкладки; графики со своим жестом не трогаем
@@ -1485,6 +1533,10 @@ function analysisScreen(a) {
     a.demo && h("div", { class: "demo-banner" },
       h("div", { class: "grow" }, h("b", {}, "Это пример разбора"), h("span", {}, "Настоящая катка на Tusk. Привяжи аккаунт — разберу твои.")),
       h("button", { type: "button", onclick: () => { haptic(); navRoot("home", homeScreen); } }, "Привязать")),
+    a.lite && h("div", { class: "demo-banner lite-banner" },
+      h("div", { class: "grow" }, h("b", {}, "Быстрый разбор: реплей ещё не готов"),
+        h("span", {}, "OpenDota пока не разобрала реплей, поэтому здесь только итоги матча: без таймингов, смертей и карты. Полный разбор появится, как только реплей разберётся.")),
+      a.reopen && h("button", { type: "button", onclick: () => { haptic(); a.reopen(); } }, "Проверить")),
     h("div", { class: "card hero-head" },
       ((banner) => (V2 ? heroCard3d(banner, heroCardBack(a), { reduced: reducedMotion(), haptic }) : banner))(h("div", { class: "hero-banner" },
         img(dictionary.heroImage(f.hero_id), null, f.hero),
@@ -2531,10 +2583,11 @@ function overviewTab(a) {
   const strengths = (s.strengths || []).slice(0, 2);
   return h("div", {},
     who && h("div", { class: "who" }, who, s.role_sure === false && h("span", { class: "muted" }, " · роль определена неточно")),
-    goalBlock(a),
-    coachBlock(a),
-    COACH_URL && chatFor(a).box,
-    COACH_URL && compareBlock(a),
+    !a.lite && goalBlock(a),
+    // тренеру нужен полный разбор: на итогах матча он бы потратил платный разбор впустую
+    !a.lite && coachBlock(a),
+    !a.lite && COACH_URL && chatFor(a).box,
+    !a.lite && COACH_URL && compareBlock(a),
     h("h2", {}, problems.length ? "Что было не так" : "Серьёзных ошибок нет"),
     ...problems.map((p, i) => h("div", { class: "card problem" },
       h("div", { class: "problem-num" }, String(i + 1)),
@@ -2550,7 +2603,7 @@ function overviewTab(a) {
     microBlock(a),
     draftBlock(a),
     h("h2", {}, "Оценки"),
-    h("div", { class: "card" }, ...CATEGORIES.map((c) => h("div", { class: "score-row" },
+    h("div", { class: "card" }, ...CATEGORIES.filter((c) => a.scores[c] != null).map((c) => h("div", { class: "score-row" },
       h("span", {}, c), h("div", { class: "bar" }, h("i", { "data-w": a.scores[c] })), h("b", {}, a.scores[c])))),
   );
 }

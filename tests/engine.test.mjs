@@ -623,3 +623,30 @@ test("смерть до горна: в фактах эпизода нет NaN", 
   const a = analyze(m, p, od, kb, tx, pro, bench, {}, []);
   assert.ok(!JSON.stringify(a).includes("NaN"));
 });
+
+// Реплей у OpenDota не разобран: в матче только итоги (как отдаёт /matches до разбора)
+const RAW_PLAYER = ["account_id", "player_slot", "hero_id", "item_0", "item_1", "item_2", "item_3", "item_4", "item_5", "backpack_0", "backpack_1", "backpack_2",
+  "item_neutral", "kills", "deaths", "assists", "last_hits", "denies", "gold_per_min", "xp_per_min", "level", "net_worth", "hero_damage", "tower_damage",
+  "hero_healing", "gold", "gold_spent", "ability_upgrades_arr", "isRadiant", "win", "lose", "total_gold", "total_xp", "kda", "rank_tier", "benchmarks"];
+const unparsed = () => {
+  const m = copy();
+  const out = { match_id: m.match_id, radiant_win: m.radiant_win, duration: m.duration, start_time: m.start_time, game_mode: m.game_mode,
+    lobby_type: m.lobby_type, radiant_score: m.radiant_score, dire_score: m.dire_score, version: null };
+  out.players = m.players.map((p) => Object.fromEntries(RAW_PLAYER.filter((k) => k in p).map((k) => [k, p[k]])));
+  return out;
+};
+
+test("без разобранного реплея: быстрый разбор только по итогам, без выдуманных «0 вардов» и «0 ТП»", () => {
+  const m = unparsed();
+  for (const p of m.players) {
+    const a = analyze(m, p, od, kb, tx, pro, bench, {}, []);
+    assert.equal(a.lite, true);
+    assert.deepEqual(Object.keys(a.scores).sort(), ["Выживание", "Драки", "Фарм"].sort());
+    for (const f of a.findings) {
+      assert.ok(!/телепорт|ТП |обсервер|смок|Smoke|null|лесн|на десятой минуте|к 10:00/i.test(f.text), f.text);
+    }
+    assert.ok(Number.isFinite(a.overall));
+  }
+  const tusk = analyze(m, m.players.find((x) => od.heroName(x.hero_id) === "Tusk"), od, kb, tx, pro, bench, {}, []);
+  assert.ok(tusk.findings.some((f) => /смерт/i.test(f.text)));
+});

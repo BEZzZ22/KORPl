@@ -460,6 +460,7 @@ class MatchAnalyzer {
     this.rank = this.rankMetrics();
     // позиции из реплея, если его разобрали: правда о том, кто был рядом в каждой смерти
     this.replay = replayInsights(match, player, replay);
+    this.lite = !isParsed(match);
   }
 
   // ---------- ранг и нормы ----------
@@ -488,6 +489,7 @@ class MatchAnalyzer {
     const teamKills = sum(this.match.players.filter((x) => x.isRadiant === p.isRadiant).map((x) => x.kills));
     const first = this.firstBigItem();
     this.firstItem = first;
+    const parsed = isParsed(this.match);
     return {
       lh10: this.minutes >= 10 ? atMinute(p.lh_t, 10) : null,
       gpm: p.gold_per_min,
@@ -495,9 +497,10 @@ class MatchAnalyzer {
       kp: teamKills ? (p.kills + p.assists) / teamKills : null,
       dmg_min: p.hero_damage / minutes,
       deaths10: (p.deaths / minutes) * 10,
-      dead_share: (p.life_state_dead || 0) / this.duration,
+      // без разобранного реплея времени смерти и вардов нет: ноль тут значил бы «лучше всех»
+      dead_share: parsed ? (p.life_state_dead || 0) / this.duration : null,
       first_item: first ? first.time : null,
-      obs10: ((p.obs_placed || 0) / minutes) * 10,
+      obs10: parsed ? ((p.obs_placed || 0) / minutes) * 10 : null,
     };
   }
 
@@ -613,6 +616,9 @@ class MatchAnalyzer {
   }
 
   run() {
+    // Реплей у OpenDota ещё не разобран: есть только итоги матча (KDA, GPM, урон, предметы в конце, перцентили).
+    // Проверки по минутам, логам покупок, вардам и смертям молчат, иначе на пустых данных вышли бы «0 вардов» и «0 ТП»
+    if (this.lite) return this.runLite();
     this.checkLane();
     this.checkFarm();
     this.checkFights();
@@ -664,6 +670,49 @@ class MatchAnalyzer {
       item_plan: this.itemPlan(),
       skill_plan: skillPlan(this.builds, this.p.hero_id, this.pos, this.p.ability_upgrades_arr),
       death_summary: this.deathSummary(),
+    };
+  }
+
+  runLite() {
+    this.checkFarm();
+    this.checkFights();
+    this.checkSurvival();
+    this.checkItemization();
+    this.checkDispel();
+    this.cleanup();
+    const rankScores = this.rankScores([]);
+    const all = rankScores ? rankScores.scores : this.computeScores();
+    // линию, предметы и видение без реплея не оценить: эти разделы не показываем вовсе
+    const scores = Object.fromEntries([FARM, FIGHTS, SURVIVAL].filter((c) => all[c] != null).map((c) => [c, all[c]]));
+    const values = Object.values(scores);
+    const overall = values.length ? Math.round((sum(values) / values.length) * 10) / 10 : 5;
+    return {
+      lite: true,
+      facts: this.collectFacts(),
+      findings: this.findings,
+      scores,
+      overall,
+      summary: this.summary(),
+      timeline: this.collectTimeline(),
+      killers: [],
+      phases: [],
+      moments: [],
+      episodes: [],
+      map: null,
+      replay: null,
+      replay_notes: [],
+      progress: this.progressMetrics(),
+      next_rank: this.nextRank(),
+      lane: null,
+      pro_build: null,
+      compare: [],
+      verdict: this.verdict(scores, overall),
+      items: [],
+      draft: this.draftReview(),
+      build_plan: this.buildPlan(),
+      item_plan: this.itemPlan(),
+      skill_plan: skillPlan(this.builds, this.p.hero_id, this.pos, this.p.ability_upgrades_arr),
+      death_summary: null,
     };
   }
 
@@ -1144,7 +1193,7 @@ class MatchAnalyzer {
           `${idle.map(([s, e]) => `${mmss(s * 60)}–${mmss(e * 60)}`).join(", ")}: ни крипов, ни золота, ни файтов`,
           "Нет файта — фарми по кругу: волна, кемп, волна. Заранее решай, куда идёшь после текущей волны");
       }
-      if (this.pos === 1 && this.minutes >= 25 && p.last_hits > 0) {
+      if (this.pos === 1 && this.minutes >= 25 && p.last_hits > 0 && p.neutral_kills != null) {
         const share = (p.neutral_kills ?? 0) / p.last_hits;
         if (share < 0.15) this.add(FARM, WARN, "farm_jungle", "farm_jungle_tip", { share: pyRound(share * 100) });
       }
@@ -1434,8 +1483,19 @@ class MatchAnalyzer {
 
   ownedItems() {
     const owned = new Set((this.p.purchase_log || []).map((x) => x.key));
+    // без разобранного реплея покупок нет: берём то, что лежало в инвентаре в конце
+    if (!this.p.purchase_log) for (const key of this.finalItems()) owned.add(key);
     for (const [base, upgrades] of Object.entries(ITEM_UPGRADES)) if (intersects(owned, upgrades)) owned.add(base);
     return owned;
+  }
+
+  finalItems() {
+    if (!this.itemById) {
+      this.itemById = {};
+      for (const [key, it] of Object.entries(this.od.items || {})) if (it && it.id != null) this.itemById[it.id] = key;
+    }
+    const slots = ["item_0", "item_1", "item_2", "item_3", "item_4", "item_5", "backpack_0", "backpack_1", "backpack_2", "item_neutral"];
+    return slots.map((k) => this.itemById[this.p[k]]).filter(Boolean);
   }
 
   role() {

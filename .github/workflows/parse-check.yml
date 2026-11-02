@@ -1,10 +1,7 @@
-# Диагностика разбора реплеев OpenDota (временная)
+# Диагностика: разбираются ли реплеи у OpenDota на катках владельца, и успевает ли заявка (Actions → Run workflow)
 name: Проверка разбора реплеев
 on:
   workflow_dispatch:
-  push:
-    branches: [claude/project-thread-ajlcd0]
-    paths: [".github/workflows/parse-check.yml", "tools/parse-check.mjs"]
 permissions:
   contents: read
 jobs:
