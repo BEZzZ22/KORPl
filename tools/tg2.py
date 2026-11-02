@@ -786,8 +786,11 @@ async def listen():
     @c.on(events.NewMessage(incoming=True))
     async def on_msg(ev):
         if not ev.is_private:
-            if acc == "tg2" and ev.chat_id in our_ids:
-                state["new"] = True
+            # будим только на живой текст от людей: без вступлений, без автопостов канала и своих сообщений
+            if acc == "tg2" and ev.chat_id in our_ids and (ev.raw_text or "").strip() and not ev.out:
+                snd = await ev.get_sender()
+                if isinstance(snd, User) and not snd.bot:
+                    state["new"] = True
             return
         who = await ev.get_sender()
         work = {k.lower() for k in json.loads(SENT.read_text(encoding="utf-8"))} if SENT.exists() else set()
