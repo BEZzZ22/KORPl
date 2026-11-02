@@ -661,5 +661,33 @@
   "members": 2,
   "about": "fp https://funpay.com/users/7359915/",
   "contacts": []
+ },
+ "dota_memy_votbot": {
+  "title": "Дота мемы votbot",
+  "kind": "channel",
+  "members": 2,
+  "about": "Смешные моменты и мемы из Dota2. Конкурсы и призы 🎁",
+  "contacts": []
+ },
+ "dota_memy_yumaryme": {
+  "title": "Дота мемы yumaryme",
+  "kind": "channel",
+  "members": 2,
+  "about": "Липсинги, мемы по Dota и стримы на twitch. Смеёмся вместе 🎮",
+  "contacts": []
+ },
+ "dota2guidez": {
+  "title": "ГАЙДЫ ПО ДОТЕ 2",
+  "kind": "channel",
+  "members": 11,
+  "about": "ХАЙ ЕБРИВАН",
+  "contacts": []
+ },
+ "diamonddota": {
+  "title": "Стримы по Дота 2",
+  "kind": "channel",
+  "members": 2,
+  "about": "Тг канал стримера Diamond по доте 2",
+  "contacts": []
  }
 }
