@@ -613,6 +613,27 @@ async def main_post():
     await c.disconnect()
 
 
+async def main_comments():
+    """Только чтение публичного канала партнёра (TARGET): последние посты и комменты с ID матчей."""
+    import re
+
+    target = os.environ.get("TARGET", "").strip().lstrip("@").replace("https://t.me/", "")
+    c = client(os.environ["TG_SESSION"])
+    await c.connect()
+    ent = await c.get_entity(target)
+    async for post in c.iter_messages(ent, limit=5):
+        n = post.replies.replies if post.replies else 0
+        print(f"пост {post.id} {post.date:%d.%m %H:%M}: {(post.message or '')[:80]!r}, комментов: {n}")
+        if n:
+            try:
+                async for cm in c.iter_messages(ent, reply_to=post.id, limit=50):
+                    ids = re.findall(r"\b\d{9,11}\b", cm.message or "")
+                    print(f"   коммент {cm.id} {cm.date:%H:%M}: ID {ids or '-'}: {(cm.message or '')[:60]!r}")
+            except Exception as e:
+                print(f"   комменты: {type(e).__name__}")
+    await c.disconnect()
+
+
 async def main_whoami():
     """Диагностика: какой акк за TG_SESSION и дошёл ли код в служебный чат (сам код в лог не пишем)."""
     c = client(os.environ["TG_SESSION"])
@@ -770,7 +791,7 @@ if __name__ == "__main__":
         act = "main_login"  # код вбит в поле — значит, это вход, даже если action забыли переключить
     if act == "code":
         asyncio.run(send_code())
-    elif act in ("discover", "send", "inbox", "folder", "test", "join", "fix", "mute", "main_code", "main_login", "main_whoami", "main_qr", "main_join", "main_post", "listen"):
+    elif act in ("discover", "send", "inbox", "folder", "test", "join", "fix", "mute", "main_code", "main_login", "main_whoami", "main_qr", "main_join", "main_post", "main_comments", "listen"):
         asyncio.run(globals()[act]())
     elif act == "setup":
         asyncio.run(setup())
