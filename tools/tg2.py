@@ -662,7 +662,7 @@ async def main_login():
 
 
 def git_save(msg):
-    files = [str(f) for f in (promo_tokens.DIR / "inbox_main.enc", SENT, DONE) if f.exists()]
+    files = [str(f) for f in (promo_tokens.DIR / "inbox_main.enc", INBOX, SENT, DONE) if f.exists()]
     sh("git", "add", *files)
     if not sh("git", "diff", "--cached", "--name-only"):
         return
@@ -674,13 +674,13 @@ def git_save(msg):
             return
 
 
-def notify():
+def notify(text="Новое сообщение в рабочей переписке."):
     """Комментарий в открытом PR очереди будит ассистента. Без имён и текста переписки."""
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     owner = repo.split("/")[0]
     num = sh("gh", "api", f"repos/{repo}/pulls?state=open&head={owner}:{QUEUE_BRANCH}", "--jq", ".[0].number")
     if num and num != "null":
-        sh("gh", "api", f"repos/{repo}/issues/{num}/comments", "-f", "body=Новое сообщение в рабочей переписке.")
+        sh("gh", "api", f"repos/{repo}/issues/{num}/comments", "-f", f"body={text}")
         print("Разбудил ассистента")
     else:
         print("Нет открытого PR очереди — будить некого")
@@ -702,7 +702,7 @@ async def process_queue(c, state):
     changed = False
     for item in queue:
         iid = item.get("id")
-        if not iid or iid in done:
+        if not iid or iid in done or item.get("from", "main") != state.get("acc", "main"):
             continue
         to = item["to"].lstrip("@")
         cold = not item.get("reply")
@@ -733,14 +733,19 @@ async def listen():
     from telethon import events
     from telethon.tl.types import User
 
-    saved = promo_tokens.load("main_listen", None)
+    global SENT, DONE
+    acc = "tg2" if os.environ.get("FROM") == "tg2" else "main"
+    if acc == "tg2":  # акк менеджера: вся его личка рабочая, свои файлы очереди, чтобы не драться с основой
+        SENT = ROOT / "promo" / "outreach_sent_tg2.json"
+        DONE = ROOT / "promo" / "outreach_done_tg2.json"
+    saved = promo_tokens.load("main_listen" if acc == "main" else "tg2", None)
     if not saved:
-        sys.exit("Нет сессии дежурного: сначала main_code и main_login.")
+        sys.exit("Нет сессии дежурного.")
     c = client(saved["session"])
     await c.connect()
     if not await c.is_user_authorized():
-        sys.exit("Сессия дежурного слетела: нужен новый вход (main_code → main_login).")
-    state = {"new": False, "cold": 0}
+        sys.exit("Сессия дежурного слетела: нужен новый вход.")
+    state = {"new": False, "cold": 0, "acc": acc}
 
     @c.on(events.NewMessage(incoming=True))
     async def on_msg(ev):
@@ -748,7 +753,7 @@ async def listen():
             return
         who = await ev.get_sender()
         work = {k.lower() for k in json.loads(SENT.read_text(encoding="utf-8"))} if SENT.exists() else set()
-        if isinstance(who, User) and not who.bot and (who.username or "").lower() in work:
+        if isinstance(who, User) and not who.bot and who.id != 777000 and (acc == "tg2" or (who.username or "").lower() in work):
             state["new"] = True
 
     end = time.time() + LISTEN_MIN * 60
@@ -763,15 +768,15 @@ async def listen():
         if state["new"]:
             state["new"] = False
             await asyncio.sleep(15)  # человек часто пишет несколькими сообщениями подряд
-            await dump_inbox(c, True)
+            await dump_inbox(c, acc == "main")
             git_save("Дежурный: входящие")
-            notify()
+            notify("Новое сообщение в рабочей переписке." if acc == "main" else "Новое сообщение на акке менеджера.")
         elif sent_any:
             git_save("Дежурный: отправлено")
     await c.disconnect()
     ref = os.environ.get("GITHUB_REF_NAME", "")
     if ref:  # следующая смена
-        sh("gh", "workflow", "run", "tg2.yml", "--ref", ref, "-f", "action=listen", "-f", "from=main")
+        sh("gh", "workflow", "run", "tg2.yml", "--ref", ref, "-f", "action=listen", "-f", f"from={acc}")
         print("Запустил следующую смену")
 
 
