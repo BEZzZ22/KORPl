@@ -30,6 +30,12 @@ def save(name, data):
     (DIR / f"{name}.enc").write_bytes(_fernet().encrypt(json.dumps(data).encode()))
 
 
+def yt_env():
+    """YouTube: токен, выпущенный кнопкой (yt-token.yml), лежит в promo/tokens/yt.enc и главнее секрета YT_REFRESH_TOKEN."""
+    if os.environ.get("PROMO_TOKEN_KEY") and (DIR / "yt.enc").exists():
+        os.environ["YT_REFRESH_TOKEN"] = load("yt", {})["refresh_token"]
+
+
 if __name__ == "__main__" and "--new-key" in sys.argv:
     from cryptography.fernet import Fernet
 
