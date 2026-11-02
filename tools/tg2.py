@@ -315,6 +315,9 @@ async def inbox():
     print(f"Диалогов: {n}, непрочитанных: {unread}")
 
 
+OUR_CHATS = ["dotarazbor_chat"]  # наш чат: менеджер отвечает там на вопросы про бота
+
+
 async def dump_inbox(c, main):
     """Пишет зашифрованную выгрузку лички. С основы — ТОЛЬКО диалоги с теми, кому писали по работе, личку Ярика не трогаем."""
     import datetime
@@ -335,6 +338,18 @@ async def dump_inbox(c, main):
             msgs.append({"me": m.out, "t": m.date.isoformat(timespec="minutes"), "text": text_of(m)})
         out[d.entity.username or str(d.id)] = {"name": " ".join(filter(None, [d.entity.first_name, d.entity.last_name])),
                                                "unread": d.unread_count, "msgs": msgs[::-1]}
+    if not main:  # акк менеджера ещё и дежурит в нашем чате (туда же падают комменты канала)
+        for name in OUR_CHATS:
+            try:
+                msgs = []
+                async for m in c.iter_messages(name, limit=30):
+                    who = m.sender
+                    msgs.append({"me": m.out, "id": m.id, "reply_to": m.reply_to_msg_id, "t": m.date.isoformat(timespec="minutes"),
+                                 "from": getattr(who, "username", None) or getattr(who, "first_name", None) or getattr(who, "title", ""),
+                                 "text": text_of(m)})
+                out["#" + name] = {"name": name, "unread": 0, "msgs": msgs[::-1]}
+            except Exception as e:
+                print(f"чат {name}: {type(e).__name__}")
     (promo_tokens.DIR / ("inbox_main.enc" if main else "inbox.enc")).write_text(seal(out), encoding="utf-8")
     return len(out), sum(v["unread"] for v in out.values())
 
@@ -710,7 +725,10 @@ async def process_queue(c, state):
             continue
         try:
             ent = await c.get_entity(to)
-            if isinstance(ent, User) and not ent.bot:
+            if to in OUR_CHATS:  # ответ в нашем чате, можно реплаем на сообщение
+                await c.send_message(ent, item["text"], reply_to=item.get("reply_to"), link_preview=False)
+                print("Отправлено в наш чат")
+            elif isinstance(ent, User) and not ent.bot:
                 await c.send_message(ent, item["text"])
                 sent[to] = datetime.datetime.utcnow().isoformat(timespec="minutes")
                 state["cold"] += cold
@@ -746,10 +764,23 @@ async def listen():
     if not await c.is_user_authorized():
         sys.exit("Сессия дежурного слетела: нужен новый вход.")
     state = {"new": False, "cold": 0, "acc": acc}
+    our_ids = set()
+    if acc == "tg2":
+        from telethon.tl.functions.channels import JoinChannelRequest
+        for name in OUR_CHATS:
+            try:
+                ent = await c.get_entity(name)
+                await c(JoinChannelRequest(ent))
+                from telethon.utils import get_peer_id
+                our_ids.add(get_peer_id(ent))
+            except Exception as e:
+                print(f"вход в {name}: {type(e).__name__}")
 
     @c.on(events.NewMessage(incoming=True))
     async def on_msg(ev):
         if not ev.is_private:
+            if acc == "tg2" and ev.chat_id in our_ids:
+                state["new"] = True
             return
         who = await ev.get_sender()
         work = {k.lower() for k in json.loads(SENT.read_text(encoding="utf-8"))} if SENT.exists() else set()
