@@ -176,7 +176,11 @@ PUB = promo_tokens.DIR / "inbox_pub.pem"
 DISCOVER = ["dota", "dota 2", "dota2", "дота", "дота 2", "доту", "дотеры", "дотер", "дота мемы", "dota мемы",
             "дота новости", "dota новости", "дота гайды", "dota гайд", "дота стрим", "dota стримы", "дота киберспорт",
             "dota киберспорт", "дота пати", "dota пати", "dota чат", "дота чат", "доташка", "дота приколы", "dota ranked",
-            "дота 7.", "dota патч", "дота билды", "dota builds", "дота аккаунты"]
+            "дота 7.", "dota патч", "дота билды", "dota builds", "дота аккаунты",
+            "мемы дота", "дота юмор", "дота клипы", "дота нарезки", "дота хайлайты", "dota clips", "dota memes", "дотка",
+            "дотеры чат", "дота канал", "дота 2 приколы", "дота 2 мемы", "дота 2 новости", "дота сборки", "дота мид",
+            "дота керри", "дота саппорт", "пудж", "инвокер", "дота рейтинг", "дота турниры", "дота лор", "дота арт",
+            "дота 2 гайды", "дота 2 чат", "дота 2 пати", "dota 2 ru", "дота ру", "дота блог", "дота тима", "дота кастомки"]
 AD_WORDS = ("реклам", "сотрудн", "пиар", "по вопросам", "ads", "promo", "владел", "админ", "менеджер", "связь", "вп")
 MAX_SEND = 6          # писем за прогон: свежий акк режут за холодные сообщения пачкой
 SEND_GAP = 90         # секунд между письмами
@@ -417,8 +421,11 @@ async def join():
 
     targets = json.loads(TARGETS.read_text(encoding="utf-8")) if TARGETS.exists() else {}
     joined = json.loads(JOINED.read_text(encoding="utf-8")) if JOINED.exists() else []
-    pool = sorted(((k, v) for k, v in targets.items() if "error" not in v and is_dota(v) and k not in joined),
-                  key=lambda kv: -(kv[1].get("members") or 0))
+    lo, hi = int(os.environ.get("JOIN_MIN", "150")), int(os.environ.get("JOIN_MAX_MEMBERS", "3000"))
+    # бартер с ноунеймом берут каналы нашего размера, крупные — только за деньги (Ярик 02.11)
+    pool = sorted(((k, v) for k, v in targets.items() if "error" not in v and is_dota(v) and k not in joined
+                   and lo <= (v.get("members") or 0) <= hi),
+                  key=lambda kv: (not kv[1].get("contacts"), -(kv[1].get("members") or 0)))
     c = await connected()
     done = 0
     for name, v in pool:
