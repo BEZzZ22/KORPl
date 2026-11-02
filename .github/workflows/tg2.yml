@@ -54,6 +54,7 @@ jobs:
       - name: Запуск
         env:
           ACTION: ${{ inputs.action }}
+          PYTHONUNBUFFERED: "1"
           CODE: ${{ inputs.code }}
           TG_API_ID: ${{ secrets.TG_API_ID }}
           TG_API_HASH: ${{ secrets.TG_API_HASH }}

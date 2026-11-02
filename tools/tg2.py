@@ -736,7 +736,7 @@ async def process_queue(c, state):
             else:
                 print("не человек — пропуск")
         except Exception as e:
-            print(f"ошибка отправки: {type(e).__name__}")
+            print(f"ошибка отправки: {type(e).__name__}: {str(e)[:120]}")
         done.add(iid)
         changed = True
         await asyncio.sleep(15)
