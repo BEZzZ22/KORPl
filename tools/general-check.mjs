@@ -38,7 +38,8 @@ async function raw(url, { method = "GET", cache = method === "GET", timeout = 40
     calls++;
     const t0 = Date.now();
     try {
-      const res = await fetch(url, { method, signal: AbortSignal.timeout(timeout) });
+      const headers = url.startsWith(WORKER) ? { Origin: "https://bezzz22.github.io" } : {};
+      const res = await fetch(url, { method, headers, signal: AbortSignal.timeout(timeout) });
       const body = Buffer.from(await res.arrayBuffer());
       out = { status: res.status, type: res.headers.get("content-type") || "application/octet-stream", body: body.toString("base64"), ms: Date.now() - t0 };
       if (res.status === 429 || res.status >= 500) { await sleep(4000 * (i + 1)); continue; }
