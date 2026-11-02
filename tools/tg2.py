@@ -61,6 +61,19 @@ async def login(code):
     print("Вход ок, сессия сохранена.")
 
 
+async def password():
+    pend = promo_tokens.load("tg2_pending", None)
+    if not pend:
+        sys.exit("Нет начатого входа: action=code.")
+    c = client(pend["session"])
+    await c.connect()
+    await c.sign_in(password=os.environ["TG2_PASSWORD"])
+    promo_tokens.save("tg2", {"session": c.session.save()})
+    (promo_tokens.DIR / "tg2_pending.enc").unlink(missing_ok=True)
+    await c.disconnect()
+    print("Вход ок, сессия сохранена.")
+
+
 def text_of(m):
     return (getattr(m, "message", "") or "").strip()
 
@@ -793,6 +806,8 @@ if __name__ == "__main__":
         asyncio.run(globals()[act]())
     elif act == "setup":
         asyncio.run(setup())
+    elif act == "password":  # код уже принят, не подошёл только облачный пароль: повтор с новым TG2_PASSWORD
+        asyncio.run(password())
     elif act == "login":
         asyncio.run(login(os.environ.get("CODE", "")))
     else:
