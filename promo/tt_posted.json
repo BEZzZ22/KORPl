@@ -100,5 +100,11 @@
   "status": "PROCESSING_UPLOAD",
   "mode": "inbox",
   "at": "2026-11-01T19:20:25.631552+00:00"
+ },
+ "tier": {
+  "publish_id": "v_inbox_file~v2.7703536899458484246",
+  "status": "SEND_TO_USER_INBOX",
+  "mode": "inbox",
+  "at": "2026-11-02T11:39:18.858026+00:00"
  }
 }
