@@ -742,6 +742,35 @@ if (!only || only.has("demo")) {
     await p4.locator('input[aria-label="Friend ID"] >> xpath=ancestor::div[contains(@class,"row")]//button').click();
     await p4.waitForSelector(".match-item", { timeout: 15000 });
   });
+  // катка из бота без привязки: привязал аккаунт прямо на экране катки — и сразу разбор этой катки, а не главная
+  await step("bindmatch", async () => {
+    await p4.evaluate(() => { localStorage.removeItem("account_id"); });
+    await p4.goto(`${BASE}/index.html?match=${match.match_id}`);
+    await p4.waitForSelector("h1:has-text('Привяжи аккаунт')", { timeout: 20000 });
+    await p4.locator('input[aria-label="Friend ID"]').fill(String(ACCOUNT));
+    await p4.locator('input[aria-label="Friend ID"] >> xpath=ancestor::div[contains(@class,"row")]//button').click();
+    await p4.waitForSelector(".hero-head", { timeout: 20000 });
+    // привязан чужой аккаунт: на «не твоя игра» можно привязать другой и вернуться в катку
+    await p4.evaluate(() => { localStorage.setItem("account_id", "1234567"); });
+    await p4.goto(`${BASE}/index.html?match=${match.match_id}`);
+    await p4.waitForSelector("h1:has-text('не твоя игра')", { timeout: 20000 });
+    await p4.click("text=Привязать другой аккаунт");
+    await p4.locator('input[aria-label="Friend ID"]').fill(String(ACCOUNT));
+    await p4.locator('input[aria-label="Friend ID"] >> xpath=ancestor::div[contains(@class,"row")]//button').click();
+    await p4.waitForSelector(".hero-head", { timeout: 20000 });
+  });
+  // Friend ID, кинутый боту: кнопка открывает ?link=<id>, приложение само привязывает аккаунт
+  await step("botlink", async () => {
+    await p4.evaluate(() => { localStorage.removeItem("account_id"); });
+    await p4.goto(`${BASE}/index.html?link=${ACCOUNT}`);
+    await p4.waitForSelector(".match-item", { timeout: 20000 });
+    if (await p4.evaluate(() => localStorage.getItem("account_id")) !== String(ACCOUNT)) throw new Error("аккаунт из ссылки бота не привязан");
+  });
+  // свежая катка, которой OpenDota ещё не знает: не «Такого матча нет», а ожидание с проверкой
+  await step("missing", async () => {
+    await p4.goto(`${BASE}/index.html?match=8999999999`);
+    await p4.waitForSelector("text=Ищу катку", { timeout: 20000 });
+  });
   await ctx4.close();
   // карта героя (только с анимацией): видна одна сторона, тап переворачивает на оборот
   const ctx6 = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: "dark" });

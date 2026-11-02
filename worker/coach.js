@@ -8,7 +8,7 @@
 import LORE from "./lore.json" with { type: "json" };
 import { withStore, migrateStep, purgeExpired } from "./store.js";
 import { kickShorts } from "./kick.js";
-import { matchFromText, matchButton, MATCH_TEXT, noteReferral, rewardReferral, bumpStreak, growthView, weeklyDigest } from "./growth.js";
+import { matchFromText, matchButton, MATCH_TEXT, accountFromText, linkButton, LINK_TEXT, noteReferral, rewardReferral, bumpStreak, growthView, weeklyDigest } from "./growth.js";
 import { CHAT_ID, handleChatUpdate, chatChores, chatStatus, releaseIfPending } from "./chatguard.js";
 import { spendUnit, spendChat, isOpen, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT, loginUser, roboLink, roboResult, robokassaOn, payUrl, tokenUser } from "./pay.js";
 
@@ -1526,6 +1526,11 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
   if (matchId) {
     await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: MATCH_TEXT(matchId), reply_markup: matchButton(matchId) }).catch(() => false);
     return { match: matchId };
+  }
+  const acc = !msg.reply_to_message && !isOwner(env, msg.from.id) && accountFromText(msg.text);
+  if (acc) {
+    await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: LINK_TEXT(acc), reply_markup: linkButton(acc) }).catch(() => false);
+    return { link: acc };
   }
   // владелец ответил реплаем на пересланное письмо
   // id — последний в первой строке: имя человек пишет сам и может вписать туда чужой «(id …)», а наш идёт после имени

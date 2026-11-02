@@ -32,6 +32,25 @@ export function matchFromText(text) {
   const m = /(?:opendota\.com|dotabuff\.com|stratz\.com)\/match(?:es)?\/(\d{7,11})(?!\d)/i.exec(t);
   return m ? Number(m[1]) : null;
 }
+// Friend ID или ссылка на профиль в личку: «кинь свой ID» — первое, что делает новичок, а бот отвечал «всё в приложении»
+// и отправлял цифры владельцу. Теперь — кнопка, по которой приложение само привяжет этот аккаунт
+const STEAM64 = 76561197960265728n;
+export function accountFromText(text) {
+  const t = String(text || "").trim();
+  if (!t || t.length > 300) return null;
+  let raw = null;
+  const link = /(?:steamcommunity\.com\/profiles|(?:dotabuff|opendota|stratz)\.com\/players)\/(\d{1,20})(?!\d)/i.exec(t);
+  if (link) raw = link[1];
+  else if (/^\d[\d\s-]{3,14}\d$/.test(t)) raw = t.replace(/[\s-]/g, "");
+  else if (/^\d{17}$/.test(t)) raw = t;
+  if (!raw || !/^\d{1,20}$/.test(raw)) return null;
+  const n = BigInt(raw);
+  const id = n > STEAM64 ? n - STEAM64 : n;
+  return id >= 1000n && id < 2n ** 32n ? Number(id) : null;
+}
+export const linkButton = (acc) => ({ inline_keyboard: [[{ text: "Привязать и открыть мои катки", web_app: { url: `${APP_URL}?link=${acc}` } }]] });
+export const LINK_TEXT = (acc) => `Похоже на твой Friend ID: ${acc}. Жми кнопку — привяжу его в приложении и покажу последние катки на разбор.`;
+
 export const matchUrl = (id) => `${APP_URL}?match=${id}`;
 export const matchButton = (id, text = "Разобрать катку") => ({ inline_keyboard: [[{ text, web_app: { url: matchUrl(id) } }]] });
 export const MATCH_TEXT = (id) => `Катка ${id}. Жми кнопку — откроется разбор: кто слил, ошибки по таймкодам, повтор на карте. `

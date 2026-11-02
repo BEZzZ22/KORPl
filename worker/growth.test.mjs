@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { withStore } from "./store.js";
-import { matchFromText, refOf, noteReferral, rewardReferral, bumpStreak, streakPrize, growthView, weekSummary, digestText, weeklyDigest } from "./growth.js";
+import { matchFromText, accountFromText, refOf, noteReferral, rewardReferral, bumpStreak, streakPrize, growthView, weekSummary, digestText, weeklyDigest } from "./growth.js";
 import { getWallet } from "./pay.js";
 import { trackUser, onRealAnalysis } from "./coach.js";
 
@@ -56,6 +56,20 @@ test("ID матча: голое число больше 2^32 или ссылка
   assert.equal(matchFromText("dotabuff.com/matches/80128003812345"), null);
   assert.equal(matchFromText("привет"), null);
   assert.equal(matchFromText(undefined), null);
+});
+
+test("Friend ID и ссылки на профиль в личку — кнопка привязки, а не пересылка владельцу", () => {
+  assert.equal(accountFromText("123456789"), 123456789);
+  assert.equal(accountFromText("123 456 789"), 123456789);
+  assert.equal(accountFromText("76561198083545766"), 123280038);
+  assert.equal(accountFromText("https://steamcommunity.com/profiles/76561198083545766/"), 123280038);
+  assert.equal(accountFromText("мой профиль https://www.dotabuff.com/players/801280038"), 801280038);
+  assert.equal(accountFromText("8012800381"), null);   // это матч
+  assert.equal(accountFromText("12"), null);
+  assert.equal(accountFromText("привет 123456789 как дела"), null);
+  assert.equal(accountFromText(""), null);
+  // сначала матч: ссылка на матч остаётся матчем
+  assert.equal(matchFromText("https://www.dotabuff.com/matches/8012800381"), 8012800381);
 });
 
 test("рефералка: друг пришёл по ссылке и разобрал катку — обоим по разбору, один раз", async () => {
