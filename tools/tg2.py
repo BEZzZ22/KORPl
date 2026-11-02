@@ -107,7 +107,7 @@ async def rules():
     print(f"Групп разобрано: {sum(1 for v in out.values() if 'error' not in v)}, ошибок: {sum(1 for v in out.values() if 'error' in v)}")
 
 
-PROFILE = {"first_name": "Максим", "last_name": "| DotaRazbor",
+PROFILE = {"first_name": "Менеджер", "last_name": "| DotaRazbor",
            "about": "Менеджер по партнёрствам @DotaRazbor_bot. Реклама, коллабы — в ЛС"}  # лимит био 70
 USERNAMES = ["dotarazbor_manager", "dotarazbor_partners", "dotarazbor_biz"]
 
@@ -352,7 +352,7 @@ async def folder():
     print(f"Папка «{title}»: {len(peers)} чатов")
 
 
-TEST_TEXT = ("Всем привет! Я Максим, менеджер DotaRazbor. Если бот где-то тупит или есть идея, что добавить в разбор, "
+TEST_TEXT = ("Всем привет! Я менеджер DotaRazbor. Если бот где-то тупит или есть идея, что добавить в разбор, "
              "пишите сюда или мне в личку. Кто хочет разбор своей катки — кидайте ID матча в @DotaRazbor_bot.")
 
 
@@ -762,7 +762,25 @@ async def listen():
         print("Запустил следующую смену")
 
 
-if __name__ == "__main__":
+async def forget():
+    """Отвязка акка менеджера (Ярик 02.11): выходим из его сессии и стираем всё, что с ним связано. Сам акк не удаляем."""
+    saved = promo_tokens.load("tg2", None)
+    if saved:
+        from telethon.tl.functions.auth import LogOutRequest
+        c = client(saved["session"])
+        try:
+            await c.connect()
+            await c(LogOutRequest())
+            print("Сессия акка менеджера закрыта.")
+        except Exception as e:
+            print("Выйти не вышло (сессия уже мертва?):", type(e).__name__)
+        finally:
+            await c.disconnect()
+    for f in (promo_tokens.DIR / "tg2.enc", promo_tokens.DIR / "tg2_pending.enc", INBOX):
+        f.unlink(missing_ok=True)
+    print("Файлы акка менеджера удалены.")
+
+
     act = os.environ.get("ACTION", "rules")
     if act == "code" and os.environ.get("CODE", "").strip():
         act = "login"
@@ -770,7 +788,7 @@ if __name__ == "__main__":
         act = "main_login"  # код вбит в поле — значит, это вход, даже если action забыли переключить
     if act == "code":
         asyncio.run(send_code())
-    elif act in ("discover", "send", "inbox", "folder", "test", "join", "fix", "mute", "main_code", "main_login", "main_whoami", "main_qr", "main_join", "main_post", "listen"):
+    elif act in ("discover", "send", "inbox", "folder", "test", "join", "fix", "mute", "main_code", "main_login", "main_whoami", "main_qr", "main_join", "main_post", "listen", "forget"):
         asyncio.run(globals()[act]())
     elif act == "setup":
         asyncio.run(setup())

@@ -9,7 +9,7 @@ on:
       action:
         description: "code — прислать код, login — войти, rules — снять правила чатов, setup — почистить чаты и оформить профиль менеджера"
         type: choice
-        options: [code, login, rules, setup, discover, send, inbox, folder, test, join, fix, mute, main_code, main_login, main_whoami, main_qr, main_join, main_post, listen]
+        options: [code, login, rules, setup, discover, send, inbox, folder, test, join, fix, mute, main_code, main_login, main_whoami, main_qr, main_join, main_post, listen, forget]
         default: code
       code:
         description: "Код из Телеграма (только для login)"
@@ -22,7 +22,7 @@ on:
         type: boolean
         default: false
       from:
-        description: "С какого акка слать (send): tg2 — Максим, main — основной акк (не больше 5 писем)"
+        description: "С какого акка слать (send): tg2 — акк менеджера, main — основной акк (не больше 5 писем)"
         type: choice
         options: [tg2, main]
         default: tg2
