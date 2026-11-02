@@ -734,7 +734,7 @@ async def process_queue(c, state):
                 state["cold"] += cold
                 print("Отправлено")
             else:
-                print("не человек — пропуск")
+                print(f"не человек — пропуск: {type(ent).__name__} bot={getattr(ent, 'bot', None)}")
         except Exception as e:
             print(f"ошибка отправки: {type(e).__name__}: {str(e)[:120]}")
         done.add(iid)
