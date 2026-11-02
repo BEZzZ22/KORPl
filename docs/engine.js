@@ -496,7 +496,8 @@ class MatchAnalyzer {
       gpm: p.gold_per_min,
       xpm: p.xp_per_min,
       kp: teamKills ? (p.kills + p.assists) / teamKills : null,
-      dmg_min: p.hero_damage / minutes,
+      // в старых матчах OpenDota урона по героям нет — не NaN, а «нет данных»
+      dmg_min: p.hero_damage != null ? p.hero_damage / minutes : null,
       deaths10: (p.deaths / minutes) * 10,
       // без разобранного реплея времени смерти и вардов нет: ноль тут значил бы «лучше всех»
       dead_share: parsed ? (p.life_state_dead || 0) / this.duration : null,
