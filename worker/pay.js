@@ -45,6 +45,11 @@ async function updateWallet(env, id, change) {
   throw new Error("кошелёк меняется слишком часто");
 }
 
+// Подарить разборы тренера (рефералка, серия дней): как купленные, не сгорают
+export async function giftCredits(env, id, n, now = Date.now()) {
+  return walletView(await updateWallet(env, String(id), (w) => { w.c += n; }), now);
+}
+
 // Что показать в приложении
 export function walletView(w, now = Date.now()) {
   const sub = w.until > now;

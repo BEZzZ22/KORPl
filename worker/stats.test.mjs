@@ -175,13 +175,13 @@ test("новичку на /start — приветствие с кнопкой, �
     assert.equal((await handleBotUpdate(env, msg(7, "/start"))).greeted, 1);
     assert.equal((await handleBotUpdate(env, msg(7, "/start ref_tt"))).greeted, 1);
     assert.equal((await handleBotUpdate(env, msg(7, "отчёт"))).greeted, 1);
-    assert.deepEqual(await handleBotUpdate(env, msg(7, "1111111")), { forwarded: 1 });
+    assert.deepEqual(await handleBotUpdate(env, msg(7, "123")), { forwarded: 1 });
     assert.equal(await handleBotUpdate(env, msg(7, "/start", "group")), null);
   } finally { globalThis.fetch = real; }
   // письма человека ушли владельцу (id 5) с его id, подсказка — человеку
   const toOwner = sent.filter((m) => m.chat_id === 5);
   assert.equal(toOwner.length, 2);
-  assert.match(toOwner[1].text, /\(id 7\):\n\n1111111/);
+  assert.match(toOwner[1].text, /\(id 7\):\n\n123/);
   const toUser = sent.filter((m) => m.chat_id === 7);
   assert.equal(toUser.length, 3);
   assert.ok(toUser.every((m) => m.reply_markup.inline_keyboard[0][0].web_app.url));
@@ -261,5 +261,35 @@ test("файл позиций через воркер: только наш Origi
     assert.deepEqual(await ok.json(), { v: 1 });
     assert.equal((await get(987654321)).status, 404);
     assert.equal((await get(123456789, "https://evil.example")).status, 403);
+  } finally { globalThis.fetch = real; }
+});
+
+test("ID матча или ссылка в личку — кнопка на разбор этой катки, владельцу не пересылается", async () => {
+  const kv = memKV(), sent = [];
+  const env = { COACH_KV: kv, BOT_TOKEN: "x", OWNER_TG_IDS: "5" };
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { sent.push(JSON.parse(init.body)); return { ok: true, text: async () => "{}" }; };
+  const msg = (id, text) => ({ message: { from: { id }, chat: { id, type: "private" }, text } });
+  try {
+    assert.deepEqual(await handleBotUpdate(env, msg(7, " 8012800381 ")), { match: 8012800381 });
+    assert.deepEqual(await handleBotUpdate(env, msg(7, "https://www.dotabuff.com/matches/8012800382")), { match: 8012800382 });
+    assert.deepEqual(await handleBotUpdate(env, msg(5, "8012800383")), { match: 8012800383 });
+  } finally { globalThis.fetch = real; }
+  assert.equal(sent.length, 3);
+  assert.ok(sent.every((m) => m.chat_id !== 5 || m.text.startsWith("Катка 8012800383")));
+  assert.equal(sent[0].reply_markup.inline_keyboard[0][0].web_app.url, "https://bezzz22.github.io/KORPl/?match=8012800381");
+});
+
+test("/nodigest выключает сводку недели, /digest включает обратно", async () => {
+  const kv = memKV();
+  kv.delete = async (k) => { kv.m.delete(k); };
+  const env = { COACH_KV: kv, BOT_TOKEN: "x", OWNER_TG_IDS: "5" };
+  const real = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, text: async () => "{}" });
+  try {
+    assert.deepEqual(await handleBotUpdate(env, { message: { from: { id: 7 }, chat: { id: 7, type: "private" }, text: "/nodigest" } }), { digest: "off" });
+    assert.ok(kv.m.has("nodigest:7"));
+    assert.deepEqual(await handleBotUpdate(env, { message: { from: { id: 7 }, chat: { id: 7, type: "private" }, text: "/digest" } }), { digest: "on" });
+    assert.ok(!kv.m.has("nodigest:7"));
   } finally { globalThis.fetch = real; }
 });

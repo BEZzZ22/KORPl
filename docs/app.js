@@ -797,7 +797,7 @@ async function profileScreen() {
   if (stale(seq)) return;
   if (!account) {
     render(h("div", { class: "page-head" }, h("h1", {}, "Профиль")),
-      h("p", { class: "muted" }, "Привяжи аккаунт — покажу ранг, форму и любимых героев."), accountForm());
+      h("p", { class: "muted" }, "Привяжи аккаунт — покажу ранг, форму и любимых героев."), accountForm(), growBlock());
     return;
   }
   loading("Открываю профиль…");
@@ -855,6 +855,7 @@ async function profileScreen() {
       h("div", { class: "form-strip" }, ...dots),
       h("div", { class: "small muted" }, `${((w) => `${w} ${plural(w, "победа", "победы", "побед")}`)(recent.filter((m) => (m.player_slot < 128) === m.radiant_win).length)} из ${recent.length} · слева последняя`),
     ),
+    growBlock(),
     trendBlock(recent),
     ...progressBlocks(account),
     friendsBlock(account),
@@ -1477,6 +1478,7 @@ const ALL_TABS = [
 
 function analysisScreen(a) {
   step("analysis");
+  if (!a.demo) step("match_real"); // серия дней и бонус по приглашению (воркер, worker/growth.js)
   section = "match";
   lastAnalysis = a;
   const f = a.facts;
@@ -1581,9 +1583,41 @@ function heroCardBack(a) {
     h("div", { class: "hcb-hint" }, "Тап — перевернуть обратно"));
 }
 
+// Своя ссылка-приглашение: друг открыл по ней и разобрал катку — обоим по разбору тренера
+function refLink() {
+  const me = tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id;
+  return me ? `https://t.me/${BOT_USERNAME}?startapp=r${me}` : `https://t.me/${BOT_USERNAME}?startapp`;
+}
+
+// Профиль: серия дней с разборами и «позови друга». Данные — из кошелька воркера; нет Телеграма — блока нет
+function growBlock() {
+  if (!tg || !tg.initData || !COACH_URL) return null;
+  const box = h("div", { class: "card grow-card" });
+  const seq = navSeq;
+  (async () => {
+    const w = await getWallet(true);
+    if (stale(seq) || !w || !w.ref_link) { box.remove(); return; }
+    const n = Number(w.streak) || 0, friends = Number(w.ref_n) || 0;
+    const nextPrize = n < 3 ? 3 : 3 + Math.ceil((n - 2) / 7) * 7;
+    const streakText = n
+      ? `Серия: ${n} ${plural(n, "день", "дня", "дней")} подряд с разборами${w.streak_today ? "" : " — разбери катку сегодня, чтобы не сгорела"}. Подарок — разбор тренера на ${nextPrize}-й день.`
+      : "Разбирай хотя бы одну катку в день: на 3-й день подряд — разбор тренера в подарок, дальше каждую неделю.";
+    box.append(
+      h("div", { class: "grow-row" }, h("b", {}, n ? `🔥 ${n}` : "🔥 0"), h("span", { class: "small" }, streakText)),
+      h("p", { class: "small muted" }, `Позови друга: когда он разберёт первую катку, вам обоим по разбору тренера.${friends ? ` Уже привёл: ${friends}.` : ""}`),
+      h("button", { type: "button", onclick: () => {
+        haptic(); step("ref_share");
+        const url = `https://t.me/share/url?url=${encodeURIComponent(w.ref_link)}&text=${encodeURIComponent("Разбирает твои катки в Доте: кто слил, ошибки по таймкодам, повтор на карте. Заходи по ссылке — дадут бесплатный разбор ИИ-тренера.")}`;
+        if (tg.openTelegramLink) tg.openTelegramLink(url); else window.open(url, "_blank");
+      } }, "Позвать друга"),
+    );
+  })();
+  return box;
+}
+
 function shareLink(a, custom = null) {
   const f = a.facts;
-  const link = `https://t.me/${BOT_USERNAME}?startapp`;
+  const link = refLink();
   const text = custom ? custom.text : `${f.hero} · ${f.won ? "Победа" : "Поражение"} · оценка ${a.overall.toFixed(1)}/10\n${a.verdict}`;
   const url = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`;
   if (tg && tg.openTelegramLink) tg.openTelegramLink(url);

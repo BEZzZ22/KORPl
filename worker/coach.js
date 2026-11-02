@@ -8,6 +8,7 @@
 import LORE from "./lore.json" with { type: "json" };
 import { withStore, migrateStep, purgeExpired } from "./store.js";
 import { kickShorts } from "./kick.js";
+import { matchFromText, matchButton, MATCH_TEXT, noteReferral, rewardReferral, bumpStreak, growthView, weeklyDigest } from "./growth.js";
 import { CHAT_ID, handleChatUpdate, chatChores, chatStatus, releaseIfPending } from "./chatguard.js";
 import { spendUnit, spendChat, isOpen, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT, loginUser, roboLink, roboResult, robokassaOn, payUrl, tokenUser } from "./pay.js";
 
@@ -1088,12 +1089,22 @@ export function mergeAct(cur, batch) {
   return out;
 }
 
+// Человек досмотрел настоящий разбор: день в серию (приз на 3-й день и каждые 7 дальше), бонус другу-пригласившему
+export async function onRealAnalysis(env, id, now = Date.now()) {
+  const tg = (m, b) => tgCall(env, m, b);
+  const streak = await bumpStreak(env, tg, id, now).catch((e) => { console.log(`серия: ${e && e.message || e}`); return null; });
+  const ref = await rewardReferral(env, tg, id, now).catch((e) => { console.log(`рефералка: ${e && e.message || e}`); return null; });
+  return { streak, ref };
+}
+
 export async function trackUser(env, user, batch, now = Date.now()) {
   const id = String(user.id);
   const seenKey = `seen:${id}`;
   if (!(await env.COACH_KV.get(seenKey))) {
     const meta = { t: now, n: clip([user.first_name, user.last_name].filter(Boolean).join(" "), 40), u: clip(user.username, 32), src: clip(batch && batch.src, 40) };
     await env.COACH_KV.put(seenKey, "1", { metadata: meta });
+    // пришёл по ссылке друга (startapp=r<id>) — запомнить, бонус обоим после первого разбора
+    if (!isOwner(env, id)) await noteReferral(env, id, batch && batch.src).catch(() => null);
   }
   const key = `act:${mskDay(now)}:${id}`;
   const got = await env.COACH_KV.getWithMetadata(key);
@@ -1502,6 +1513,20 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
     await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text }).catch(() => false);
     return { refund: text };
   }
+  // сводка недели по понедельникам: отписка и подписка обратно
+  if (/^\/(?:nodigest|digest)(?:@\w+)?$/i.test(cmd)) {
+    const off = /^\/nodigest/i.test(cmd);
+    if (off) await env.COACH_KV.put(`nodigest:${msg.from.id}`, "1"); else await env.COACH_KV.delete(`nodigest:${msg.from.id}`);
+    const text = off ? "Сводку недели больше не шлю. Передумаешь — напиши /digest." : "Включил: по понедельникам пришлю итоги недели и худшую катку на разбор.";
+    await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text }).catch(() => false);
+    return { digest: off ? "off" : "on" };
+  }
+  // кинул ID матча или ссылку на него — кнопка сразу на разбор этой катки, без привязки аккаунта
+  const matchId = !msg.reply_to_message && matchFromText(msg.text);
+  if (matchId) {
+    await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: MATCH_TEXT(matchId), reply_markup: matchButton(matchId) }).catch(() => false);
+    return { match: matchId };
+  }
   // владелец ответил реплаем на пересланное письмо
   // id — последний в первой строке: имя человек пишет сам и может вписать туда чужой «(id …)», а наш идёт после имени
   const head = isOwner(env, msg.from.id) && msg.reply_to_message && String(msg.reply_to_message.text || "").split("\n")[0];
@@ -1624,6 +1649,8 @@ async function handlePost(request, env, ctx, origin) {
     const limited = throttle(String(user.id), Date.now(), 120, "track", 50000);
     if (limited) return reply(429, { error: limited }, origin);
     await trackUser(env, user, raw);
+    // настоящий разбор (не демо): серия дней и бонус по приглашению
+    if (raw.events && Number(raw.events.match_real) > 0 && !isOwner(env, user.id)) later(onRealAnalysis(env, user.id));
     return reply(200, { ok: true }, origin);
   }
 
@@ -1696,7 +1723,10 @@ async function handlePost(request, env, ctx, origin) {
     if (!user || !user.id) return reply(403, { error: noTg(raw) }, origin);
     const limited = throttle(String(user.id), Date.now(), 60, "pay", 20000);
     if (limited) return reply(429, { error: limited }, origin);
-    if (mode === "wallet") return reply(200, { ...walletView(await getWallet(env, user.id)), owner: isOwner(env, user.id), cards: robokassaOn(env) }, origin);
+    if (mode === "wallet") {
+      const grow = await growthView(env, user.id).catch(() => ({}));
+      return reply(200, { ...walletView(await getWallet(env, user.id)), owner: isOwner(env, user.id), cards: robokassaOn(env), ...grow }, origin);
+    }
     // оплата картой из приложения: страница на сайте, вход уже выполнен (решение Ярика 30.10 — и в боте тоже)
     if (mode === "pay_link") return robokassaOn(env) ? reply(200, { url: await payUrl(env.BOT_TOKEN, user) }, origin) : reply(503, { error: "Оплата картой ещё не подключена." }, origin);
     if (!PACKS[raw.pack]) return reply(400, { error: "Нет такого пакета." }, origin);
@@ -1977,6 +2007,7 @@ export default {
     const chores = [migrateStep(env, now).catch((e) => console.log(`перенос из KV: ${e && e.message || e}`))];
     if (new Date(now).getUTCMinutes() < 3) chores.push(purgeExpired(env, now).catch(() => 0));
     if (new Date(now).getUTCMinutes() % 15 < 3) chores.push(kickShorts(env, now).catch((e) => console.log(`пинок Shorts: ${e && e.message || e}`)));
+    chores.push(weeklyDigest(env, (m, b) => tgCall(env, m, b), now).catch((e) => console.log(`сводка недели: ${e && e.message || e}`)));
     chores.push(chatChores(env, (m, b) => tgCall(env, m, b), now).catch((e) => console.log(`чат: ${e && e.message || e}`)));
     ctx.waitUntil(Promise.all([checkWatches(env), checkReplays(env), reportOnRequest(env), ensureWebhook(env), ...chores]));
   },

@@ -121,7 +121,7 @@ function coach(body) {
   if (raw.mode === "feedback") return { ok: true };
   // платный тренер: в шаге paywall пробные кончились, пока не «оплатят» в окне Телеграма
   const PACKS = [{ id: "p10", stars: 49, title: "10 разборов тренера", credits: 10, days: 0 }, { id: "month", stars: 129, title: "Тренер на месяц", credits: 0, days: 30 }];
-  if (raw.mode === "wallet") return { credits: pay.paid ? 10 : 0, free_left: 0, until: 0, sub_left: 0, packs: PACKS, cards: true };
+  if (raw.mode === "wallet") return { credits: pay.paid ? 10 : 0, free_left: 0, until: 0, sub_left: 0, packs: PACKS, cards: true, streak: 4, streak_today: false, ref_link: "https://t.me/DotaRazbor_bot?startapp=r1", ref_n: 2 };
   if (raw.mode === "pay_link") return { url: "https://bezzz22.github.io/KORPl/pay.html#t=8.9999999999.Ax.axel.0123456789abcdef0123456789abcdef" };
   if (raw.mode === "buy") return { link: `https://t.me/$inv_${raw.pack}` };
   if (pay.on && !pay.paid) return { __status: 402, error: "Бесплатные разборы тренера закончились. Возьми пакет или подписку, и тренер продолжит.", paywall: true, wallet: { credits: 0, free_left: 0, until: 0, sub_left: 0, packs: PACKS, cards: true } };
@@ -636,8 +636,8 @@ if (!only || only.has("paywall")) {
   await ctx8.addInitScript((acc) => {
     try { localStorage.setItem("account_id", String(acc)); localStorage.setItem("gate_ok", String(Date.now() + 3600_000)); } catch { /* */ }
     const noop = () => {};
-    window.Telegram = { WebApp: { initData: "query_id=test", initDataUnsafe: {}, platform: "test", ready: noop, expand: noop, isVersionAtLeast: () => true,
-      setHeaderColor: noop, setBackgroundColor: noop, disableVerticalSwipes: noop, openTelegramLink: noop,
+    window.Telegram = { WebApp: { initData: "query_id=test", initDataUnsafe: { user: { id: 1 } }, platform: "test", ready: noop, expand: noop, isVersionAtLeast: () => true,
+      setHeaderColor: noop, setBackgroundColor: noop, disableVerticalSwipes: noop, openTelegramLink: (u) => { window.__tglink = u; },
       openLink: (u) => { window.__link = u; },
       openInvoice: (link, cb) => { window.__invoice = link; setTimeout(() => { window.__pay(); cb("paid"); }, 50); },
       BackButton: { show: noop, hide: noop, onClick: noop }, HapticFeedback: { impactOccurred: noop, notificationOccurred: noop, selectionChanged: noop } } };
@@ -663,6 +663,20 @@ if (!only || only.has("paywall")) {
     await p8.waitForSelector(".coach-moment", { timeout: 15000 });
     if (!/inv_p10/.test(await p8.evaluate(() => window.__invoice || ""))) throw new Error("счёт не открылся");
     if (await p8.locator(".paywall").count()) throw new Error("после оплаты пейвол не убрался");
+  });
+  // профиль: серия дней и «позвать друга» со своей ссылкой
+  await step("grow", async () => {
+    await p8.locator('.tabbtn[data-tab="profile"]').click();
+    await p8.waitForSelector(".grow-card button", { timeout: 15000 });
+    const text = await p8.locator(".grow-card").innerText();
+    if (!/Серия: 4 дня/.test(text) || !/Уже привёл: 2/.test(text)) throw new Error(`блок серии: ${text}`);
+    await p8.locator(".grow-card button").click();
+    const link = await p8.evaluate(() => window.__tglink || "");
+    if (!link.includes(encodeURIComponent("startapp=r1"))) throw new Error(`ссылка-приглашение: ${link}`);
+    await p8.locator(".grow-card").scrollIntoViewIfNeeded();
+    const file = join(OUT, `${String(shots.length + 1).padStart(2, "0")}-grow.png`);
+    await p8.screenshot({ path: file });
+    shots.push(file);
   });
   Object.assign(pay, { on: false, paid: false });
   await ctx8.close();
