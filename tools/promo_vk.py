@@ -50,7 +50,7 @@ def call(token, method, v="5.199", **params):
 
 def text(post):
     title = post["title"].replace("#Shorts", "").strip()
-    return title, f"{title}\n\nРазбор твоей катки в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot\n\n#dota2 #дота2 #доташка"
+    return title, f"{title}\n\nРазбор твоей катки в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot?startapp=vk\n\n#dota2 #дота2 #доташка"
 
 
 def owner(group):

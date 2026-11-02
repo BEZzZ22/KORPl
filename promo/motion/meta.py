@@ -7,7 +7,7 @@ from pathlib import Path
 
 MOTION = Path('/mnt/project-files/youtube/motion')
 KORPL = Path(__file__).resolve().parents[2]
-BOT = 'Бот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot'
+BOT = 'Бот в Телеграме: @DotaRazbor_bot\nhttps://t.me/DotaRazbor_bot?startapp=yt'
 TAGS = ['dota 2', 'дота 2', 'dota2', 'shorts']
 
 # id, title, description, extra tags, hashtags

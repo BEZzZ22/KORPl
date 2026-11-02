@@ -6,7 +6,7 @@
   "text": "{e:think} <b>Слил катку и не понял почему?</b>\n\nКидаешь Match ID в @DotaRazbor_bot и через пару секунд видишь:\n{e:star} оценки по линии, фарму, дракам и выживанию\n{e:skull} главную ошибку и где умер зря\n{e:nerd} ИИ-тренера, который разбирает твои смерти\n\nБесплатно, без регистрации.",
   "button": {
    "text": "Разобрать катку",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   },
   "pin": true
  },
@@ -16,7 +16,7 @@
   "text": "{e:cool} Привет. Я сделал @DotaRazbor_bot и веду этот канал. Тут: как читать разбор катки, какие у бота фишки, что искать в своих ошибках и по мелочи про Доту.\n\nБез «уникальных платформ» и обещаний поднять ММР. Просто показываю, где ты теряешь катки.",
   "button": {
    "text": "Открыть бота",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -26,7 +26,7 @@
   "photo": "promo/img/items.jpg",
   "button": {
    "text": "Открыть бота",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -46,7 +46,7 @@
   "photo": "promo/img/review.jpg",
   "button": {
    "text": "Разобрать катку",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -71,7 +71,7 @@
   "photo": "promo/img/lane.jpg",
   "button": {
    "text": "Открыть бота",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -86,7 +86,7 @@
   "photo": "promo/img/draft.jpg",
   "button": {
    "text": "Открыть драфт",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -106,7 +106,7 @@
   "photo": "promo/img/killers.jpg",
   "button": {
    "text": "Открыть бота",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -131,7 +131,7 @@
   "photo": "promo/img/phases.jpg",
   "button": {
    "text": "Разобрать катку",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -151,7 +151,7 @@
   "photo": "promo/img/deathmap.jpg",
   "button": {
    "text": "Открыть бота",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -171,7 +171,7 @@
   "photo": "promo/img/order.jpg",
   "button": {
    "text": "Открыть бота",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -191,7 +191,7 @@
   "photo": "promo/img/advantage.jpg",
   "button": {
    "text": "Открыть бота",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -206,7 +206,7 @@
   "photo": "promo/img/turbo.jpg",
   "button": {
    "text": "Разобрать турбо",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -226,7 +226,7 @@
   "photo": "promo/img/coach.jpg",
   "button": {
    "text": "Спросить тренера",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -241,7 +241,7 @@
   "photo": "promo/img/networth.jpg",
   "button": {
    "text": "Открыть бота",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -256,7 +256,7 @@
   "photo": "promo/img/mistake.jpg",
   "button": {
    "text": "Проверить катки",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -276,7 +276,7 @@
   "photo": "promo/img/farmzones.jpg",
   "button": {
    "text": "Открыть бота",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -291,7 +291,7 @@
   "photo": "promo/img/early.jpg",
   "button": {
    "text": "Открыть бота",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -316,7 +316,7 @@
   "photo": "promo/img/lane.jpg",
   "button": {
    "text": "Открыть бота",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -336,7 +336,7 @@
   "photo": "promo/img/draft.jpg",
   "button": {
    "text": "Открыть драфт",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -356,7 +356,7 @@
   "photo": "promo/img/aegis.jpg",
   "button": {
    "text": "Открыть мини-апп",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -376,7 +376,7 @@
   "photo": "promo/img/mmr.jpg",
   "button": {
    "text": "Разобрать свою",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -396,7 +396,7 @@
   "photo": "promo/img/farm.jpg",
   "button": {
    "text": "Открыть бота",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -416,7 +416,7 @@
   "photo": "promo/img/review.jpg",
   "button": {
    "text": "Открыть бота",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -436,7 +436,7 @@
   "photo": "promo/img/items.jpg",
   "button": {
    "text": "Открыть бота",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -450,7 +450,7 @@
   "text": "{e:party} <b>Обновление готово, всё работает</b>\n\nЧто нового в @DotaRazbor_bot:\n\n— <b>Живая карта</b>: вся катка по секундам, все десять героев, варды с зоной обзора, смерти и драки. Ползунок и перемотка ×15/×30/×60.\n— <b>«Кто слил»</b>: вклад каждого из десяти, MVP и тот, кто реально тянул вниз. Коры сравниваются с корами, саппорты — с саппортами. Не согласен с выводом — жми кнопку, разберёмся.\n— <b>Награды матча</b>: контроль, лекарь, глаза команды, стена и другие.\n— <b>Демо</b>: можно посмотреть разбор, даже не вводя свой ID.\n— ID можно вставить ссылкой на Steam, Dotabuff, OpenDota или Stratz.\n\nИ ещё: у канала появился чат @dotarazbor_chat. Чтобы пользоваться ботом, теперь нужно быть подписанным на канал и на чат. Там можно скинуть разбор, поспорить о нём и предложить, что добавить.",
   "button": {
    "text": "Разобрать катку",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  },
  {
@@ -464,7 +464,7 @@
   "text": "{e:party} <b>Технические работы закончились</b>\n\nВсё работает в штатном режиме, можно разбирать катки. Спасибо, что подождали!\n\nА ещё у приложения теперь новый дизайн с анимациями. Зацени и напиши в чат, как тебе.",
   "button": {
    "text": "Разобрать катку",
-   "url": "https://t.me/DotaRazbor_bot"
+   "url": "https://t.me/DotaRazbor_bot?startapp=tgch"
   }
  }
 ]
