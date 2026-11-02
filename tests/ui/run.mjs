@@ -46,13 +46,22 @@ const recent = [{ match_id: match.match_id, player_slot: ME.player_slot, radiant
   gold_per_min: ME.gold_per_min, xp_per_min: ME.xp_per_min, last_hits: ME.last_hits }, ...history.slice(0, 19)];
 const itemIds = Object.fromEntries(Object.keys(constants.items).map((k) => [k, k]));
 let hideMatches = false; // шаг «hidden»: в Доте закрыты данные матчей
+// шаг «lite»: OpenDota ещё не разобрала реплей — в матче только итоги, как до разбора
+let unparsedMode = false, directRequestDown = false;
+const parseRequests = [];
+const RAW_KEYS = ["account_id", "player_slot", "hero_id", "item_0", "item_1", "item_2", "item_3", "item_4", "item_5", "backpack_0", "backpack_1", "backpack_2",
+  "item_neutral", "kills", "deaths", "assists", "last_hits", "denies", "gold_per_min", "xp_per_min", "level", "net_worth", "hero_damage", "tower_damage",
+  "hero_healing", "gold", "gold_spent", "ability_upgrades_arr", "isRadiant", "win", "lose", "total_gold", "total_xp", "kda", "rank_tier", "benchmarks", "personaname"];
+const unparsedMatch = { match_id: match.match_id, radiant_win: match.radiant_win, duration: match.duration, start_time: match.start_time, game_mode: match.game_mode,
+  lobby_type: match.lobby_type, radiant_score: match.radiant_score, dire_score: match.dire_score, version: null,
+  players: match.players.map((p) => Object.fromEntries(RAW_KEYS.filter((k) => k in p).map((k) => [k, p[k]]))) };
 function opendota(url) {
   const p = url.pathname.replace(/^\/api/, "");
   if (p === "/constants/heroes") return constants.heroes;
   if (p === "/constants/items") return constants.items;
   if (p === "/constants/abilities") return constants.abilities;
   if (p === "/constants/item_ids") return itemIds;
-  if (p === `/matches/${match.match_id}`) return match;
+  if (p === `/matches/${match.match_id}`) return unparsedMode ? unparsedMatch : match;
   let m;
   if ((m = /^\/heroes\/(\d+)\/itemPopularity$/.exec(p))) return { early_game_items: proItems[m[1]] || {} };
   if ((m = /^\/heroes\/(\d+)\/matchups$/.exec(p))) return match.players.filter((x) => x.isRadiant !== ME.isRadiant)
@@ -167,6 +176,9 @@ async function handleRoute(route) {
   const flaky = url.origin === BASE && process.env.UI_LOCAL_FAIL && process.env.UI_LOCAL_FAIL.split(",").find((f) => url.pathname.endsWith(`/${f}`));
   if (flaky && (process.env.UI_LOCAL_FAIL_ALL || !localFailed.has(flaky))) { localFailed.add(flaky); return route.fulfill({ status: 503, body: "" }); }
   if (url.origin === BASE) return route.continue();
+  if (url.pathname.includes("/request/")) parseRequests.push(`${url.hostname.endsWith("workers.dev") ? "worker" : "direct"} ${route.request().method()}`);
+  // у провайдера закрыта OpenDota для POST: заявка должна уйти через воркер
+  if (directRequestDown && url.hostname === "api.opendota.com" && url.pathname.includes("/request/")) return route.abort("connectionrefused");
   if (url.hostname === "api.opendota.com") {
     // UI_CONSTANTS_DOWN=1: справочники OpenDota отдают 503, приложение должно взять их с зеркала
     if (process.env.UI_CONSTANTS_DOWN && url.pathname.startsWith("/api/constants/")) return route.fulfill({ status: 503, body: "" });
@@ -303,6 +315,30 @@ await step("deeplink", async () => {
   await p5.waitForSelector(".hero-head", { timeout: 20000 });
   if (asked.length !== 1) throw new Error(`матч запрошен ${asked.length} раз вместо одного`);
   await p5.close();
+});
+// Реплей не разобран, а заявка с телефона до OpenDota не доходит: заявка уходит через воркер, через 15 с есть кнопка
+// быстрого разбора, в нём только «Обзор» и «Сборка». Реплей разобрался — плашка меняется на «Открыть»
+await step("lite", async () => {
+  unparsedMode = true; directRequestDown = true; parseRequests.length = 0;
+  const pl = await context.newPage();
+  await pl.goto(`${BASE}/index.html?match=${match.match_id}`);
+  await pl.waitForSelector("text=Реплей разбирается", { timeout: 20000 });
+  await pl.waitForSelector("text=Показать быстрый разбор сейчас", { timeout: 25000 });
+  if (!parseRequests.includes("worker POST")) throw new Error(`заявка не ушла через воркер: ${parseRequests.join(", ")}`);
+  await pl.click("text=Показать быстрый разбор сейчас");
+  await pl.waitForSelector(".lite-banner", { timeout: 10000 });
+  const tabs = await pl.$$eval(".tabs .tab", (xs) => xs.map((x) => x.textContent));
+  if (tabs.join(",") !== "Обзор,Сборка") throw new Error(`вкладки быстрого разбора: ${tabs.join(",")}`);
+  if (await pl.$(".coach-btn")) throw new Error("тренер в быстром разборе");
+  const text = await pl.evaluate(() => document.body.innerText);
+  if (/Обсерверов|Телепортов|смока/i.test(text)) throw new Error("быстрый разбор выдумал находки по пустым логам");
+  await pl.screenshot({ path: join(OUT, "lite.png"), fullPage: true });
+  unparsedMode = false;
+  await pl.waitForSelector(".lite-banner >> text=Реплей разобран", { timeout: 45000 });
+  await pl.click(".lite-banner >> text=Открыть");
+  await pl.waitForFunction(() => document.querySelectorAll(".tabs .tab").length > 2 && !document.querySelector(".lite-banner"), null, { timeout: 20000 });
+  directRequestDown = false;
+  await pl.close();
 });
 // OpenDota ответила 429: приложение повторяет запрос и всё равно показывает катки
 await step("busy", async () => {

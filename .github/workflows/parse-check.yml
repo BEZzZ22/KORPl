@@ -1,0 +1,16 @@
+# Диагностика: разбираются ли реплеи у OpenDota на катках владельца, и успевает ли заявка (Actions → Run workflow)
+name: Проверка разбора реплеев
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node tools/parse-check.mjs 801280038

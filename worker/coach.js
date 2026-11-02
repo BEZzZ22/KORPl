@@ -797,7 +797,8 @@ export async function telegramUser(initData, botToken, now = Date.now()) {
 const WATCH_KEY = "watchlist";
 const WATCH_PREFIX = "watch:";
 const WATCH_TTL = 3 * 3600 * 1000; // реплей обычно разбирается за минуты, дольше 3 часов не ждём
-const WATCH_REASK = 20 * 60 * 1000; // не разобрался за 20 минут — просим OpenDota ещё раз
+const WATCH_REASK = 4 * 60 * 1000; // не разобрался за 4 минуты — просим OpenDota ещё раз (обычно она разбирает за 20 секунд)
+const WATCH_REASK_MAX = 4;
 const WATCH_MATCHES_PER_RUN = 20;
 // Время последней подписки. Крон идёт раз в 3 минуты, а list на бесплатном KV — 1000 в сутки на всё:
 // когда подписок давно не было, список не запрашиваем. Ключ пишут все, но любой из них — «недавно», гонка не страшна
@@ -808,6 +809,15 @@ async function addWatch(env, match, user, now = Date.now()) {
   if (await env.COACH_KV.get(key)) return;
   await env.COACH_KV.put(key, "1", { metadata: { t: now }, expirationTtl: Math.ceil(WATCH_TTL / 1000) + 3600 });
   await env.COACH_KV.put(WATCH_LAST, String(now), { expirationTtl: 7 * 86400 });
+}
+
+// Заявка OpenDota на разбор реплея. С сервера она доходит всегда, а с телефона в РФ запрос к OpenDota часто
+// не проходит вовсе: GET приложение повторяет через воркер, а POST раньше просто терялся — и реплей не разбирался никогда
+export async function requestParse(env, match) {
+  const key = env.OPENDOTA_KEY ? `?api_key=${encodeURIComponent(env.OPENDOTA_KEY)}` : "";
+  const res = await fetch(`https://api.opendota.com/api/request/${match}${key}`, { method: "POST", signal: AbortSignal.timeout(10000) }).catch(() => null);
+  if (!res || !res.ok) console.log(`request ${match}: ${res ? res.status : "сеть"}`);
+  return Boolean(res && res.ok);
 }
 
 async function sendTelegram(env, method, body) {
@@ -865,9 +875,11 @@ export async function checkWatches(env, now = Date.now()) {
       } catch (e) { console.log(`watch: OpenDota недоступна: ${e && e.message || e}`); }
       parsed.set(match, ok);
     }
-    if (parsed.get(match) === false && age > WATCH_REASK && !meta.re) {
-      await fetch(`https://api.opendota.com/api/request/${match}`, { method: "POST", signal: AbortSignal.timeout(10000) }).catch(() => null);
-      await env.COACH_KV.put(k.name, "1", { metadata: { ...meta, re: 1 }, expirationTtl: Math.ceil((WATCH_TTL - age) / 1000) + 3600 });
+    // заявка с телефона могла не дойти (OpenDota у провайдера закрыта, 429): просим с сервера, с паузой всё дольше
+    const re = Number(meta.re) || 0;
+    if (parsed.get(match) === false && re < WATCH_REASK_MAX && now - (Number(meta.rt) || Number(meta.t) || now) > WATCH_REASK * (re + 1)) {
+      await requestParse(env, match);
+      await env.COACH_KV.put(k.name, "1", { metadata: { ...meta, re: re + 1, rt: now }, expirationTtl: Math.ceil((WATCH_TTL - age) / 1000) + 3600 });
     }
     if (!parsed.get(match)) continue;
     const ok = await sendTelegram(env, "sendMessage", {
@@ -1151,7 +1163,7 @@ const EVENT_LABELS = {
   design_v2: "включили новый дизайн", design_classic: "вернули классику", paid: "оплатили тренера", paywall: "упёрлись в оплату",
 };
 const STEP_LABELS = {
-  home: "главная", home_list: "список игр", home_empty: "«матчей не видно»", match: "открыл матч", link_bad_empty: "пустой ID", link_bad_vanity: "ссылка с ником", link_bad_url: "не та ссылка", link_bad_num: "не те цифры", link_bad_text: "ввёл ник", link_vanity_ok: "ссылка с ником сработала", link_vanity_none: "ссылка с ником: нет профиля", empty_retry: "жмёт «Проверить снова»", empty_found: "матчи нашлись", match_parsing: "ждёт разбор реплея",
+  home: "главная", home_list: "список игр", home_empty: "«матчей не видно»", match: "открыл матч", link_bad_empty: "пустой ID", link_bad_vanity: "ссылка с ником", link_bad_url: "не та ссылка", link_bad_num: "не те цифры", link_bad_text: "ввёл ник", link_vanity_ok: "ссылка с ником сработала", link_vanity_none: "ссылка с ником: нет профиля", empty_retry: "жмёт «Проверить снова»", empty_found: "матчи нашлись", match_parsing: "ждёт разбор реплея", match_lite: "быстрый разбор без реплея",
   analysis: "разбор", not_yours: "чужой матч", link: "привязал аккаунт", link_bad: "неверный ID", link_unknown: "OpenDota не знает аккаунт", link_anyway: "привязал неизвестный ID", write_ok: "разрешил сообщения бота", write_no: "запретил сообщения бота",
   profile: "профиль", hero_stats: "статы героя", draft: "драфт", coach: "тренер", chat: "вопрос тренеру", compare: "сравнение", buy: "открыл оплату", buy_card: "оплата картой", paywall: "упёрся в оплату",
   replay: "реплей", share: "поделился", blame: "«кто слил»", share_blame: "поделился итогом", demo: "пример разбора", disagree_blame: "не согласен", err_opendota: "ОШИБКА OpenDota", err_no_match: "ОШИБКА нет матча", err_replay: "ОШИБКА реплей",
@@ -1673,6 +1685,7 @@ async function handlePost(request, env, ctx, origin) {
     const limited = throttle(String(user.id), Date.now(), 20, "watch", 3000);
     if (limited) return reply(429, { error: limited }, origin);
     await addWatch(env, match, user.id);
+    await requestParse(env, match);
     return reply(200, { ok: true }, origin);
   }
 
@@ -1881,6 +1894,18 @@ export default {
       }
       if (got.pack && env.BOT_TOKEN) ctx.waitUntil(sendTelegram(env, "sendMessage", { chat_id: Number(got.user), text: thanksText(got.pack, got.wallet), reply_markup: appButton }).catch(() => false));
       return new Response(got.ok);
+    }
+    // заявка на разбор реплея через воркер: с телефона POST к OpenDota часто не доходит
+    const parseReq = request.method === "POST" && /^\/od\/request\/(\d{6,12})$/.exec(new URL(request.url).pathname);
+    if (parseReq) {
+      if (!ALLOWED_ORIGINS.includes(origin)) return reply(403, { error: "Нельзя." }, origin);
+      const ip = request.headers.get("CF-Connecting-IP") || "anon";
+      const recent = (odStamps.get(ip) || []).filter((t) => Date.now() - t < 60_000);
+      if (recent.length >= OD_PER_MIN) return reply(429, { error: "Слишком много запросов." }, origin);
+      recent.push(Date.now());
+      odStamps.set(ip, recent);
+      const ok = await requestParse(env, Number(parseReq[1]));
+      return reply(ok ? 200 : 502, ok ? { ok: true } : { error: "OpenDota не приняла заявку." }, origin);
     }
     // запасной путь к OpenDota: свой лимит без банов, чтобы сбой OpenDota не забанил человека и у тренера
     if (request.method === "GET" && new URL(request.url).pathname.startsWith("/od/")) {
