@@ -8,3 +8,4 @@ __pycache__/
 node_modules/
 tests/ui/out/
 tests/ui/live/
+tests/ui/general/
