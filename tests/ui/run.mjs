@@ -129,7 +129,8 @@ function coach(body) {
   // открыть матч целиком: шаг «lock» — бесплатный матч уже был (замок до «оплаты»), шаг «first» — первый матч
   if (raw.mode === "open") {
     if (pay.first) return { full: true, how: "free" };
-    if (pay.lock && !pay.paid) return { full: false, wallet: { credits: 0, free_left: 0, until: 0, sub_left: 0, packs: PACKS, cards: true } };
+    if (pay.lock && pay.credits && raw.auto === false) { pay.credits -= 1; return { full: true, how: "credit", wallet: { credits: pay.credits, free_left: 0, until: 0, sub_left: 0, packs: PACKS } }; }
+    if (pay.lock && !pay.paid) return { full: false, wallet: { credits: pay.credits || 0, free_left: 0, until: 0, sub_left: 0, packs: PACKS, cards: true } };
     return { full: true, how: pay.lock ? "credit" : "open" };
   }
   if (pay.on && !pay.paid) return { __status: 402, error: "Бесплатные разборы тренера закончились. Возьми пакет или подписку, и тренер продолжит.", paywall: true, wallet: { credits: 0, free_left: 0, until: 0, sub_left: 0, packs: PACKS, cards: true } };
@@ -688,7 +689,32 @@ if (!only || only.has("paywall")) {
     shots.push(file);
     await p8.locator(".locked-tab .paywall-pack").first().click();
     await p8.waitForFunction(() => !document.querySelector(".locked-tab") && !document.querySelector(".tab.locked"), null, { timeout: 15000 });
+    // вкладки, открытые после оплаты, рисуются нормально: карта и графики не нулевой ширины
+    for (const [tab, sel] of [["Карта", ".live-map, .dmap, canvas, svg"], ["Графики", ".chart"], ["Смерти", ".card"]]) {
+      await p8.locator(".tab", { hasText: tab }).click();
+      await p8.waitForSelector(`.tab-content :is(${sel})`, { timeout: 10000 });
+      const w = await p8.locator(`.tab-content :is(${sel})`).first().evaluate((el) => el.getBoundingClientRect().width);
+      if (!(w > 100)) throw new Error(`«${tab}» после оплаты шириной ${w}`);
+    }
     Object.assign(pay, { paid: false, lock: false });
+  });
+  // разборы на счету: замок с кнопкой «Открыть этот матч», списание только по нажатию
+  await step("credit", async () => {
+    Object.assign(pay, { on: false, paid: false, lock: true, credits: 3 });
+    await p8.goto(`${BASE}/index.html?match=${match.match_id}`);
+    await p8.waitForSelector(".tab.locked", { timeout: 20000 });
+    await p8.locator(".tab", { hasText: "Графики" }).click();
+    const btn = p8.locator(".locked-tab .coach-btn");
+    await btn.waitFor({ timeout: 10000 });
+    if (!/на счету 3 разбора/.test(await btn.innerText())) throw new Error(`кнопка: ${await btn.innerText()}`);
+    if (pay.credits !== 3) throw new Error("разбор списался без нажатия");
+    const file = join(OUT, `${String(shots.length + 1).padStart(2, "0")}-credit.png`);
+    await p8.screenshot({ path: file });
+    shots.push(file);
+    await btn.click();
+    await p8.waitForSelector(".tab-content .chart", { timeout: 10000 });
+    if (pay.credits !== 2) throw new Error(`на счету ${pay.credits}, ждали 2`);
+    Object.assign(pay, { lock: false, credits: 0 });
   });
   // первый матч: всё открыто, тренер стартует сам, кнопку жать не надо
   await step("first", async () => {
