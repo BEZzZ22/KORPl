@@ -499,12 +499,19 @@ async def join():
                    and lo <= (v.get("members") or 0) <= hi),
                   key=lambda kv: (not kv[1].get("contacts"), -(kv[1].get("members") or 0)))
     c = await connected()
-    done = 0
+    done = dead = 0
     for name, v in pool:
         if done >= JOIN_MAX:
             break
         try:
-            await c(JoinChannelRequest(await c.get_entity(name)))
+            ent = await c.get_entity(name)
+            if not await alive(c, ent):
+                joined.append(name)  # дохлый: больше не проверяем
+                dead += 1
+                print(f"Пропуск, дохлый: {v.get('kind')} {v.get('members')}")
+                await asyncio.sleep(5)
+                continue
+            await c(JoinChannelRequest(ent))
             joined.append(name)
             done += 1
             print(f"Вступил: {v.get('kind')} {v.get('members')}")
@@ -523,7 +530,49 @@ async def join():
     JOINED.write_text(json.dumps(joined, ensure_ascii=False, indent=1), encoding="utf-8")
     await make_folder(c, 3, "Дота-чаты", joined)
     await c.disconnect()
-    print(f"Вступил за прогон: {done}, всего: {len(joined)}, осталось в базе: {len(pool) - done}")
+    print(f"Вступил за прогон: {done}, дохлых пропущено: {dead}, осталось в базе: {len(pool) - done - dead}")
+
+
+ALIVE_DAYS = 14      # канал без постов дольше — дохлый, там нечего делать
+
+
+async def alive(c, ent):
+    """Последнее сообщение в канале или группе свежее ALIVE_DAYS дней."""
+    import datetime
+    msgs = await c.get_messages(ent, limit=1)
+    if not msgs or not msgs[0].date:
+        return False
+    return msgs[0].date > datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=ALIVE_DAYS)
+
+
+async def prune():
+    """Выходит из дохлых каналов и групп (кроме наших) и переписывает joined.json по тому, где акк реально сидит."""
+    from telethon.tl.types import Channel, Chat
+
+    c = await connected()
+    keep, left = [], 0
+    async for d in c.iter_dialogs():
+        ent = d.entity
+        if not isinstance(ent, (Channel, Chat)):
+            continue
+        name = getattr(ent, "username", None) or str(d.id)
+        if name.lower() in ("dota_razbor", "dotarazbor_chat"):
+            keep.append(name)
+            continue
+        if await alive(c, ent):
+            keep.append(name)
+        else:
+            await c.delete_dialog(ent)
+            left += 1
+            print(f"Вышел из дохлого: {d.name}")
+        await asyncio.sleep(2)
+    old = json.loads(JOINED.read_text(encoding="utf-8")) if JOINED.exists() else []
+    targets = json.loads(TARGETS.read_text(encoding="utf-8")) if TARGETS.exists() else {}
+    # старые записи (прошлого акка) снимаем, чтобы join снова их проверил; дохлые из базы помечаем
+    JOINED.write_text(json.dumps(keep, ensure_ascii=False, indent=1), encoding="utf-8")
+    await make_folder(c, 3, "Дота-чаты", [k for k in keep if k in targets])
+    await c.disconnect()
+    print(f"Вышел из дохлых: {left}, осталось каналов и групп: {len(keep)} (было в joined.json: {len(old)})")
 
 
 async def make_folder(c, fid, title, names, pinned=0):
@@ -920,7 +969,7 @@ if __name__ == "__main__":
         act = "main_login"  # код вбит в поле — значит, это вход, даже если action забыли переключить
     if act == "code":
         asyncio.run(send_code())
-    elif act in ("discover", "send", "inbox", "folder", "test", "join", "fix", "mute", "main_code", "main_login", "main_whoami", "main_qr", "main_join", "main_post", "listen", "forget", "expand"):
+    elif act in ("discover", "send", "inbox", "folder", "test", "join", "fix", "mute", "main_code", "main_login", "main_whoami", "main_qr", "main_join", "main_post", "listen", "forget", "expand", "prune"):
         asyncio.run(globals()[act]())
     elif act == "setup":
         asyncio.run(setup())
