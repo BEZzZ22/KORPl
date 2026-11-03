@@ -1414,12 +1414,30 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false, 
   }
   if (lite) step("match_lite");
 
-  let player = null;
+  let player = null, saved = 0;
   if (!player && accountId) player = match.players.find((p) => p.account_id === accountId);
   if (!player) {
-    const saved = Number(await storage.get("account_id"));
+    saved = Number(await storage.get("account_id"));
     if (stale(seq)) return;
     if (saved) player = match.players.find((p) => p.account_id === saved);
+  }
+  // Профиль скрыт («Expose Public Match Data» выключен): в матче человек анонимный, а таких почти половина
+  // (живая проверка 02.11). Решение Ярика 03.11: даём выбрать своего героя, но только среди скрытых игроков —
+  // открытые чужие профили так не разобрать. Выбор помним на устройстве
+  if (!player && saved && !demo) {
+    const hidden = match.players.filter(isHidden);
+    const chosen = slot != null ? slot : safeLocal.get(`pick:${matchId}`);
+    const mine = chosen != null && chosen !== "" ? hidden.find((p) => p.player_slot === Number(chosen)) : null;
+    if (mine) {
+      // дальше разбор, «Кто слил», карта и история ищут игрока по аккаунту: в копии матча пишем ему привязанный
+      match = { ...match, players: match.players.map((p) => (p === mine ? { ...p, account_id: saved } : p)) };
+      player = match.players.find((p) => p.player_slot === mine.player_slot);
+      safeLocal.set(`pick:${matchId}`, String(mine.player_slot));
+    } else if (hidden.length) {
+      step("pick_hidden");
+      pickHidden(matchId, match, hidden, accountId, demo);
+      return;
+    }
   }
   if (!player) { step("not_yours"); notYourMatch(matchId, slot, demo); return; }
 
@@ -1494,6 +1512,32 @@ function canMessage() {
     });
   }
   return writeAsk;
+}
+
+const isHidden = (p) => !p.account_id || p.account_id === 4294967295;
+
+// Привязанного аккаунта в матче нет, но есть игроки со скрытым профилем: человек выбирает своего героя
+function pickHidden(matchId, match, hidden, accountId, demo) {
+  const seq = navSeq;
+  const row = (p) => {
+    const won = (p.player_slot < 128) === match.radiant_win;
+    return h("button", { type: "button", class: `match-item ${won ? "win" : "loss"}`, onclick: () => {
+      if (stale(seq)) return;
+      haptic("medium"); step("pick_hidden_ok");
+      go(matchScreen, matchId, p.player_slot, accountId, 0, demo);
+    } },
+    h("div", { class: "row" }, heroImg(p.hero_id),
+      h("div", { class: "grow" },
+        h("div", {}, dictionary.heroName(p.hero_id)),
+        h("div", { class: "small muted" }, `${p.player_slot < 128 ? "Свет" : "Тьма"} · ${won ? "победа" : "поражение"} · ${p.kills}/${p.deaths}/${p.assists}`))));
+  };
+  render(
+    h("h1", {}, "Каким героем ты играл?"),
+    h("p", { class: "muted" }, "В этом матче твой профиль скрыт, поэтому сам я тебя не нашёл. Выбери своего героя — разберу катку."),
+    ...hidden.map(row),
+    h("p", { class: "small muted" }, "Чтобы дальше находил сам и показывал катки на главной: в Доте Настройки → «Социальное» → включи «Expose Public Match Data»."),
+    h("button", { type: "button", class: "ghost", onclick: () => navRoot("home", homeScreen) }, "На главную"),
+  );
 }
 
 // Разбираем только свои игры: либо аккаунт не привязан, либо тебя нет в матче.
