@@ -1,0 +1,63 @@
+# Уборка веток: удаляет ветки, чья последняя версия уже влита через PR и у которых нет открытого PR.
+# Основная ветка и replays не трогаются никогда. В extra можно перечислить ещё ветки через пробел (удалятся без проверки).
+# Запуск: Actions -> «Уборка веток» -> Run workflow. dry = yes только печатает, что удалит.
+name: Уборка веток
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry:
+        description: "Только показать (yes/no)"
+        default: "no"
+        required: true
+      extra:
+        description: "Ещё ветки через пробел (необязательно)"
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      KEEP: "claude/opus-55-capabilities-limits-ekkxhj replays"
+      DRY: ${{ inputs.dry }}
+      EXTRA: ${{ inputs.extra }}
+    steps:
+      - name: Ищем и удаляем
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPO/pulls?state=all&per_page=100" --paginate \
+            --jq '.[] | select(.merged_at != null) | .head.sha' | sort -u > merged.txt
+          gh api "repos/$REPO/pulls?state=open&per_page=100" --paginate \
+            --jq '.[] | .head.ref' | sort -u > open.txt
+          gh api "repos/$REPO/branches?per_page=100" --paginate \
+            --jq '.[] | "\(.name) \(.commit.sha)"' > branches.txt
+          default=$(gh api "repos/$REPO" --jq .default_branch)
+          todo=""
+          while read -r name sha; do
+            case " $KEEP $default " in *" $name "*) continue ;; esac
+            grep -qxF "$name" open.txt && continue
+            grep -qxF "$sha" merged.txt && todo="$todo $name"
+          done < branches.txt
+          for name in $EXTRA; do
+            case " $KEEP $default " in *" $name "*) echo "пропуск $name: защищена"; continue ;; esac
+            grep -qxF "$name" open.txt && { echo "пропуск $name: открыт PR"; continue; }
+            todo="$todo $name"
+          done
+          n=0
+          for name in $todo; do
+            sha=$(awk -v b="$name" '$1==b {print $2}' branches.txt)
+            if [ "$DRY" = "yes" ]; then
+              echo "удалю $name ($sha)"
+            else
+              gh api -X DELETE "repos/$REPO/git/refs/heads/$name" && echo "удалена $name ($sha)"
+            fi
+            n=$((n+1))
+          done
+          echo "Итого: $n"

@@ -65,4 +65,5 @@ PW_EXEC=/opt/pw-browsers/chromium node tests/ui/run.mjs   # UI-прогон в C
 | Акк для чатов | `tg2.yml` | вручную |
 | Проверка прода | `prod-check.yml` | вручную |
 | Проверка юзера, Воронка тренера, Проверка OpenDota, Проверка разбора реплеев, Генеральная проверка разбора | `user-check.yml`, `coach-funnel.yml`, `opendota-check.yml`, `parse-check.yml`, `general-check.yml` | диагностика, вручную |
+| Уборка веток | `branches-cleanup.yml` | вручную: удаляет ветки, уже влитые через PR |
 | Чат канала, Одно сообщение, Премиум-эмодзи, Разметка карты | `community.yml`, `send-one.yml`, `emoji.yml`, `mapdata.yml` | разовые, вручную |
