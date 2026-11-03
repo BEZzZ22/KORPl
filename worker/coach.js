@@ -10,7 +10,7 @@ import { withStore, migrateStep, purgeExpired } from "./store.js";
 import { kickShorts } from "./kick.js";
 import { matchFromText, matchButton, MATCH_TEXT, accountFromText, linkButton, LINK_TEXT, OD_HEADERS, noteReferral, rewardReferral, referralFromStart, bumpStreak, growthView, weeklyDigest } from "./growth.js";
 import { CHAT_ID, handleChatUpdate, chatChores, chatStatus, releaseIfPending } from "./chatguard.js";
-import { spendUnit, spendChat, isOpen, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT, loginUser, roboLink, roboResult, robokassaOn, payUrl, tokenUser } from "./pay.js";
+import { spendUnit, openMatch, spendChat, isOpen, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT, loginUser, roboLink, roboResult, robokassaOn, payUrl, tokenUser } from "./pay.js";
 
 const ALLOWED_ORIGINS = ["https://bezzz22.github.io"];
 const GEMINI_MODEL = "gemini-flash-lite-latest";
@@ -195,7 +195,7 @@ async function takeQuota(env, user, ip, kind) {
 
 // Платный тренер (pay.js): платит аккаунт Телеграма, вне Телеграма тренера нет. Владелец бесплатно.
 // PAYWALL=off в переменных воркера — выключатель: тогда снова суточные лимиты, как до оплаты
-const PAYWALL_TEXT = "Бесплатные разборы тренера закончились. Возьми пакет или подписку, и тренер продолжит.";
+const PAYWALL_TEXT = "Бесплатный разбор уже был. Тренер и полный разбор — по подписке или пакету.";
 const NO_TG_TEXT = "Тренер работает в приложении в Телеграме: открой его через @DotaRazbor_bot.";
 // подпись Телеграма есть, но не прошла: обычно она старше недели (приложение держали открытым днями)
 const STALE_TG_TEXT = "Сессия устарела: закрой приложение и открой заново через @DotaRazbor_bot.";
@@ -1182,12 +1182,12 @@ const EVENT_LABELS = {
   analysis: "разборов", coach: "с тренером", chat: "вопросов тренеру", compare: "сравнений", replay: "реплеев",
   share: "поделились", link: "привязали аккаунт", profile: "профиль", hero_stats: "статы героя", draft: "драфт",
   blame: "«кто слил»", share_blame: "поделились итогом матча", demo: "смотрели пример", disagree_blame: "не согласны с «кто слил»",
-  design_v2: "включили новый дизайн", design_classic: "вернули классику", paid: "оплатили тренера", paywall: "упёрлись в оплату",
+  design_v2: "включили новый дизайн", design_classic: "вернули классику", paid: "оплатили тренера", paywall: "упёрлись в оплату", lock: "упёрлись в замок вкладок", coach_auto: "тренер сам на 1-м матче",
 };
 const STEP_LABELS = {
   home: "главная", home_list: "список игр", home_empty: "«матчей не видно»", match: "открыл матч", link_bad_empty: "пустой ID", link_bad_vanity: "ссылка с ником", link_bad_url: "не та ссылка", link_bad_num: "не те цифры", link_bad_text: "ввёл ник", link_vanity_ok: "ссылка с ником сработала", link_vanity_none: "ссылка с ником: нет профиля", empty_retry: "жмёт «Проверить снова»", empty_found: "матчи нашлись", match_parsing: "ждёт разбор реплея", match_lite: "быстрый разбор без реплея",
   analysis: "разбор", not_yours: "чужой матч", link: "привязал аккаунт", link_bad: "неверный ID", link_unknown: "OpenDota не знает аккаунт", link_anyway: "привязал неизвестный ID", write_ok: "разрешил сообщения бота", write_no: "запретил сообщения бота",
-  profile: "профиль", hero_stats: "статы героя", draft: "драфт", coach: "тренер", chat: "вопрос тренеру", compare: "сравнение", buy: "открыл оплату", buy_card: "оплата картой", paywall: "упёрся в оплату",
+  profile: "профиль", hero_stats: "статы героя", draft: "драфт", coach: "тренер", chat: "вопрос тренеру", compare: "сравнение", buy: "открыл оплату", buy_card: "оплата картой", paywall: "упёрся в оплату", lock: "замок на вкладках",
   replay: "реплей", share: "поделился", blame: "«кто слил»", share_blame: "поделился итогом", demo: "пример разбора", disagree_blame: "не согласен", err_opendota: "ОШИБКА OpenDota", err_no_match: "ОШИБКА нет матча", err_replay: "ОШИБКА реплей",
   err_parse: "ОШИБКА разбора", err_boot: "ОШИБКА загрузки", err_other: "ОШИБКА",
   design_v2: "новый дизайн", design_classic: "классика",
@@ -1734,12 +1734,19 @@ async function handlePost(request, env, ctx, origin) {
   }
 
   // Кошелёк тренера и покупка: счёт на звёзды, приложение открывает его через Telegram.WebApp.openInvoice
-  if (mode === "wallet" || mode === "buy" || mode === "pay_link") {
-    if (!paywallOn(env)) return reply(200, { off: true }, origin);
+  if (mode === "wallet" || mode === "buy" || mode === "pay_link" || mode === "open") {
+    if (!paywallOn(env)) return reply(200, { off: true, full: true }, origin);
     const user = await telegramUser(raw.initData, env.BOT_TOKEN);
     if (!user || !user.id) return reply(403, { error: noTg(raw) }, origin);
     const limited = throttle(String(user.id), Date.now(), 60, "pay", 20000);
     if (limited) return reply(429, { error: limited }, origin);
+    // открыть матч целиком: первый бесплатно, дальше подписка или пакет (pay.js, openMatch)
+    if (mode === "open") {
+      const m = Number(raw.match_id);
+      if (!Number.isInteger(m) || m <= 1e6) return reply(400, { error: "Нет номера матча." }, origin);
+      if (isOwner(env, user.id)) return reply(200, { full: true, owner: true }, origin);
+      return reply(200, await openMatch(env, user.id, `m${m}`, raw.auto === true), origin);
+    }
     if (mode === "wallet") {
       const grow = await growthView(env, user.id).catch(() => ({}));
       return reply(200, { ...walletView(await getWallet(env, user.id)), owner: isOwner(env, user.id), cards: robokassaOn(env), ...grow }, origin);

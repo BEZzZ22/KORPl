@@ -86,7 +86,7 @@ export async function rewardReferral(env, tg, userId, now = Date.now(), name = "
   await giftCredits(env, userId, REF_BONUS, now);
   const inviter = n <= REF_MAX;
   if (inviter) await giftCredits(env, by, REF_BONUS, now);
-  await tg("sendMessage", { chat_id: Number(userId), text: "Ты пришёл по приглашению друга — держи бесплатный разбор ИИ-тренера. Он уже на счету.",
+  await tg("sendMessage", { chat_id: Number(userId), text: "Ты пришёл по приглашению друга — держи бесплатный полный разбор матча с ИИ-тренером. Он уже на счету.",
     reply_markup: { inline_keyboard: [[{ text: "Открыть разбор", web_app: { url: APP_URL } }]] } });
   if (inviter) {
     const who = String(name || "").trim().slice(0, 40);
@@ -123,7 +123,7 @@ export async function bumpStreak(env, tg, userId, now = Date.now()) {
   else { if (await kv.get(claim)) return { ...next, prize: false }; await kv.put(claim, "1", { expirationTtl: 3 * 86400 }); }
   await giftCredits(env, userId, 1, now);
   const nextAt = n === 3 ? 10 : n + 7;
-  await tg("sendMessage", { chat_id: Number(userId), text: `Серия ${n} ${plural(n, "день", "дня", "дней")} подряд с разборами! Держи бесплатный разбор ИИ-тренера, он уже на счету. `
+  await tg("sendMessage", { chat_id: Number(userId), text: `Серия ${n} ${plural(n, "день", "дня", "дней")} подряд с разборами! Держи бесплатный полный разбор матча с ИИ-тренером, он уже на счету. `
     + `Не прерывай серию: следующий подарок на ${nextAt}-й день.`, reply_markup: { inline_keyboard: [[{ text: "Открыть разбор", web_app: { url: APP_URL } }]] } });
   return { ...next, prize: true };
 }
