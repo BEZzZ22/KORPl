@@ -47,7 +47,7 @@ const recent = [{ match_id: match.match_id, player_slot: ME.player_slot, radiant
 const itemIds = Object.fromEntries(Object.keys(constants.items).map((k) => [k, k]));
 let hideMatches = false; // шаг «hidden»: в Доте закрыты данные матчей
 // шаг «lite»: OpenDota ещё не разобрала реплей — в матче только итоги, как до разбора
-let unparsedMode = false, directRequestDown = false;
+let unparsedMode = false, directRequestDown = false, hiddenMode = false;
 const parseRequests = [];
 const RAW_KEYS = ["account_id", "player_slot", "hero_id", "item_0", "item_1", "item_2", "item_3", "item_4", "item_5", "backpack_0", "backpack_1", "backpack_2",
   "item_neutral", "kills", "deaths", "assists", "last_hits", "denies", "gold_per_min", "xp_per_min", "level", "net_worth", "hero_damage", "tower_damage",
@@ -61,7 +61,9 @@ function opendota(url) {
   if (p === "/constants/items") return constants.items;
   if (p === "/constants/abilities") return constants.abilities;
   if (p === "/constants/item_ids") return itemIds;
-  if (p === `/matches/${match.match_id}`) return unparsedMode ? unparsedMatch : match;
+  if (p === `/matches/${match.match_id}`) return hiddenMode
+    ? { ...match, players: match.players.map((x) => (x.player_slot === ME.player_slot || x.player_slot === 130 ? { ...x, account_id: null } : x)) }
+    : unparsedMode ? unparsedMatch : match;
   let m;
   if ((m = /^\/heroes\/(\d+)\/itemPopularity$/.exec(p))) return { early_game_items: proItems[m[1]] || {} };
   if ((m = /^\/heroes\/(\d+)\/matchups$/.exec(p))) return match.players.filter((x) => x.isRadiant !== ME.isRadiant)
@@ -772,6 +774,31 @@ if (!only || only.has("demo")) {
     await p4.waitForSelector(".match-item", { timeout: 20000 });
     if (await p4.evaluate(() => localStorage.getItem("account_id")) !== String(ACCOUNT)) throw new Error("аккаунт из ссылки бота не привязан");
   });
+  // профиль скрыт: привязанного аккаунта в матче нет — выбор героя среди скрытых, разбор за выбранного
+  await step("pickhidden", async () => {
+    hiddenMode = true;
+    // свой контекст без service worker: в p4 он уже держит этот матч в кэше
+    const ctxH = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: "dark", reducedMotion: "reduce", serviceWorkers: "block" });
+    await ctxH.route("**/*", handleRoute);
+    await ctxH.addInitScript((acc) => { try { localStorage.setItem("account_id", String(acc)); } catch { /* */ } }, ACCOUNT);
+    const ph = await ctxH.newPage();
+    ph.on("pageerror", (e) => errors.push(`pickhidden pageerror: ${e.message}`));
+    try {
+      await ph.goto(`${BASE}/index.html?match=${match.match_id}`);
+      await ph.waitForSelector("h1:has-text('Каким героем')", { timeout: 20000 });
+      const n = await ph.locator(".match-item").count();
+      if (n !== 2) throw new Error(`скрытых героев ${n} вместо 2`);
+      await ph.locator(".match-item").first().click();
+      await ph.waitForSelector(".hero-head", { timeout: 20000 });
+      // второй заход — без вопроса, выбор запомнен
+      await ph.goto(`${BASE}/index.html?match=${match.match_id}`);
+      await ph.waitForSelector(".hero-head", { timeout: 20000 });
+    } finally {
+      hiddenMode = false;
+      await ctxH.close();
+    }
+  });
+  hiddenMode = false;
   // свежая катка, которой OpenDota ещё не знает: не «Такого матча нет», а ожидание с проверкой
   await step("missing", async () => {
     await p4.goto(`${BASE}/index.html?match=8999999999`);
