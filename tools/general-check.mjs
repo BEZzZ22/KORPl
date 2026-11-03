@@ -110,7 +110,7 @@ function scanStrings(obj, path, out, seen = new Set()) {
     else scanStrings(v, `${path}.${k}`, out, seen);
   }
 }
-const uiCandidates = [];
+const uiCandidates = [], hiddenRuns = [];
 const stats = { matches: 0, players: 0, lite: 0, full: 0, missing: 0, anon: 0, ms: [] };
 for (const [id, tag] of sample) {
   const r = await raw(`${API}/matches/${id}`);
@@ -150,7 +150,10 @@ for (const [id, tag] of sample) {
   }
   console.log(line);
   for (const e of errs) bad(`движок ${id}`, e);
-  if (open.length) uiCandidates.push({ id, tag, lite, account: open[Math.floor(Math.random() * open.length)].account_id, mode: match.game_mode });
+  // duration 0 — у OpenDota запись есть, но катка не досчитана (ливы/ремейки): приложение честно пишет «Ищу катку», это не баг
+  if (open.length && match.duration) uiCandidates.push({ id, tag, lite, account: open[Math.floor(Math.random() * open.length)].account_id, mode: match.game_mode });
+  // скрытые игроки в матче: прогон «профиль скрыт» — аккаунт привязан, в матче его не видно, выбирает героя
+  if (match.duration && open.length < match.players.length && !hiddenRuns.length) hiddenRuns.push({ id, tag, lite, account: 123456, mode: match.game_mode, how: "hidden" });
 }
 stats.ms.sort((a, b) => a - b);
 console.log(`\nДВИЖОК: матчей ${stats.matches} (полных ${stats.full}, без реплея ${stats.lite}, не нашлось ${stats.missing}), разборов ${stats.players}, скрытых профилей ${stats.anon}, время разбора медиана ${stats.ms[stats.ms.length >> 1] || 0} мс, макс ${stats.ms[stats.ms.length - 1] || 0} мс`);
@@ -212,6 +215,7 @@ async function uiRun() {
   const picks = uiCandidates.filter((c) => c.tag !== "старый").slice(0, Math.ceil(N_UI / 2));
   for (const c of picks) runs.push({ ...c, how: "home" });
   for (const c of uiCandidates.filter((x) => !picks.includes(x)).slice(0, N_UI - picks.length)) runs.push({ ...c, how: "link" });
+  runs.push(...hiddenRuns);
   const times = [];
   for (const run of runs) {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, locale: "ru-RU", serviceWorkers: "block", reducedMotion: "reduce" });
@@ -245,7 +249,7 @@ async function uiRun() {
     const errs = [];
     page.on("pageerror", (e) => errs.push(`pageerror: ${e.message}`));
     page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource|net::ERR/.test(m.text())) errs.push(`console: ${m.text().slice(0, 200)}`); });
-    const label = `приложение ${run.how === "home" ? "главная→катка" : "ссылка"} ${run.id} (${run.tag})`;
+    const label = `приложение ${run.how === "home" ? "главная→катка" : run.how === "hidden" ? "скрытый профиль" : "ссылка"} ${run.id} (${run.tag})`;
     const t0 = Date.now();
     try {
       if (run.how === "home") {
@@ -260,6 +264,12 @@ async function uiRun() {
         }
       } else {
         await page.goto(`${BASE}/?match=${run.id}`);
+        if (run.how === "hidden") {
+          // ждём реплей так же, как в обычной ссылке, потом выбор героя
+          const q = await page.waitForSelector("h1:has-text('Каким героем'), p.display:has-text('Реплей разбирается'), .error", { timeout: 60000 });
+          if (/Реплей/.test(await q.innerText())) await page.waitForSelector("h1:has-text('Каким героем'), .error", { timeout: 60000 });
+          await page.locator(".match-item").first().click();
+        }
       }
       // ждём разбор, ошибку или «Реплей разбирается»; на последнем жмём «Показать быстрый разбор» — как живой человек
       const first = await page.waitForSelector(".hero-head, .error, h1:has-text('не твоя'), h1:has-text('Привяжи'), p.display:has-text('Реплей разбирается')", { timeout: 60000 });

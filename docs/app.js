@@ -706,6 +706,8 @@ function hiddenMatchesCard(account) {
     ),
     btn,
     status,
+    // разбор скрытой катки уже работает: по ID приложение спросит, каким героем играл (pickHidden)
+    h("p", { class: "small muted" }, "Разобрать катку можно и сейчас: вставь её ID в поле «ID матча» сверху (он есть в Доте в истории матчей) и выбери своего героя."),
   );
 }
 
@@ -1524,6 +1526,8 @@ function pickHidden(matchId, match, hidden, accountId, demo) {
     return h("button", { type: "button", class: `match-item ${won ? "win" : "loss"}`, onclick: () => {
       if (stale(seq)) return;
       haptic("medium"); step("pick_hidden_ok");
+      // реплей уже ждали до этого экрана: второй раз крутилку не показываем
+      if (!isParsed(match)) liteNow.add(matchId);
       go(matchScreen, matchId, p.player_slot, accountId, 0, demo);
     } },
     h("div", { class: "row" }, heroImg(p.hero_id),
@@ -1546,7 +1550,8 @@ async function notYourMatch(matchId, slot = null, demo = false) {
   const seq = navSeq;
   const saved = Number(await storage.get("account_id"));
   if (stale(seq)) return;
-  const reopen = () => navRoot("match", matchScreen, matchId, slot, null, 0, demo);
+  // реплей уже ждали до этого экрана: после привязки сразу разбор, без второй крутилки (разобранного это не касается)
+  const reopen = () => { liteNow.add(matchId); navRoot("match", matchScreen, matchId, slot, null, 0, demo); };
   // привязан не тот аккаунт (опечатка, второй акк): без этой кнопки человек упирался в «не твоя игра» на каждой катке
   const other = h("div", {});
   render(
