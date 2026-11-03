@@ -112,5 +112,11 @@
   "status": "SEND_TO_USER_INBOX",
   "mode": "inbox",
   "at": "2026-11-03T12:20:55.073878+00:00"
+ },
+ "champs": {
+  "publish_id": "v_inbox_file~v2.7704034201872205846",
+  "status": "SEND_TO_USER_INBOX",
+  "mode": "inbox",
+  "at": "2026-11-03T19:49:40.186923+00:00"
  }
 }
