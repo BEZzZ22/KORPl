@@ -1,0 +1,37 @@
+# Проверка прода после выкатки: живой сайт отдаёт свежую версию приложения, живой воркер знает новые режимы.
+# Только чтение, без секретов. Actions → «Проверка прода» → Run workflow.
+name: Проверка прода
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Сайт
+        run: |
+          want=$(grep -oP 'app\.js\?v=\K[0-9]+' docs/index.html)
+          for i in $(seq 1 20); do
+            got=$(curl -s "https://bezzz22.github.io/KORPl/index.html?nc=$RANDOM" | grep -oP 'app\.js\?v=\K[0-9]+' || true)
+            [ "$got" = "$want" ] && break; sleep 15
+          done
+          echo "версия приложения: в репо $want, на сайте $got"; [ "$got" = "$want" ] || exit 1
+          curl -s "https://bezzz22.github.io/KORPl/app.js?v=$want" | grep -q "function matchAccess" && echo "замок вкладок в app.js: есть" || { echo "замка в app.js нет"; exit 1; }
+          for p in pay.html oferta.html; do curl -s "https://bezzz22.github.io/KORPl/$p" | grep -q "Первый" && echo "$p: новые условия" || { echo "$p: старый текст"; exit 1; }; done
+      - name: Воркер
+        run: |
+          U=$(grep -oP 'COACH_URL = "\K[^"]+' docs/app.js | head -1)
+          ask() { curl -s -X POST "$U" -H "Origin: https://bezzz22.github.io" -H "Content-Type: application/json" -d "$1" -w '\n%{http_code}'; }
+          # без подписи Телеграма: новый воркер — 403 «открой в Телеграме», старый не знал open и отвечал 400 «Не понял сводку»
+          r=$(ask '{"mode":"open","match_id":9000000001,"initData":""}'); echo "open без Телеграма: $(echo "$r" | tail -1) $(echo "$r" | head -1)"
+          [ "$(echo "$r" | tail -1)" = "403" ] || exit 1
+          r=$(ask '{"mode":"open","match_id":9000000001,"initData":"user=%7B%22id%22%3A1%7D&auth_date=1&hash=00"}'); echo "open с поддельной подписью: $(echo "$r" | tail -1)"
+          [ "$(echo "$r" | tail -1)" = "403" ] || exit 1
+          r=$(ask '{"mode":"wallet","initData":""}'); echo "wallet без Телеграма: $(echo "$r" | tail -1)"
+          [ "$(echo "$r" | tail -1)" = "403" ] || exit 1

@@ -1665,18 +1665,25 @@ function analysisScreen(a) {
     fill(shell, i);
     return shell;
   };
+  // открытая сейчас вкладка перерисовывается на месте; остальные соберутся заново при выборе — уже в документе,
+  // иначе карта и графики меряли бы себя вне экрана (ширина 0)
+  const refresh = () => {
+    for (const [shell, i] of shells.splice(0)) {
+      if (shell.isConnected) { shells.push([shell, i]); fill(shell, i); } else if (pages.get(i) === shell) pages.delete(i);
+    }
+  };
   a._unlock = () => {
     if (a._accessResult && a._accessResult.full) return;
     a._accessResult = { full: true };
     a._access = Promise.resolve(a._accessResult);
     tabs.querySelectorAll(".tab.locked").forEach((x) => x.classList.remove("locked"));
-    shells.forEach(([shell, i]) => fill(shell, i));
+    refresh();
   };
   access.then((r) => {
     if (a._accessResult) return;
     a._accessResult = r;
     if (!r.full) [...tabs.querySelectorAll(".tab")].forEach((t, j) => { if (!FREE_TABS.has(TABS[j][0])) t.classList.add("locked"); });
-    shells.forEach(([shell, i]) => fill(shell, i));
+    refresh();
   });
   const select = (i) => {
     if (i === index) return;
@@ -2498,6 +2505,7 @@ function chatBlock(a) {
         history: before.map((m) => ({ role: m.role, text: String(m.text || "").slice(0, 900) })), question: q, initData: (tg && tg.initData) || "" });
       if (!data.text) throw Object.assign(new Error("Тренер сейчас недоступен."), { fromCoach: true });
       if (data.wallet) walletState = { ...walletState, ...data.wallet };
+      if (a._unlock) a._unlock(); // чат открыл матч — вкладки тоже
       note.textContent = Number.isInteger(data.left) && data.left < 5 ? chatLeftText(data.left) : "";
       history = [...history, { role: "assistant", text: data.text }].slice(-CHAT_KEEP);
       safeLocal.set(chatKey(a), JSON.stringify(history));
