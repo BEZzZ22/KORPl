@@ -1153,6 +1153,12 @@ body.gated .tabbar { display: none; }
 .paywall-sub { font: 500 12px/1.2 var(--sans); color: var(--muted); }
 .paywall-price { margin-top: 6px; font: 800 18px/1 var(--sans); display: inline-flex; align-items: center; gap: 4px; }
 .ic-star { width: 16px; height: 16px; fill: var(--aegis); stroke: none; }
+/* замок на платных вкладках разбора (первый матч бесплатно, дальше подписка) */
+.ic-lock { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
+.tab.locked:not(.active) { opacity: .45; }
+.locked-tab { padding: 16px; }
+.locked-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font: 800 16px/1.25 var(--sans); color: var(--text); }
+.locked-tab .coach-btn { margin: 4px 0 10px; }
 .grow-row b { display: inline-flex; align-items: center; gap: 4px; }
 .ic-flame { width: 20px; height: 20px; fill: none; stroke: var(--warn, #f0a848); stroke-width: 1.8; stroke-linejoin: round; }
 .paywall-pack:disabled { opacity: 0.6; }

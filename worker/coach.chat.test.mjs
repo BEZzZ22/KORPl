@@ -983,3 +983,37 @@ test("подписка на уведомление сразу шлёт заяв�
   assert.equal((await worker.fetch(req({ mode: "watch", match_id: 9072082096, initData: init }), e)).status, 200);
   assert.ok(calls.some((c) => c.who === "od" && c.url.includes("/request/9072082096")));
 });
+
+test("полный разбор: первый матч сам открывается бесплатно, второй — замок, пакет только по кнопке, подписка сама", async (t) => {
+  t.after(restore);
+  mockFetch({});
+  const kv = fakeKV();
+  const e = { ...env, COACH_KV: kv, BOT_TOKEN: "123:abc", OWNER_TG_IDS: "7", RATE_PER_MIN: "1000" };
+  const now = String(Math.floor(Date.now() / 1000));
+  const user = await signInit({ auth_date: now, user: JSON.stringify({ id: 8 }) }, "123:abc");
+  const boss = await signInit({ auth_date: now, user: JSON.stringify({ id: 7 }) }, "123:abc");
+  const open = async (init, match, auto = true) => (await worker.fetch(req({ mode: "open", match_id: 9000000000 + match, auto, initData: init }), e)).json();
+  assert.equal((await worker.fetch(req({ mode: "open", match_id: 5, initData: user }), e)).status, 400);
+  const first = await open(user, 1);
+  assert.equal(first.full, true);
+  assert.equal(first.how, "free");
+  // тот же матч снова — открыт, ничего не списывается; тренер по нему тоже не платит
+  assert.equal((await open(user, 1)).how, "open");
+  assert.equal(await kv.get("unl:8:m9000000001"), "0");
+  // второй матч: бесплатный уже был — замок
+  const second = await open(user, 2);
+  assert.equal(second.full, false);
+  assert.equal(second.wallet.free_left, 0);
+  // разборы из пакета сами не списываются, только по кнопке
+  await kv.put("wallet:8", JSON.stringify({ c: 2, until: 0, free: 1, d: "", n: 0 }));
+  assert.equal((await open(user, 2)).full, false);
+  const paid = await open(user, 2, false);
+  assert.equal(paid.full, true);
+  assert.equal(paid.how, "credit");
+  assert.equal(JSON.parse(await kv.get("wallet:8")).c, 1);
+  // подписка открывает сама
+  await kv.put("wallet:8", JSON.stringify({ c: 0, until: Date.now() + 86400000, free: 1, d: "", n: 0 }));
+  assert.equal((await open(user, 3)).how, "sub");
+  // владелец всегда открыт
+  assert.equal((await open(boss, 4)).full, true);
+});

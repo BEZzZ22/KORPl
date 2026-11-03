@@ -126,6 +126,12 @@ function coach(body) {
   if (raw.mode === "wallet") return { credits: pay.paid ? 10 : 0, free_left: 0, until: 0, sub_left: 0, packs: PACKS, cards: true, streak: 4, streak_today: false, ref_link: "https://t.me/DotaRazbor_bot?startapp=r1", ref_n: 2 };
   if (raw.mode === "pay_link") return { url: "https://bezzz22.github.io/KORPl/pay.html#t=8.9999999999.Ax.axel.0123456789abcdef0123456789abcdef" };
   if (raw.mode === "buy") return { link: `https://t.me/$inv_${raw.pack}` };
+  // открыть матч целиком: шаг «lock» — бесплатный матч уже был (замок до «оплаты»), шаг «first» — первый матч
+  if (raw.mode === "open") {
+    if (pay.first) return { full: true, how: "free" };
+    if (pay.lock && !pay.paid) return { full: false, wallet: { credits: 0, free_left: 0, until: 0, sub_left: 0, packs: PACKS, cards: true } };
+    return { full: true, how: pay.lock ? "credit" : "open" };
+  }
   if (pay.on && !pay.paid) return { __status: 402, error: "Бесплатные разборы тренера закончились. Возьми пакет или подписку, и тренер продолжит.", paywall: true, wallet: { credits: 0, free_left: 0, until: 0, sub_left: 0, packs: PACKS, cards: true } };
   return { text: COACH_TEXT, ...(pay.on ? { wallet: { credits: 9, free_left: 0, until: 0, sub_left: 0, packs: PACKS } } : {}) };
 }
@@ -147,7 +153,7 @@ const PLACEHOLDER = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAA
 const errors = [];
 const cardSizes = [];
 let gateCalls = 0;
-const pay = { on: false, paid: false };
+const pay = { on: false, paid: false, lock: false, first: false };
 // запросы из service worker тоже идут через подмену, иначе офлайн-проверка зависит от живой OpenDota
 process.env.PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS = "1";
 const browser = await chromium.launch({ headless: !process.env.UI_HEADED, ...(process.env.PW_EXEC ? { executablePath: process.env.PW_EXEC } : {}) });
@@ -665,6 +671,33 @@ if (!only || only.has("paywall")) {
     await p8.waitForSelector(".coach-moment", { timeout: 15000 });
     if (!/inv_p10/.test(await p8.evaluate(() => window.__invoice || ""))) throw new Error("счёт не открылся");
     if (await p8.locator(".paywall").count()) throw new Error("после оплаты пейвол не убрался");
+  });
+  // со второго матча без подписки: «Обзор» и «Кто слил» открыты, остальные вкладки под замком до оплаты
+  await step("lock", async () => {
+    Object.assign(pay, { on: false, paid: false, lock: true });
+    await p8.goto(`${BASE}/index.html?match=${match.match_id}`);
+    await p8.waitForSelector(".tab.locked", { timeout: 20000 });
+    const locks = await p8.locator(".tab.locked").count();
+    if (locks !== 5) throw new Error(`замков на вкладках ${locks}, ждали 5`);
+    await p8.locator(".tab", { hasText: "Кто слил" }).click();
+    if (await p8.locator(".locked-tab").count()) throw new Error("«Кто слил» под замком");
+    await p8.locator(".tab", { hasText: "Фазы" }).click();
+    await p8.waitForSelector(".locked-tab .paywall-pack", { timeout: 10000 });
+    const file = join(OUT, `${String(shots.length + 1).padStart(2, "0")}-lock.png`);
+    await p8.screenshot({ path: file, fullPage: true });
+    shots.push(file);
+    await p8.locator(".locked-tab .paywall-pack").first().click();
+    await p8.waitForFunction(() => !document.querySelector(".locked-tab") && !document.querySelector(".tab.locked"), null, { timeout: 15000 });
+    Object.assign(pay, { paid: false, lock: false });
+  });
+  // первый матч: всё открыто, тренер стартует сам, кнопку жать не надо
+  await step("first", async () => {
+    Object.assign(pay, { on: false, paid: false, first: true });
+    await p8.evaluate(() => { for (const k of Object.keys(localStorage)) if (k.startsWith("coach")) localStorage.removeItem(k); });
+    await p8.goto(`${BASE}/index.html?match=${match.match_id}`);
+    await p8.waitForSelector(".coach-moment", { timeout: 20000 });
+    if (await p8.locator(".tab.locked").count()) throw new Error("на первом матче замки");
+    Object.assign(pay, { first: false });
   });
   // вкладка «Бонусы»: заметный вход на главной, серия дней и «позвать друга» со своей ссылкой
   await step("grow", async () => {

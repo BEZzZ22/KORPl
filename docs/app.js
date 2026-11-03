@@ -1580,6 +1580,65 @@ const ALL_TABS = [
   ["Графики", chartsTab],
 ];
 
+// С 03.11 (решение Ярика): первый матч целиком бесплатно, дальше бесплатны «Обзор» и «Кто слил»,
+// остальные вкладки и тренер — по подписке или пакету. Открытие матча — та же единица, что у тренера (worker/pay.js)
+const FREE_TABS = new Set(["Обзор", "Кто слил"]);
+const lockIcon = () => svg("svg", { class: "ic-lock", viewBox: "0 0 24 24", "aria-hidden": "true" },
+  svg("rect", { x: "5", y: "11", width: "14", height: "9", rx: "2" }), svg("path", { d: "M8 11V8a4 4 0 0 1 8 0v3" }));
+
+// { full, how, wallet, limit }: открыт ли матч целиком. Пример, быстрый разбор и вне Телеграма — без замка;
+// воркер не ответил — тоже открываем: из-за сети человек не должен упираться в оплату
+function matchAccess(a) {
+  if (a._access) return a._access;
+  const id = Number(a.facts && a.facts.match_id);
+  if (!COACH_URL || a.demo || a.lite || !tg || !tg.initData || !(id > 1e6)) return (a._access = Promise.resolve({ full: true }));
+  const once = () => postCoach({ mode: "open", match_id: id, auto: true, initData: tg.initData }, 15000);
+  a._access = once()
+    .then((r) => (r.busy ? new Promise((ok) => setTimeout(ok, 2500)).then(once) : r))
+    .then((r) => {
+      if (r.wallet) walletState = { ...walletState, ...r.wallet };
+      if (r.off || r.busy) return { full: true };
+      if (!r.full) { track("lock"); step("lock"); }
+      return r;
+    })
+    .catch(() => ({ full: true }));
+  return a._access;
+}
+
+// Закрытая вкладка: что даёт подписка и как открыть этот матч
+function lockedTab(a, onOpen) {
+  const w = walletState || {};
+  const status = h("p", { class: "small muted", role: "status" });
+  const box = h("div", { class: "card locked-tab" },
+    h("div", { class: "locked-head" }, lockIcon(), h("b", {}, "Полный разбор — по подписке")),
+    h("p", { class: "small muted" }, "Первый матч был целиком бесплатным. Дальше фазы, смерти, карта, сборка, графики и тренер — по подписке или пакету, а обзор и «Кто слил» бесплатны всегда."),
+    status);
+  const openNow = async (btn) => {
+    if (btn) btn.disabled = true;
+    status.textContent = "Открываю матч…";
+    try {
+      const r = await postCoach({ mode: "open", match_id: Number(a.facts.match_id), auto: false, initData: tg.initData }, 15000);
+      if (r.wallet) walletState = { ...walletState, ...r.wallet };
+      if (r.full || r.off) { haptic("heavy"); onOpen(); return; }
+      if (r.limit) { status.textContent = r.limit; return; }
+      status.textContent = "";
+      box.append(paywallBlock(() => openNow(), "Чтобы открыть этот матч целиком, возьми подписку или пакет.", false));
+    } catch (e) {
+      status.textContent = coachError(e);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  };
+  const access = a._accessResult || {};
+  if (access.limit) status.textContent = access.limit;
+  else if (w.credits > 0) {
+    const btn = h("button", { class: "coach-btn", type: "button" }, `Открыть этот матч: на счету ${w.credits} ${plural(w.credits, "разбор", "разбора", "разборов")}`);
+    btn.onclick = () => { haptic(); openNow(btn); };
+    box.insertBefore(btn, status);
+  } else box.append(paywallBlock(() => openNow(), "Открой полный разбор этого и следующих матчей.", false));
+  return box;
+}
+
 function analysisScreen(a) {
   step("analysis");
   if (!a.demo) step("match_real"); // серия дней и бонус по приглашению (воркер, worker/growth.js)
@@ -1592,13 +1651,40 @@ function analysisScreen(a) {
   const pages = new Map();
   // без реплея есть только итоги матча: фазы, смерти, карта и графики пустые — эти вкладки не показываем
   const TABS = a.lite ? ALL_TABS.filter(([name]) => name === "Обзор" || name === "Сборка") : ALL_TABS;
+  // платные вкладки: пока воркер отвечает — «проверяю», закрыт матч — замок, открыли — настоящая вкладка
+  const access = matchAccess(a);
+  const shells = [];
+  const fill = (shell, i) => {
+    if (a._accessResult && !a._accessResult.full) shell.replaceChildren(lockedTab(a, () => a._unlock()));
+    else if (a._accessResult) shell.replaceChildren(TABS[i][1](a));
+  };
+  const build = (i) => {
+    if (FREE_TABS.has(TABS[i][0])) return TABS[i][1](a);
+    const shell = h("div", {}, h("p", { class: "muted small" }, "Проверяю доступ…"));
+    shells.push([shell, i]);
+    fill(shell, i);
+    return shell;
+  };
+  a._unlock = () => {
+    if (a._accessResult && a._accessResult.full) return;
+    a._accessResult = { full: true };
+    a._access = Promise.resolve(a._accessResult);
+    tabs.querySelectorAll(".tab.locked").forEach((x) => x.classList.remove("locked"));
+    shells.forEach(([shell, i]) => fill(shell, i));
+  };
+  access.then((r) => {
+    if (a._accessResult) return;
+    a._accessResult = r;
+    if (!r.full) [...tabs.querySelectorAll(".tab")].forEach((t, j) => { if (!FREE_TABS.has(TABS[j][0])) t.classList.add("locked"); });
+    shells.forEach(([shell, i]) => fill(shell, i));
+  });
   const select = (i) => {
     if (i === index) return;
     const dir = index < 0 ? 0 : Math.sign(i - index);
     index = i;
     [...tabs.querySelectorAll(".tab")].forEach((t, j) => { t.classList.toggle("active", i === j); t.setAttribute("aria-selected", String(i === j)); });
     // страницы строим один раз и держим в памяти: переключение мгновенное
-    if (!pages.has(i)) pages.set(i, TABS[i][1](a));
+    if (!pages.has(i)) pages.set(i, build(i));
     const page = pages.get(i);
     page.classList.remove("slide-from-right", "slide-from-left", "fade-in");
     void page.offsetWidth;
@@ -1694,14 +1780,14 @@ function refLink() {
 }
 
 const GIFT_ICON = () => svg("svg", { viewBox: "0 0 24 24" }, svg("path", { d: NAV_ICONS.bonus }));
-const REF_TEXT = "Разбирает твои катки в Доте: кто слил, ошибки по таймкодам, повтор на карте. Заходи по ссылке — дадут бесплатный разбор ИИ-тренера.";
+const REF_TEXT = "Разбирает твои катки в Доте: кто слил, ошибки по таймкодам, повтор на карте. Заходи по ссылке — дадут бесплатный полный разбор с ИИ-тренером.";
 
 // Главная: заметный вход во вкладку «Бонусы» (иконку в профиле никто не находил)
 function bonusEntry() {
   if (!tg || !tg.initData || !COACH_URL) return null;
   return h("button", { class: "draft-entry bonus-entry", type: "button", onclick: () => { haptic(); step("bonus_home"); goTab("bonus"); } },
     h("span", { class: "de-icon", "aria-hidden": "true" }, GIFT_ICON()),
-    h("div", { class: "grow" }, h("b", {}, "Бонусы: бесплатные разборы тренера"), h("span", {}, "Позови друга или держи серию — разбор в подарок")));
+    h("div", { class: "grow" }, h("b", {}, "Бонусы: бесплатные полные разборы"), h("span", {}, "Позови друга или держи серию — разбор в подарок")));
 }
 
 // Профиль: короткая ссылка на «Бонусы» вместо целого блока
@@ -2007,9 +2093,9 @@ function walletLine(w) {
   if (!w) return "";
   if (w.owner) return "Для тебя тренер бесплатный.";
   if (w.until) return `Подписка до ${dateRu(w.until)}, сегодня ${plural(w.sub_left, "остался", "осталось", "осталось")} ${w.sub_left} ${plural(w.sub_left, "разбор", "разбора", "разборов")}.`;
-  if (w.free_left) return `${plural(w.free_left, "Бесплатный", "Бесплатных", "Бесплатных")}: ${w.free_left} ${plural(w.free_left, "разбор", "разбора", "разборов")}, потом по пакету или подписке.`;
-  if (w.credits) return `На счету ${w.credits} ${plural(w.credits, "разбор", "разбора", "разборов")} тренера.`;
-  return "Бесплатные разборы закончились: тренер по пакету или подписке.";
+  if (w.free_left) return "Первый матч целиком бесплатно, дальше тренер по пакету или подписке.";
+  if (w.credits) return `На счету ${w.credits} ${plural(w.credits, "полный разбор", "полных разбора", "полных разборов")}.`;
+  return "Бесплатный матч уже был: тренер по пакету или подписке.";
 }
 
 // Звезда Телеграма линией, а не эмодзи: эмодзи на разных телефонах рисуются по-разному и выглядят дёшево
@@ -2019,7 +2105,7 @@ const flameIcon = () => svg("svg", { class: "ic-flame", viewBox: "0 0 24 24", "a
   svg("path", { d: "M12 21c-3.6 0-6-2.4-6-5.6 0-3.3 2.4-5 3.6-7.9.4 1.6 1.3 2.6 2.4 3.1C12 7.5 13 5 15 3c.3 3 3 5.4 3 9.6C18 18 15.6 21 12 21Z" }));
 
 // Покупка: счёт от воркера, оплата в окне Телеграма. onPaid — когда звёзды дошли и кошелёк обновился
-function paywallBlock(onPaid, text = "Бесплатные разборы тренера закончились.") {
+function paywallBlock(onPaid, text = "Бесплатный разбор уже был.", about = true) {
   const status = h("p", { class: "small muted", role: "status" });
   const packs = (walletState && walletState.packs) || [];
   const buy = async (pack, btn) => {
@@ -2054,8 +2140,8 @@ function paywallBlock(onPaid, text = "Бесплатные разборы тре
   };
   const packBtn = (p) => {
     const btn = h("button", { class: `paywall-pack${p.days ? " best" : ""}`, type: "button" },
-      h("b", {}, p.days ? "Месяц тренера" : `${p.credits} ${plural(p.credits, "разбор", "разбора", "разборов")}`),
-      h("span", { class: "paywall-sub" }, p.days ? "до 10 разборов в сутки" : "не сгорают"),
+      h("b", {}, p.days ? "Месяц полного разбора" : `${p.credits} ${plural(p.credits, "полный разбор", "полных разбора", "полных разборов")}`),
+      h("span", { class: "paywall-sub" }, p.days ? "до 10 матчей в сутки" : "не сгорают"),
       h("span", { class: "paywall-price" }, `${p.stars}`, starIcon()));
     btn.onclick = () => { haptic(); buy(p, btn); };
     return btn;
@@ -2081,7 +2167,7 @@ function paywallBlock(onPaid, text = "Бесплатные разборы тре
   };
   return h("div", { class: "paywall" },
     h("p", { class: "paywall-title" }, text),
-    h("p", { class: "small muted" }, "Разбор катки, карта и «Кто слил» остаются бесплатными. Платный только ИИ-тренер: разбор моментов, задачи, чат и сравнение каток."),
+    about && h("p", { class: "small muted" }, "Обзор матча и «Кто слил» бесплатные всегда. По подписке или пакету — матч целиком: фазы, смерти, карта, сборка, графики и ИИ-тренер с чатом."),
     packBox,
     card,
     status,
@@ -2322,6 +2408,7 @@ function coachBlock(a) {
       }
       if (!data.text) throw Object.assign(new Error("Тренер сейчас недоступен."), { fromCoach: true });
       if (data.wallet) walletState = { ...walletState, ...data.wallet };
+      if (a._unlock) a._unlock(); // тренер открыл матч — вкладки тоже
       safeLocal.set(key, data.text);
       safeLocal.set(`${key}:by`, data.opus ? "opus" : "fast");
       show(data.text, true);
@@ -2342,6 +2429,8 @@ function coachBlock(a) {
     }
   };
   box.append(title, ask, note);
+  // первый (бесплатный) матч: тренер стартует сам, искать кнопку не надо — до тренера доходили 2 из 21
+  matchAccess(a).then((r) => { if (r.how === "free" && box.isConnected && !ask.disabled && !wall) { track("coach_auto"); ask.click(); } });
   return box;
 }
 
