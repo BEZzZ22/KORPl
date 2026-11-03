@@ -249,6 +249,78 @@ async def discover():
     print(f"Площадок в базе: {len(known)}, с контактом по рекламе: {sum(1 for v in known.values() if v.get('contacts'))}")
 
 
+async def expand():
+    """Только чтение: «похожие каналы» от каждого Дота-канала из базы + контакты админов из закрепа и последних постов."""
+    import re
+    import time
+    from telethon.tl.functions.channels import GetChannelRecommendationsRequest, GetFullChannelRequest
+    from telethon.tl.types import Channel
+
+    c = await connected()
+    known = json.loads(TARGETS.read_text(encoding="utf-8")) if TARGETS.exists() else {}
+    stop = time.time() + int(os.environ.get("EXPAND_MIN", "25")) * 60
+
+    async def add(ch):
+        full = await c(GetFullChannelRequest(ch))
+        about = full.full_chat.about or ""
+        known[ch.username] = {"title": ch.title, "kind": "group" if ch.megagroup else "channel",
+                              "members": full.full_chat.participants_count, "about": about[:600],
+                              "contacts": contacts_in(about)}
+
+    new = 0
+    for name in [k for k, v in known.items() if is_dota(v) and not v.get("rec") and "error" not in v]:
+        if time.time() > stop:
+            break
+        try:
+            res = await c(GetChannelRecommendationsRequest(channel=await c.get_input_entity(name)))
+            for ch in res.chats:
+                if isinstance(ch, Channel) and ch.username and ch.username not in known:
+                    try:
+                        await add(ch)
+                        new += 1
+                    except Exception as e:
+                        known[ch.username] = {"title": ch.title, "error": type(e).__name__}
+                    await asyncio.sleep(2)
+        except Exception as e:
+            print(f"похожие: {type(e).__name__}")
+            if "Flood" in type(e).__name__:
+                break
+        known[name]["rec"] = 1
+        await asyncio.sleep(3)
+    print(f"Новых площадок через «похожие»: {new}")
+
+    found = 0
+    for name, v in sorted(known.items(), key=lambda kv: kv[1].get("members") or 0):
+        if time.time() > stop:
+            break
+        if "error" in v or v.get("contacts") or v.get("scanned") or not is_dota(v) or not 100 <= (v.get("members") or 0) <= 5000:
+            continue
+        try:
+            text = []
+            async for m in c.iter_messages(name, limit=20):
+                text.append(text_of(m))
+            from telethon.tl.types import InputMessagesFilterPinned
+            pin = await c.get_messages(name, limit=3, filter=InputMessagesFilterPinned)
+            text += [text_of(m) for m in pin]
+            blob = "\n".join(text)
+            cont = contacts_in(blob)
+            cont += [u for u in re.findall(r"(?:реклам|сотрудн|по вопросам|админ)[^\n]{0,40}?@([A-Za-z0-9_]{5,32})", blob, re.I)]
+            cont = [u for u in dict.fromkeys(cont) if u.lower() != name.lower() and not u.lower().endswith("bot")]
+            v["contacts"] = cont[:3]
+            found += bool(cont)
+        except Exception as e:
+            print(f"посты: {type(e).__name__}")
+            if "Flood" in type(e).__name__:
+                break
+        v["scanned"] = 1
+        await asyncio.sleep(2)
+    print(f"Нашёл контакты в постах: {found}")
+    await c.disconnect()
+    TARGETS.write_text(json.dumps(known, ensure_ascii=False, indent=1), encoding="utf-8")
+    small = [k for k, v in known.items() if is_dota(v) and v.get("contacts") and 100 <= (v.get("members") or 0) <= 5000]
+    print(f"Всего в базе: {len(known)}, мелких Дота-площадок с контактом: {len(small)}")
+
+
 async def send():
     """Шлёт письма из очереди promo/outreach.json — только людям (админам и контактам по рекламе), не в группы и каналы."""
     import datetime
@@ -848,7 +920,7 @@ if __name__ == "__main__":
         act = "main_login"  # код вбит в поле — значит, это вход, даже если action забыли переключить
     if act == "code":
         asyncio.run(send_code())
-    elif act in ("discover", "send", "inbox", "folder", "test", "join", "fix", "mute", "main_code", "main_login", "main_whoami", "main_qr", "main_join", "main_post", "listen", "forget"):
+    elif act in ("discover", "send", "inbox", "folder", "test", "join", "fix", "mute", "main_code", "main_login", "main_whoami", "main_qr", "main_join", "main_post", "listen", "forget", "expand"):
         asyncio.run(globals()[act]())
     elif act == "setup":
         asyncio.run(setup())
