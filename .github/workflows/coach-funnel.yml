@@ -1,0 +1,33 @@
+# Воронка платного тренера: сколько упёрлись в оплату, сколько оплатили, сколько разборов на счетах.
+# Только чтение D1. Репо публичный: печатаются только числа, без имён и id. Владелец (OWNER_TG_IDS) не считается.
+name: Воронка тренера
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  funnel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Воронка
+        run: |
+          d1() { npx --yes wrangler@4 d1 execute dotacoach --remote --json --command "$1" 2>/dev/null; }
+          d1 "SELECT k FROM kv WHERE k LIKE 'seen:%'" > seen.json
+          d1 "SELECT k, meta FROM kv WHERE k LIKE 'act:%'" > act.json
+          d1 "SELECT k, v FROM kv WHERE k LIKE 'wallet:%'" > wallet.json
+          d1 "SELECT k, meta FROM kv WHERE k LIKE 'paid:%'" > paid.json
+          d1 "SELECT k, v FROM kv WHERE k LIKE 'refn:%'" > refn.json
+          d1 "SELECT k FROM kv WHERE k LIKE 'streakprize:%'" > prize.json
+          owners=$(grep -oP 'OWNER_TG_IDS\s*=\s*"\K[^"]+' worker/wrangler.toml)
+          python3 tools/coach_funnel.py seen.json act.json wallet.json paid.json refn.json prize.json "$owners"
