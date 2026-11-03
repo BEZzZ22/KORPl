@@ -1391,31 +1391,8 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false, 
   }
   missTries.delete(matchId);
   const lite = !isParsed(match);
-  if (lite && attempt < PARSE_POLL_MAX && !liteNow.has(matchId)) {
-    if (attempt === 0) step("match_parsing");
-    if (attempt === 0) {
-      requestParse(matchId);
-      watchParse(matchId);
-    }
-    // заявка могла потеряться по дороге: повторяем через воркер
-    if (attempt === 1) requestParse(matchId, true);
-    render(h("div", { class: "center" },
-      h("div", { class: "spinner" }),
-      h("p", { class: "display" }, "Реплей разбирается"),
-      h("p", { class: "small muted" }, "Жду реплей до 30 секунд, потом сразу покажу быстрый разбор, а полный подтянется сам."),
-      watchOk.has(matchId) && h("p", { class: "small muted" }, "Можешь закрыть приложение: бот напишет в Телеграм, когда разбор будет готов."),
-      watchNo.has(matchId) && h("p", { class: "small muted" }, "Сообщения от бота ты не разрешил, поэтому он не напишет. Оставь приложение открытым или загляни сюда через пару минут."),
-      attempt >= 1 && h("button", { type: "button", class: "ghost", onclick: () => {
-        haptic(); liteNow.add(matchId);
-        if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
-        matchScreen(matchId, slot, accountId, PARSE_POLL_MAX, demo);
-      } }, "Показать быстрый разбор сейчас"),
-    ));
-    pollTimer = setTimeout(() => matchScreen(matchId, slot, accountId, attempt + 1, demo), PARSE_POLL_MS);
-    return;
-  }
-  if (lite) step("match_lite");
-
+  // Сначала выясняем, чей это матч, и только потом ждём реплей: иначе скрытый профиль и «не твоя игра»
+  // узнавали об этом через 30 с крутилки (живая проверка 03.11)
   let player = null, saved = 0;
   if (!player && accountId) player = match.players.find((p) => p.account_id === accountId);
   if (!player) {
@@ -1442,6 +1419,31 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false, 
     }
   }
   if (!player) { step("not_yours"); notYourMatch(matchId, slot, demo); return; }
+  if (lite && attempt < PARSE_POLL_MAX && !liteNow.has(matchId)) {
+    if (attempt === 0) step("match_parsing");
+    if (attempt === 0) {
+      requestParse(matchId);
+      watchParse(matchId);
+    }
+    // заявка могла потеряться по дороге: повторяем через воркер
+    if (attempt === 1) requestParse(matchId, true);
+    render(h("div", { class: "center" },
+      h("div", { class: "spinner" }),
+      h("p", { class: "display" }, "Реплей разбирается"),
+      h("p", { class: "small muted" }, "Жду реплей до 30 секунд, потом сразу покажу быстрый разбор, а полный подтянется сам."),
+      watchOk.has(matchId) && h("p", { class: "small muted" }, "Можешь закрыть приложение: бот напишет в Телеграм, когда разбор будет готов."),
+      watchNo.has(matchId) && h("p", { class: "small muted" }, "Сообщения от бота ты не разрешил, поэтому он не напишет. Оставь приложение открытым или загляни сюда через пару минут."),
+      attempt >= 1 && h("button", { type: "button", class: "ghost", onclick: () => {
+        haptic(); liteNow.add(matchId);
+        if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+        matchScreen(matchId, slot, accountId, PARSE_POLL_MAX, demo);
+      } }, "Показать быстрый разбор сейчас"),
+    ));
+    pollTimer = setTimeout(() => matchScreen(matchId, slot, accountId, attempt + 1, demo), PARSE_POLL_MS);
+    return;
+  }
+  if (lite) step("match_lite");
+
 
   // Сравнение с про, нормы героя, матчапы и позиции — дополнения: медленная OpenDota или GitHub не держат разбор.
   // Опоздавший файл позиций всё равно попадёт на «Карту» (берётся из replayCache)
@@ -1527,7 +1529,6 @@ function pickHidden(matchId, match, hidden, accountId, demo) {
       if (stale(seq)) return;
       haptic("medium"); step("pick_hidden_ok");
       // реплей уже ждали до этого экрана: второй раз крутилку не показываем
-      if (!isParsed(match)) liteNow.add(matchId);
       go(matchScreen, matchId, p.player_slot, accountId, 0, demo);
     } },
     h("div", { class: "row" }, heroImg(p.hero_id),
@@ -1551,7 +1552,7 @@ async function notYourMatch(matchId, slot = null, demo = false) {
   const saved = Number(await storage.get("account_id"));
   if (stale(seq)) return;
   // реплей уже ждали до этого экрана: после привязки сразу разбор, без второй крутилки (разобранного это не касается)
-  const reopen = () => { liteNow.add(matchId); navRoot("match", matchScreen, matchId, slot, null, 0, demo); };
+  const reopen = () => { navRoot("match", matchScreen, matchId, slot, null, 0, demo); };
   // привязан не тот аккаунт (опечатка, второй акк): без этой кнопки человек упирался в «не твоя игра» на каждой катке
   const other = h("div", {});
   render(
