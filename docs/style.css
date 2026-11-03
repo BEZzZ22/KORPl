@@ -910,7 +910,7 @@ body { background: transparent; }
 .ds-kind { display: inline-block; padding: 4px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; background: rgba(255, 255, 255, 0.06); color: var(--muted); margin-right: 6px; }
 .ds-kind b { color: var(--text); }
 .ds-kind.solo { background: rgba(242, 85, 90, 0.15); color: #f7a2a5; }
-.ds-kind.fight { background: rgba(157, 140, 255, 0.14); color: #c4b9ff; }
+.ds-kind.fight { background: rgba(240, 168, 72, 0.12); color: #f3c27e; }
 .ds-kind.lane { background: rgba(232, 194, 122, 0.12); color: var(--aegis); }
 .ds-kind.trade { background: rgba(79, 209, 165, 0.12); color: var(--radiant); }
 .ds-kind.fresh { background: rgba(240, 165, 74, 0.15); color: #f0a54a; }
@@ -1151,7 +1151,10 @@ body.gated .tabbar { display: none; }
   font: 700 14px/1.2 var(--sans); border-radius: 12px; background: rgba(255, 255, 255, 0.05); box-shadow: inset 0 0 0 1px var(--line-2); }
 .paywall-pack.best { box-shadow: inset 0 0 0 1.5px var(--gold); background: rgba(255, 200, 80, 0.07); }
 .paywall-sub { font: 500 12px/1.2 var(--sans); color: var(--muted); }
-.paywall-price { margin-top: 6px; font: 800 18px/1 var(--sans); }
+.paywall-price { margin-top: 6px; font: 800 18px/1 var(--sans); display: inline-flex; align-items: center; gap: 4px; }
+.ic-star { width: 16px; height: 16px; fill: var(--aegis); stroke: none; }
+.grow-row b { display: inline-flex; align-items: center; gap: 4px; }
+.ic-flame { width: 20px; height: 20px; fill: none; stroke: var(--warn, #f0a848); stroke-width: 1.8; stroke-linejoin: round; }
 .paywall-pack:disabled { opacity: 0.6; }
 @media (max-width: 340px) { .paywall-packs { grid-template-columns: 1fr; } }
 .paywall-card { width: 100%; margin: 0 0 10px; padding: 12px; font: 700 14px/1.2 var(--sans); color: var(--text); border-radius: 12px;
@@ -1159,7 +1162,7 @@ body.gated .tabbar { display: none; }
 
 /* Вкладка «Бонусы»: вход на главной, баланс, рефералка, серия */
 .tabbtn.has-new::after { content: ""; position: absolute; top: 7px; left: calc(50% + 9px); width: 7px; height: 7px; border-radius: 50%; background: var(--dire, #f0585d); }
-.bonus-entry { box-shadow: inset 0 0 0 1px rgba(230, 184, 88, 0.45); background: linear-gradient(100deg, rgba(230, 184, 88, 0.16), rgba(230, 184, 88, 0.03)); }
+.bonus-entry { box-shadow: inset 0 0 0 1px rgba(230, 184, 88, 0.4); background: rgba(230, 184, 88, 0.07); }
 .bonus-entry b { color: var(--aegis); }
 .bonus-balance { display: flex; align-items: center; gap: 14px; }
 .bonus-balance b { display: block; font-size: 15px; line-height: 1.35; }

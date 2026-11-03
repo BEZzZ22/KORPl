@@ -1709,7 +1709,7 @@ async function bonusScreen() {
       status),
     h("h2", {}, "Серия дней"),
     h("div", { class: "card" },
-      h("div", { class: "grow-row" }, h("b", {}, `🔥 ${n}`), h("span", { class: "small" }, n
+      h("div", { class: "grow-row" }, h("b", {}, flameIcon(), String(n)), h("span", { class: "small" }, n
         ? `${n} ${plural(n, "день", "дня", "дней")} подряд с разборами${w.streak_today ? "" : " — разбери катку сегодня, чтобы серия не сгорела"}.`
         : "Разбирай хотя бы одну катку в день.")),
       h("p", { class: "small muted" }, `Подарок — разбор тренера на ${nextPrize}-й день подряд, дальше каждую неделю.`),
@@ -1772,17 +1772,8 @@ async function renderCard(a) {
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
   };
   ctx.fillStyle = C.ink; ctx.fillRect(0, 0, W, H);
-  glow(W * 0.95, 120, 1000, "rgba(242,85,90,0.30)");
-  glow(80, H - 80, 1100, "rgba(79,209,165,0.26)");
-  ctx.save();
-  ctx.translate(W / 2, H / 2); ctx.rotate(Math.PI / 5);
-  const river = ctx.createLinearGradient(-W, 0, W, 0);
-  river.addColorStop(0, "rgba(90,143,214,0)"); river.addColorStop(0.5, "rgba(90,143,214,0.16)"); river.addColorStop(1, "rgba(90,143,214,0)");
-  // мягкие края реки: размытие там, где браузер его умеет, иначе просто бледная полоса
-  ctx.filter = "blur(36px)";
-  ctx.fillStyle = river; ctx.fillRect(-W * 1.2, -90, W * 2.4, 180);
-  ctx.filter = "none";
-  ctx.restore();
+  // без «нейрослопа»: никаких цветных пятен и диагональной реки — тёмный фон и один еле заметный золотой свет
+  glow(W, 0, 900, "rgba(232,194,122,0.08)");
 
   ctx.fillStyle = C.muted; ctx.font = sans(700, 40);
   ctx.fillText("Разбор катки", P, 210);
@@ -1971,6 +1962,12 @@ function walletLine(w) {
   return "Бесплатные разборы закончились: тренер по пакету или подписке.";
 }
 
+// Звезда Телеграма линией, а не эмодзи: эмодзи на разных телефонах рисуются по-разному и выглядят дёшево
+const starIcon = () => svg("svg", { class: "ic-star", viewBox: "0 0 24 24", "aria-label": "звёзд" },
+  svg("path", { d: "M12 3.5l2.6 5.3 5.9.9-4.25 4.1 1 5.8L12 16.9l-5.25 2.7 1-5.8L3.5 9.7l5.9-.9L12 3.5Z" }));
+const flameIcon = () => svg("svg", { class: "ic-flame", viewBox: "0 0 24 24", "aria-hidden": "true" },
+  svg("path", { d: "M12 21c-3.6 0-6-2.4-6-5.6 0-3.3 2.4-5 3.6-7.9.4 1.6 1.3 2.6 2.4 3.1C12 7.5 13 5 15 3c.3 3 3 5.4 3 9.6C18 18 15.6 21 12 21Z" }));
+
 // Покупка: счёт от воркера, оплата в окне Телеграма. onPaid — когда звёзды дошли и кошелёк обновился
 function paywallBlock(onPaid, text = "Бесплатные разборы тренера закончились.") {
   const status = h("p", { class: "small muted", role: "status" });
@@ -2009,7 +2006,7 @@ function paywallBlock(onPaid, text = "Бесплатные разборы тре
     const btn = h("button", { class: `paywall-pack${p.days ? " best" : ""}`, type: "button" },
       h("b", {}, p.days ? "Месяц тренера" : `${p.credits} ${plural(p.credits, "разбор", "разбора", "разборов")}`),
       h("span", { class: "paywall-sub" }, p.days ? "до 10 разборов в сутки" : "не сгорают"),
-      h("span", { class: "paywall-price" }, `${p.stars} ⭐`));
+      h("span", { class: "paywall-price" }, `${p.stars}`, starIcon()));
     btn.onclick = () => { haptic(); buy(p, btn); };
     return btn;
   };
@@ -3021,8 +3018,7 @@ async function renderBlameCard(a, v) {
   const sans = (w, s) => `${w} ${s}px Manrope, -apple-system, "Segoe UI", sans-serif`;
   const glow = (x, y, r, color) => { const g = ctx.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, color); g.addColorStop(1, "rgba(0,0,0,0)"); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); };
   ctx.fillStyle = C.ink; ctx.fillRect(0, 0, W, H);
-  glow(W, 0, 800, "rgba(242,85,90,0.22)");
-  glow(0, H, 900, "rgba(79,209,165,0.2)");
+  glow(W, 0, 800, "rgba(232,194,122,0.07)");
   const [title] = blameHeadline(v);
   ctx.fillStyle = C.aegis; ctx.font = sans(800, 32); ctx.fillText("КТО СЛИЛ КАТКУ", P, 110);
   ctx.fillStyle = C.text; ctx.font = display(title.length > 22 ? 52 : 64);
