@@ -597,7 +597,9 @@ async def group_post():
     for name in names:
         if posted >= GROUP_MAX:
             break
-        if name in done:
+        force = name.startswith("!")  # "!чат" — пост без проверки правил, только по прямому решению владельца
+        name = name.lstrip("!")
+        if name in done and done[name] != "skip":
             print("уже писали — пропуск")
             continue
         try:
@@ -610,7 +612,7 @@ async def group_post():
             if full.full_chat.pinned_msg_id:
                 m = await c.get_messages(ent, ids=full.full_chat.pinned_msg_id)
                 rules_text += " " + (text_of(m) if m else "").lower()
-            if any(w in rules_text for w in NO_ADS):
+            if not force and any(w in rules_text for w in NO_ADS):
                 print("в правилах запрет или реклама через админа — пропуск")
                 done[name] = "skip"
                 continue
