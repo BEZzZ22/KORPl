@@ -575,6 +575,57 @@ async def prune():
     print(f"Вышел из дохлых: {left}, осталось каналов и групп: {len(keep)} (было в joined.json: {len(old)})")
 
 
+GROUP_TEXT = ("Всем привет. Я из команды DotaRazbor: сделали бесплатного бота, который по ID матча разбирает катку — "
+              "где слил лайн, от чего умирал, что не так со сборкой. Если интересно глянуть свою игру: @DotaRazbor_bot. "
+              "Если тут такое не к месту, скажите, удалю.")
+NO_ADS = ("реклам", "ссылк", "пиар", "спам", "сторонн", "ботов", "promo", "ads")
+GROUP_MAX = 3
+
+
+async def group_post():
+    """Один открытый пост от менеджера в группы из TARGET (через запятую), где в описании и закрепе нет запрета рекламы.
+    Не больше GROUP_MAX за прогон, пауза между постами. Куда уже писали — повторно не пишем."""
+    import datetime
+    from telethon.tl.functions.channels import GetFullChannelRequest
+    from telethon.tl.types import Channel
+
+    log_f = ROOT / "promo" / "group_posts.json"
+    done = json.loads(log_f.read_text(encoding="utf-8")) if log_f.exists() else {}
+    names = [n.strip().lstrip("@") for n in os.environ.get("TARGET", "").split(",") if n.strip()]
+    c = await connected()
+    posted = 0
+    for name in names:
+        if posted >= GROUP_MAX:
+            break
+        if name in done:
+            print("уже писали — пропуск")
+            continue
+        try:
+            ent = await c.get_entity(name)
+            if not (isinstance(ent, Channel) and ent.megagroup):
+                print("не группа — пропуск")
+                continue
+            full = await c(GetFullChannelRequest(ent))
+            rules_text = (full.full_chat.about or "").lower()
+            if full.full_chat.pinned_msg_id:
+                m = await c.get_messages(ent, ids=full.full_chat.pinned_msg_id)
+                rules_text += " " + (text_of(m) if m else "").lower()
+            if any(w in rules_text for w in NO_ADS):
+                print("в правилах запрет или реклама через админа — пропуск")
+                done[name] = "skip"
+                continue
+            await c.send_message(ent, GROUP_TEXT, link_preview=False)
+            done[name] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="minutes")
+            posted += 1
+            print("пост отправлен")
+        except Exception as e:
+            print(f"ошибка: {type(e).__name__}: {str(e)[:120]}")
+        await asyncio.sleep(90)
+    await c.disconnect()
+    log_f.write_text(json.dumps(done, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"Постов за прогон: {posted}")
+
+
 async def make_folder(c, fid, title, names, pinned=0):
     from telethon.tl.functions.messages import UpdateDialogFilterRequest
     from telethon.tl.types import DialogFilter, TextWithEntities
@@ -969,7 +1020,7 @@ if __name__ == "__main__":
         act = "main_login"  # код вбит в поле — значит, это вход, даже если action забыли переключить
     if act == "code":
         asyncio.run(send_code())
-    elif act in ("discover", "send", "inbox", "folder", "test", "join", "fix", "mute", "main_code", "main_login", "main_whoami", "main_qr", "main_join", "main_post", "listen", "forget", "expand", "prune"):
+    elif act in ("discover", "send", "inbox", "folder", "test", "join", "fix", "mute", "main_code", "main_login", "main_whoami", "main_qr", "main_join", "main_post", "listen", "forget", "expand", "prune", "group_post"):
         asyncio.run(globals()[act]())
     elif act == "setup":
         asyncio.run(setup())
