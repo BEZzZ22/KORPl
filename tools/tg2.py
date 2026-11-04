@@ -614,6 +614,11 @@ async def group_post():
                 print("в правилах запрет или реклама через админа — пропуск")
                 done[name] = "skip"
                 continue
+            if getattr(ent, "left", False):
+                from telethon.tl.functions.channels import JoinChannelRequest
+                await c(JoinChannelRequest(ent))
+                print("вступил")
+                await asyncio.sleep(30)
             await c.send_message(ent, GROUP_TEXT, link_preview=False)
             done[name] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="minutes")
             posted += 1
