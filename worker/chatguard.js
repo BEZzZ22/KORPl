@@ -20,7 +20,7 @@ export const CHAT_ID = -1003744417862;
 const CHANNEL_ID = -1003943596949;
 const BOT_URL = "https://t.me/DotaRazbor_bot";
 
-const CAPTCHA_LIFE = 15 * 60_000;      // сколько висит кнопка «Я человек»
+const CAPTCHA_LIFE = 60 * 60_000;      // сколько живёт кнопка «Я человек»; потом сообщение становится приветствием, не удаляется
 const PENDING_TTL = 30 * 86400;        // помним неподтверждённого, чтобы снять ограничение из приложения или лички
 const HUMAN_TTL = 365 * 86400;         // подтверждённый: при перезаходе — без кнопки
 const FRESH_TTL = 86400;               // первые сутки после входа — без ссылок и пересылок
@@ -102,14 +102,20 @@ const welcomeText = (u) => `Привет, ${mention(u)}! Рады видеть �
   + "Тут обсуждаем катки, драфты, руинеров и разборы. Свою игру можно разобрать в @DotaRazbor_bot: ошибки по таймкодам, лайн, смерти и сборка.\n"
   + "Ссылки и пересылки — через сутки после входа, чтобы не лезли спамеры.";
 const captchaText = (u) => `Привет, ${mention(u)}! Рады видеть тебя в чате Dota Разбор.\n`
-  + "Жми кнопку ниже, что ты не бот, — и сможешь писать. Кнопка живёт 15 минут; не успел — напиши что угодно @DotaRazbor_bot в личку, и писать в чате станет можно.";
+  + "Жми кнопку ниже, что ты не бот, — и сможешь писать. Кнопка живёт час; не успел — запусти @DotaRazbor_bot, и писать в чате станет можно.";
 const botButton = { inline_keyboard: [[{ text: "Разобрать свою катку", url: BOT_URL }]] };
 
-// в ленте висит только последнее приветствие
-async function swapWelcome(env, tg, messageId) {
-  const prev = Number(await env.COACH_KV.get("cg_welcome"));
-  if (prev && prev !== messageId) await tg("deleteMessage", { chat_id: CHAT_ID, message_id: prev });
-  await env.COACH_KV.put("cg_welcome", String(messageId), { expirationTtl: 30 * 86400 });
+// Приветствия больше не удаляем (Ярик: «сделай так, чтобы не удалялось»). Раньше в ленте оставалось только
+// последнее, и при двух входах подряд или двух проверках подписки из приложения новое приветствие тут же
+// стирало предыдущее — со стороны это выглядело как «Привет» на полсекунды
+async function swapWelcome() {}
+
+// последние события чата для команды владельца «чат»: что и почему делал бот
+const LOG_MAX = 30;
+async function log(env, ev, user, now) {
+  const got = (await env.COACH_KV.get("cglog", "json")) || [];
+  got.push({ t: now, ev, id: user && user.id, n: user ? nameOf(user) : "" });
+  await env.COACH_KV.put("cglog", JSON.stringify(got.slice(-LOG_MAX)), { expirationTtl: 14 * 86400 });
 }
 
 async function unmute(tg, userId, now) {
@@ -141,6 +147,7 @@ async function onMember(env, tg, cm, now) {
     const got = await env.COACH_KV.getWithMetadata(`cgcap:${user.id}`);
     if (got && got.metadata && got.metadata.m) await tg("deleteMessage", { chat_id: CHAT_ID, message_id: got.metadata.m });
     if (got && got.value != null) await env.COACH_KV.delete(`cgcap:${user.id}`);
+    await log(env, got && got.metadata && got.metadata.m ? "ушёл, не нажав кнопку (кнопку убрал)" : "ушёл", user, now);
     return { left: user.id };
   }
   if (was || !is) return null;
@@ -170,7 +177,8 @@ async function onMember(env, tg, cm, now) {
     chat_id: CHAT_ID, text: captchaText(user), parse_mode: "HTML", disable_notification: true,
     reply_markup: { inline_keyboard: [[{ text: "Я человек", callback_data: `cghum:${user.id}` }]] },
   });
-  await env.COACH_KV.put(`cgcap:${user.id}`, "1", { metadata: { m: (sent && sent.message_id) || 0, t: now }, expirationTtl: PENDING_TTL });
+  await env.COACH_KV.put(`cgcap:${user.id}`, "1", { metadata: { m: (sent && sent.message_id) || 0, t: now, n: nameOf(user) }, expirationTtl: PENDING_TTL });
+  await log(env, sent ? "вошёл, кнопка «Я человек»" : "вошёл, кнопка не отправилась", user, now);
   return { captcha: 1 };
 }
 
@@ -191,7 +199,7 @@ async function onPress(env, tg, q, now) {
     return { foreign: 1 };
   }
   const pending = await env.COACH_KV.get(`cgcap:${q.from.id}`);
-  if (pending != null) await confirm(env, tg, q.from, now);
+  if (pending != null) { await confirm(env, tg, q.from, now); await log(env, "нажал «Я человек»", q.from, now); }
   await tg("answerCallbackQuery", { callback_query_id: q.id, text: "Готово, пиши! Рады тебе." });
   const mid = q.message && q.message.message_id;
   if (mid) {
@@ -206,8 +214,19 @@ export async function releaseIfPending(env, tg, user, now = Date.now()) {
   if (!env.COACH_KV || !user || !user.id) return false;
   const got = await env.COACH_KV.getWithMetadata(`cgcap:${user.id}`);
   if (!got || got.value == null) return false;
-  if (got.metadata && got.metadata.m) await tg("deleteMessage", { chat_id: CHAT_ID, message_id: got.metadata.m });
   await confirm(env, tg, user, now);
+  await log(env, "открыл приложение или написал боту — ограничение снято", user, now);
+  // Кнопку превращаем в приветствие, как при нажатии. Раньше её удаляли, а приложение спрашивает подписку
+  // сразу после «Вступить» — и новичок видел, как приветствие появляется и тут же пропадает.
+  // Кнопка уже снята по сроку — здороваемся заново
+  const mid = got.metadata && got.metadata.m;
+  const edited = mid && await tg("editMessageText", { chat_id: CHAT_ID, message_id: mid, text: welcomeText(user), parse_mode: "HTML", reply_markup: botButton, link_preview_options: { is_disabled: true } });
+  if (edited) await swapWelcome(env, tg, mid);
+  // сообщение с кнопкой есть, но не правится (уже приветствие от параллельной проверки) — второе не шлём
+  else if (!mid) {
+    const sent = await tg("sendMessage", { chat_id: CHAT_ID, text: welcomeText(user), parse_mode: "HTML", reply_markup: botButton, disable_notification: true, link_preview_options: { is_disabled: true } });
+    if (sent && sent.message_id) await swapWelcome(env, tg, sent.message_id);
+  }
   return true;
 }
 
@@ -320,6 +339,10 @@ export async function handleChatUpdate(env, tg, update, now = Date.now()) {
   return null;
 }
 
+const lateText = (n) => `Привет${n ? `, ${esc(n)}` : ""}! Рады видеть тебя в чате Dota Разбор.\n`
+  + "Чтобы писать, нажми кнопку ниже и запусти бота — ограничение снимется само.";
+const unlockButton = { inline_keyboard: [[{ text: "Открыть бота и писать в чате", url: `${BOT_URL}?start=chat` }]] };
+
 // крон: убрать кнопки, которые никто не нажал, и старые уведомления бота
 export async function chatChores(env, tg, now = Date.now()) {
   if (!env.COACH_KV) return 0;
@@ -333,8 +356,9 @@ export async function chatChores(env, tg, now = Date.now()) {
   for (const k of (await env.COACH_KV.list({ prefix: "cgcap:" })).keys) {
     const m = k.metadata || {};
     if (!m.m || now - (m.t || 0) < CAPTCHA_LIFE) continue;
-    await tg("deleteMessage", { chat_id: CHAT_ID, message_id: m.m });
-    await env.COACH_KV.put(k.name, "1", { metadata: { m: 0, t: m.t }, expirationTtl: PENDING_TTL });
+    // не удаляем: кнопка уступает место приветствию со ссылкой на бота — написал ему, и в чате можно писать
+    await tg("editMessageText", { chat_id: CHAT_ID, message_id: m.m, text: lateText(m.n), parse_mode: "HTML", reply_markup: unlockButton, link_preview_options: { is_disabled: true } });
+    await env.COACH_KV.put(k.name, "1", { metadata: { m: 0, t: m.t, n: m.n }, expirationTtl: PENDING_TTL });
     await count(env, "timeout", now);
     done++;
   }
@@ -353,6 +377,12 @@ export async function chatStatus(env, tg, botId, now = Date.now()) {
   }
   const got = await env.COACH_KV.getWithMetadata(`cg:${mskDay(now)}`);
   const m = (got && got.metadata) || {};
+  const ev = ((await env.COACH_KV.get("cglog", "json")) || []).slice(-10);
+  if (ev.length) {
+    lines.push("", "Последние события:");
+    for (const e of ev) lines.push(`${new Date(e.t + 7 * 3600_000).toISOString().slice(5, 16).replace("T", " ")} ${e.n || e.id}: ${e.ev}`);
+    lines.push("(время томское)");
+  }
   lines.push("", "Сегодня в чате:",
     `вошли ${m.joined || 0}, нажали «Я человек» ${m.passed || 0}, не нажали ${m.timeout || 0}`,
     `убрано служебных ${m.service || 0}, спама ${m.spam || 0}, банов ботов ${m.bots || 0}, мутов ${m.muted || 0}`);

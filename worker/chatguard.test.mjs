@@ -58,12 +58,12 @@ test("вход: мут, кнопка «Я человек», нажатие сн�
   assert.match(t.of("editMessageText")[0].body.text, /Рады видеть тебя в чате/);
   assert.equal(e.COACH_KV.m.has("cgcap:50"), false);
   assert.equal(e.COACH_KV.m.has("cghuman:50"), true);
-  assert.equal(await e.COACH_KV.get("cg_welcome"), "1001");
   // перезашёл — сразу приветствие без мута, прошлое приветствие убрано
   const t2 = fakeTg({ start: 2000 });
   assert.deepEqual(await handleChatUpdate(e, t2.tg, join(u), now + 9000), { welcome: 1 });
   assert.equal(t2.of("restrictChatMember").length, 0);
-  assert.deepEqual(t2.of("deleteMessage")[0].body, { chat_id: CHAT_ID, message_id: 1001 });
+  // старое приветствие не трогаем: приветствия больше не удаляются
+  assert.equal(t2.of("deleteMessage").length, 0);
 });
 
 test("служебные «вступил/вышел» удаляются, ушедший без нажатия — кнопка тоже", async () => {
@@ -79,17 +79,21 @@ test("служебные «вступил/вышел» удаляются, уш�
   assert.equal(e.COACH_KV.m.has("cgcap:60"), false);
 });
 
-test("не нажал за 15 минут: кнопка пропадает, человек остаётся читателем; приложение или личка снимают ограничение", async () => {
+test("не нажал за час: кнопка становится приветствием со ссылкой на бота, ничего не удаляется; приложение или личка снимают ограничение", async () => {
   resetAdminCache();
   const e = env(), t = fakeTg(), now = 1_800_000_000_000;
   const u = user(70);
   await handleChatUpdate(e, t.tg, join(u), now);
-  assert.equal(await chatChores(e, t.tg, now + 60_000), 0);
-  assert.equal(await chatChores(e, t.tg, now + 16 * 60_000), 1);
-  assert.equal(t.of("deleteMessage")[0].body.message_id, 1001);
+  assert.equal(await chatChores(e, t.tg, now + 30 * 60_000), 0);
+  assert.equal(await chatChores(e, t.tg, now + 61 * 60_000), 1);
+  assert.equal(t.of("deleteMessage").length, 0);
+  const late = t.of("editMessageText")[0].body;
+  assert.equal(late.message_id, 1001);
+  assert.match(late.text, /Рады видеть тебя/);
+  assert.match(late.reply_markup.inline_keyboard[0][0].url, /DotaRazbor_bot\?start=chat/);
   assert.equal(t.of("banChatMember").length, 0);
   assert.equal(e.COACH_KV.meta.get("cgcap:70").m, 0);
-  assert.equal(await chatChores(e, t.tg, now + 30 * 60_000), 0);
+  assert.equal(await chatChores(e, t.tg, now + 90 * 60_000), 0);
   // пока висит — его сообщения (если мут не встал) удаляются
   assert.deepEqual(await handleChatUpdate(e, t.tg, say(u, "привет")), { unconfirmed: 1 });
   assert.equal(await releaseIfPending(e, t.tg, u, now), true);
@@ -201,4 +205,52 @@ test("апдейты не про чат — мимо", async () => {
   const e = env(), t = fakeTg();
   assert.equal(await handleChatUpdate(e, t.tg, { message: { chat: { id: 5, type: "private" }, from: user(5), text: "/start" } }), null);
   assert.equal(await handleChatUpdate(e, t.tg, { callback_query: { id: "q", data: "other", from: user(5) } }), null);
+});
+
+test("вступил из приложения: проверка подписки сразу после входа не удаляет приветствие, а превращает кнопку в него", async () => {
+  resetAdminCache();
+  const e = env(), t = fakeTg(), now = 1_800_000_000_000;
+  const u = user(120, "Новичок");
+  await handleChatUpdate(e, t.tg, join(u), now);
+  assert.equal(await releaseIfPending(e, t.tg, u, now + 2000), true);
+  assert.equal(t.of("deleteMessage").length, 0);
+  const ed = t.of("editMessageText")[0].body;
+  assert.equal(ed.message_id, 1001);
+  assert.match(ed.text, /Привет, <a href="tg:\/\/user\?id=120">Новичок<\/a>!/);
+  // повторные проверки из приложения уже ничего не трогают
+  assert.equal(await releaseIfPending(e, t.tg, u, now + 4000), false);
+  assert.equal(t.of("editMessageText").length, 1);
+  // кнопка снята по сроку — приветствие новым сообщением
+  const v = user(121);
+  await handleChatUpdate(e, t.tg, join(v), now);
+  await chatChores(e, t.tg, now + 61 * 60_000);
+  const t2 = fakeTg({ start: 3000 });
+  assert.equal(await releaseIfPending(e, t2.tg, v, now + 70 * 60_000), true);
+  assert.match(t2.of("sendMessage")[0].body.text, /Рады видеть тебя в чате/);
+});
+
+test("две проверки подписки одновременно: одно приветствие, ничего не удаляется", async () => {
+  resetAdminCache();
+  const e = env(), now = 1_800_000_000_000;
+  const u = user(130);
+  const t = fakeTg();
+  await handleChatUpdate(e, t.tg, join(u), now);
+  // вторая правка того же текста — Телеграм отвечает ошибкой «message is not modified»
+  let edits = 0;
+  const t2 = fakeTg({ start: 4000 });
+  const tg = async (m, b) => (m === "editMessageText" && edits++ ? null : t2.tg(m, b));
+  await Promise.all([releaseIfPending(e, tg, u, now + 1000), releaseIfPending(e, tg, u, now + 1000)]);
+  assert.equal(t2.of("deleteMessage").length, 0);
+  assert.equal(t2.of("sendMessage").length, 0);
+});
+
+test("статус владельца показывает последние события чата", async () => {
+  resetAdminCache();
+  const e = env(), t = fakeTg(), now = 1_800_000_000_000;
+  const u = user(140, "Петя");
+  await handleChatUpdate(e, t.tg, join(u), now);
+  await handleChatUpdate(e, t.tg, leave(u), now + 500);
+  const text = await chatStatus(e, t.tg, "123", now + 1000);
+  assert.match(text, /Петя: вошёл, кнопка «Я человек»/);
+  assert.match(text, /Петя: ушёл, не нажав кнопку/);
 });
