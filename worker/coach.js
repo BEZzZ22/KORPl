@@ -1489,7 +1489,9 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
   const msg = update && update.message;
   if (!msg || !msg.from || !msg.chat || msg.chat.type !== "private") return null;
   // написал боту, а в чате висит неподтверждённым — снимаем ограничение
-  if (!msg.successful_payment) await releaseIfPending(env, (m, b) => tgCall(env, m, b), msg.from, now).catch(() => false);
+  if (!msg.successful_payment && await releaseIfPending(env, (m, b) => tgCall(env, m, b), msg.from, now).catch(() => false)) {
+    await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: "Готово: в чате https://t.me/dotarazbor_chat теперь можно писать." }).catch(() => false);
+  }
   if (msg.successful_payment) {
     const got = await grant(env, msg, now);
     if (got && got.pack) await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: thanksText(got.pack, got.wallet), reply_markup: appButton }).catch(() => false);
