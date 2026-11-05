@@ -13,6 +13,8 @@
 export const PACKS = {
   p10: { stars: 49, rub: 79, credits: 10, title: "10 полных разборов", text: "Десять матчей целиком: фазы, смерти, карта, сборка, графики и ИИ-тренер с чатом. Не сгорают." },
   month: { stars: 129, rub: 199, days: 30, title: "Полный разбор на месяц", text: "30 дней полного разбора и ИИ-тренера: до 10 матчей в сутки, чат по каждой катке и сравнения." },
+  // проверка живой оплаты картой (05.11): видит и покупает только владелец, только на сайте. Убрать после проверки
+  test: { stars: 1, rub: 10, credits: 1, owner: true, title: "Тест оплаты", text: "Проверка оплаты картой, только для владельца." },
 };
 export const FREE_COACH = 1;
 export const SUB_PER_DAY = 10;
@@ -52,12 +54,12 @@ export async function giftCredits(env, id, n, now = Date.now()) {
 }
 
 // Что показать в приложении
-export function walletView(w, now = Date.now()) {
+export function walletView(w, now = Date.now(), owner = false) {
   const sub = w.until > now;
   return {
     credits: w.c, free_left: Math.max(0, FREE_COACH - w.free), until: sub ? w.until : 0,
     sub_left: sub ? Math.max(0, SUB_PER_DAY - (w.d === mskDay(now) ? w.n : 0)) : 0,
-    packs: Object.entries(PACKS).map(([id, p]) => ({ id, stars: p.stars, rub: p.rub, title: p.title, credits: p.credits || 0, days: p.days || 0 })),
+    packs: Object.entries(PACKS).filter(([, p]) => owner || !p.owner).map(([id, p]) => ({ id, stars: p.stars, rub: p.rub, title: p.title, credits: p.credits || 0, days: p.days || 0 })),
   };
 }
 
@@ -168,7 +170,7 @@ export function parsePayload(s) {
 // tg(method, body) -> результат метода Bot API или null
 export async function invoiceLink(tg, pack, id) {
   const p = PACKS[pack];
-  if (!p) return null;
+  if (!p || p.owner) return null;
   return tg("createInvoiceLink", {
     title: p.title, description: p.text, payload: payloadOf(pack, id), provider_token: "", currency: "XTR",
     prices: [{ label: p.title, amount: p.stars }],
