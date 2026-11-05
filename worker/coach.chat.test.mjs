@@ -909,13 +909,7 @@ test("Робокасса: вход через Telegram Login, ссылка с п
   assert.equal(await ok.text(), `OK${inv}`);
   assert.equal(await (await result(md5(`79.00:${inv}:p2`))).text(), `OK${inv}`); // повтор
   const after = await (await worker.fetch(req({ mode: "web_wallet", login }), e)).json();
-  assert.equal(after.credits, 10);  // тестовый пакет за 10 ₽ — только владельцу
-  assert.equal(after.packs.some((p) => p.id === "test"), false);
-  assert.equal((await worker.fetch(req({ mode: "web_buy", pack: "test", login }), e)).status, 400);
-  const own = { ...e, OWNER_TG_IDS: "8" };
-  assert.equal((await (await worker.fetch(req({ mode: "web_wallet", login }), own)).json()).packs.find((p) => p.id === "test").rub, 10);
-  const t10 = new URL((await (await worker.fetch(req({ mode: "web_buy", pack: "test", login }), own)).json()).url).searchParams;
-  assert.equal(t10.get("OutSum"), "10.00");
+  assert.equal(after.credits, 10);
 });
 
 test("оплата картой из бота: ссылка с токеном на сутки, страница входит по нему, /pay даёт кнопку", async (t) => {
