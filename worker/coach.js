@@ -1767,8 +1767,8 @@ async function handlePost(request, env, ctx, origin) {
     if (!user || !user.id) return reply(403, { error: "Войди через Телеграм ещё раз." }, origin);
     const limited = throttle(String(user.id), Date.now(), 60, "pay", 20000);
     if (limited) return reply(429, { error: limited }, origin);
-    if (mode === "web_wallet") return reply(200, { ...walletView(await getWallet(env, user.id), Date.now(), isOwner(env, user.id)), cards: robokassaOn(env), name: user.first_name }, origin);
-    if (!PACKS[raw.pack] || (PACKS[raw.pack].owner && !isOwner(env, user.id))) return reply(400, { error: "Нет такого пакета." }, origin);
+    if (mode === "web_wallet") return reply(200, { ...walletView(await getWallet(env, user.id)), cards: robokassaOn(env), name: user.first_name }, origin);
+    if (!PACKS[raw.pack]) return reply(400, { error: "Нет такого пакета." }, origin);
     const url = await roboLink(env, raw.pack, user);
     return url ? reply(200, { url }, origin) : reply(503, { error: "Оплата картой ещё не подключена." }, origin);
   }
