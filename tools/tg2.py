@@ -430,15 +430,35 @@ async def dump_inbox(c, main):
     return len(out), sum(v["unread"] for v in out.values())
 
 
+async def people_folder(c):
+    """Папка «Люди» (id 4): все личные диалоги с живыми людьми (админы, ответившие). Боты и каналы сюда не попадают."""
+    from telethon.tl.functions.messages import UpdateDialogFilterRequest
+    from telethon.tl.types import DialogFilter, TextWithEntities, User
+
+    peers = []
+    async for d in c.iter_dialogs(limit=300):
+        e = d.entity
+        if isinstance(e, User) and not e.bot and not e.is_self and e.id != 777000:
+            peers.append(d.input_entity)
+    if not peers:
+        return 0
+    peers = peers[:100]
+    try:
+        f = DialogFilter(id=4, title=TextWithEntities(text="Люди", entities=[]), pinned_peers=[],
+                         include_peers=peers, exclude_peers=[])
+    except TypeError:
+        f = DialogFilter(id=4, title="Люди", pinned_peers=[], include_peers=peers, exclude_peers=[])
+    await c(UpdateDialogFilterRequest(id=4, filter=f))
+    return len(peers)
+
+
 async def folder():
-    """Папка «DotaRazbor» с важным: наш канал, чат, бот и все диалоги с админами из outreach_sent.json."""
+    """Папка «DotaRazbor»: наш канал, чат, бот. Папка «Люди»: личные диалоги с людьми."""
     from telethon.tl.functions.messages import UpdateDialogFilterRequest
     from telethon.tl.types import DialogFilter, TextWithEntities
 
     c = await connected()
-    names = ["Dota_Razbor", "dotarazbor_chat", "DotaRazbor_bot"]
-    if SENT.exists():
-        names += list(json.loads(SENT.read_text(encoding="utf-8")))
+    names = ["Dota_Razbor", "dotarazbor_chat", "DotaRazbor_bot"]  # люди живут в отдельной папке «Люди»
     peers = []
     for n in names:
         try:
@@ -452,8 +472,9 @@ async def folder():
     except TypeError:  # старые версии Telethon: title строкой
         f = DialogFilter(id=2, title=title, pinned_peers=peers[:3], include_peers=peers[3:], exclude_peers=[])
     await c(UpdateDialogFilterRequest(id=2, filter=f))
-    await c.disconnect()
     print(f"Папка «{title}»: {len(peers)} чатов")
+    print(f"Папка «Люди»: {await people_folder(c)} диалогов")
+    await c.disconnect()
 
 
 TEST_TEXT = ("Всем привет! Я менеджер DotaRazbor. Если бот где-то тупит или есть идея, что добавить в разбор, "
@@ -978,8 +999,15 @@ async def listen():
 
     end = time.time() + LISTEN_MIN * 60
     print(f"Дежурю {LISTEN_MIN:.0f} мин")
+    next_folder = 0
     while time.time() < end:
         await asyncio.sleep(20)
+        if acc == "tg2" and time.time() >= next_folder:  # папка «Люди» обновляется прямо из дежурного, второй клиент на сессии не нужен
+            next_folder = time.time() + 1800
+            try:
+                print(f"Папка «Люди»: {await people_folder(c)}")
+            except Exception as e:
+                print(f"папка: {type(e).__name__}")
         try:
             sent_any = await process_queue(c, state)
         except Exception as e:
