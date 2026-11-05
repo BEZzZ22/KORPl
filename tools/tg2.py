@@ -1000,6 +1000,11 @@ async def listen():
     end = time.time() + LISTEN_MIN * 60
     print(f"Дежурю {LISTEN_MIN:.0f} мин")
     next_folder = 0
+    try:  # при старте смены сразу выгружаем личку, чтобы ничего не пропустить между сменами
+        await dump_inbox(c, acc == "main")
+        git_save("Дежурный: входящие")
+    except Exception as e:
+        print(f"выгрузка при старте: {type(e).__name__}")
     while time.time() < end:
         await asyncio.sleep(20)
         if acc == "tg2" and time.time() >= next_folder:  # папка «Люди» обновляется прямо из дежурного, второй клиент на сессии не нужен
