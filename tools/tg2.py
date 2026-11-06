@@ -944,6 +944,10 @@ async def process_queue(c, state):
                 print(f"не человек — пропуск: {type(ent).__name__} bot={getattr(ent, 'bot', None)}")
         except Exception as e:
             print(f"ошибка отправки: {type(e).__name__}: {str(e)[:120]}")
+            if type(e).__name__ in ("PeerFloodError", "FloodWaitError"):
+                # лимит Телеги: письмо остаётся в очереди, смену не долбим дальше
+                state["cold"] = COLD_MAX
+                break
         done.add(iid)
         changed = True
         await asyncio.sleep(15)
