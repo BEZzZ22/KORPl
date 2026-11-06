@@ -465,7 +465,7 @@ await step("compare", async () => {
   await shot("compare", { full: false });
 });
 await step("moment-ask", async () => {
-  await page.locator(".tabs .tab").nth(2).click();
+  await page.locator(".tabs .tab", { hasText: "Фазы" }).click();
   const before = await page.locator(".chat-msg.assistant").count();
   await page.locator("summary", { hasText: "Хронология" }).click();
   await page.locator(".moment.askable").first().click();
@@ -473,7 +473,7 @@ await step("moment-ask", async () => {
   await page.waitForFunction((n) => document.querySelectorAll(".chat-msg.assistant:not(.typing)").length > n, before, { timeout: 10000 });
   await page.locator(".tabs .tab").nth(0).click();
 });
-for (const [i, name] of ["blame", "phases", "deaths", "map", "build", "charts"].entries()) {
+for (const [i, name] of ["blame", "story", "phases", "deaths", "map", "build", "charts"].entries()) {
   await step(name, async () => {
     await page.locator(".tabs .tab").nth(i + 1).click();
     await page.waitForTimeout(250);
@@ -679,7 +679,7 @@ if (!only || only.has("paywall")) {
     await p8.goto(`${BASE}/index.html?match=${match.match_id}`);
     await p8.waitForSelector(".tab.locked", { timeout: 20000 });
     const locks = await p8.locator(".tab.locked").count();
-    if (locks !== 5) throw new Error(`замков на вкладках ${locks}, ждали 5`);
+    if (locks !== 6) throw new Error(`замков на вкладках ${locks}, ждали 6`);
     await p8.locator(".tab", { hasText: "Кто слил" }).click();
     if (await p8.locator(".locked-tab").count()) throw new Error("«Кто слил» под замком");
     await p8.locator(".tab", { hasText: "Фазы" }).click();

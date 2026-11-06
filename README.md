@@ -33,6 +33,7 @@ GitHub Actions ─> tools/*.py|mjs ─> YouTube / TikTok / VK / Instagram / TG-�
 | Хочу поменять | Где |
 |---|---|
 | Логику разбора, новую проверку ошибки | `docs/engine.js`: класс `MatchAnalyzer`, вход `analyze(...)` в конце файла. Проверки — методы `check*`, мелкие ошибки — `checkMicro()` и `micro(...)`. Сборка — `threatProfile`, `rankCounters`, `itemPlan`, драфт — `draftAdvice` |
+| Ход игры: драки с последствиями, переломы, причины проигрыша, личные ошибки по минутам | `docs/story.js` (`gameStory`), вызывается из `engine.js` → `a.story`. Показ: верх «Обзора» и вкладка «Ход игры» (`storyTab` в `app.js`), тренеру уходит в `story` (`buildPrompt`, блок «Ход игры») |
 | Тексты разбора и подсказок | `docs/texts.json` (несколько вариантов на ключ). Механики героев и контрпредметы — `docs/knowledge.json` |
 | Экраны приложения | `docs/app.js`: `boot()` — старт, `go(screen)` — переходы, `homeScreen`, `matchScreen` → `analysisScreen` (вкладки Обзор, Кто слил, Фазы, Смерти, Карта, Сборка, Графики), `profileScreen`, `draftScreen`, `heroStatsScreen`, `bonusScreen`. Адрес воркера — `COACH_URL` |
 | Вид и анимации | `docs/style.css` + `docs/v2.css` (текущий дизайн), `motion.js` (GSAP), 3D: `aegis.js`, `map3d.js`, `medal3d.js`, `herocard3d.js` |
