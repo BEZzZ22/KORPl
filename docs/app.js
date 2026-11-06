@@ -624,7 +624,10 @@ async function homeScreen() {
     bonusEntry(),
   ];
   if (!account || (pendingLink && String(pendingLink) !== String(account))) {
-    render(...nodes, accountForm(), demoEntry());
+    // новичок: сначала привязка и пример — поле «ID матча» и драфт ниже. Раньше привязка упиралась в нижнюю панель,
+    // а «Посмотреть пример» был за экраном
+    const [top, ...rest] = nodes;
+    render(top, accountForm(), demoEntry(), ...rest);
     return;
   }
   pendingLink = null;
@@ -711,6 +714,32 @@ function hiddenMatchesCard(account) {
   );
 }
 
+// Вход через Steam (OpenID): Steam сам скажет steamID64, Friend ID искать не надо. Открывается во внешнем браузере,
+// после входа steam.html возвращает в Телеграм ссылкой startapp=l<steamID64>, и форма привязки проверит аккаунт как обычно
+function steamLoginUrl() {
+  const back = new URL("steam.html", location.href);
+  back.search = "";
+  const q = new URLSearchParams({
+    "openid.ns": "http://specs.openid.net/auth/2.0",
+    "openid.mode": "checkid_setup",
+    "openid.return_to": back.href,
+    "openid.realm": `${back.origin}/`,
+    "openid.identity": "http://specs.openid.net/auth/2.0/identifier_select",
+    "openid.claimed_id": "http://specs.openid.net/auth/2.0/identifier_select",
+  });
+  return `https://steamcommunity.com/openid/login?${q}`;
+}
+
+function steamButton() {
+  return h("button", { type: "button", class: "steam-btn", onclick: () => {
+    haptic(); step("steam_login");
+    const url = steamLoginUrl();
+    if (tg && tg.openLink) tg.openLink(url); else location.href = url;
+  } },
+  h("span", { class: "steam-ic", "aria-hidden": "true" }, svg("svg", { viewBox: "0 0 24 24" }, svg("path", { d: "M12 2a10 10 0 0 0-9.9 8.6l5.3 2.2a2.8 2.8 0 0 1 1.7-.5l2.4-3.4v-.1a3.8 3.8 0 1 1 3.8 3.8h-.1l-3.4 2.4a2.8 2.8 0 0 1-5.5.6l-3.8-1.6A10 10 0 1 0 12 2Zm-3.7 15.2-1.2-.5a2.1 2.1 0 1 0 1.1-2.8l1.3.5a1.5 1.5 0 1 1-1.2 2.8Zm9-7.1a2.5 2.5 0 1 0-2.5 2.5 2.5 2.5 0 0 0 2.5-2.5Zm-4.4 0a1.9 1.9 0 1 1 1.9 1.9 1.9 1.9 0 0 1-1.9-1.9Z" }))),
+  "Войти через Steam");
+}
+
 // Friend ID из бота (?link=): форма подставит его и сразу проверит
 let pendingLink = null;
 
@@ -784,6 +813,8 @@ function accountForm(after = null) {
   }
   return h("div", { class: "card" },
     h("div", { class: "display" }, "Привяжи аккаунт"),
+    steamButton(),
+    h("div", { class: "small muted or-line" }, "или по Friend ID"),
     h("div", { class: "row" }, h("div", { class: "grow" }, input), h("button", { onclick: save }, "Ок")),
     status,
   );
@@ -1605,6 +1636,17 @@ function matchAccess(a) {
   return a._access;
 }
 
+// Под замком видно, за что платить: одна настоящая ошибка этой катки из хронологии и сколько их всего
+function lockedTeaser(a) {
+  const bad = (a.moments || []).filter((m) => m.severity === BAD && m.clock && m.text);
+  if (!bad.length) return null;
+  const n = bad.length;
+  return h("div", { class: "teaser" },
+    h("div", { class: "small muted" }, `В этой катке ${n} ${plural(n, "ошибка", "ошибки", "ошибок")} по таймкодам. ${n > 1 ? "Первая" : "Вот она"}:`),
+    h("p", {}, h("time", {}, bad[0].clock), bad[0].text),
+    n > 1 && h("p", { class: "small muted" }, `Остальные ${n - 1}, разбор смертей, карта и сборка — в полном разборе.`));
+}
+
 // Закрытая вкладка: что даёт подписка и как открыть этот матч
 function lockedTab(a, onOpen) {
   const w = walletState || {};
@@ -1612,6 +1654,7 @@ function lockedTab(a, onOpen) {
   const box = h("div", { class: "card locked-tab" },
     h("div", { class: "locked-head" }, lockIcon(), h("b", {}, "Полный разбор — по подписке")),
     h("p", { class: "small muted" }, "Первый матч был целиком бесплатным. Дальше фазы, смерти, карта, сборка, графики и тренер — по подписке или пакету, а обзор и «Кто слил» бесплатны всегда."),
+    lockedTeaser(a),
     status);
   const openNow = async (btn) => {
     if (btn) btn.disabled = true;
@@ -2251,7 +2294,7 @@ function flushStats() {
   if (stats.since) { stats.secs += (Date.now() - stats.since) / 1000; stats.since = document.hidden ? 0 : Date.now(); }
   if (!stats.dirty && stats.secs < 30) return;
   const start = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) || "";
-  const body = JSON.stringify({ mode: "track", initData: tg.initData, open: stats.open, secs: Math.round(stats.secs), events: stats.events, src: start,
+  const body = JSON.stringify({ mode: "track", initData: tg.initData, open: stats.open, secs: Math.round(stats.secs), events: stats.events, src: /^l\d/.test(start) ? "steam" : start,
     path: stats.path.join(","), jserr: stats.jsError, ua: tg.platform || "" });
   const sent = navigator.sendBeacon && navigator.sendBeacon(COACH_URL, new Blob([body], { type: "text/plain" }));
   if (!sent) fetch(COACH_URL, { method: "POST", headers: { "Content-Type": "text/plain" }, body, keepalive: true }).catch(() => {});
@@ -3946,8 +3989,11 @@ function startParams() {
   const matchId = q.get("match") || (sm && sm[1]);
   const slot = q.get("slot") || (sm && sm[2]);
   const account = q.get("account");
-  const link = q.get("link");
+  // l<steamID64> — вернулся из входа через Steam (steam.html)
+  const sl = /^l(\d{1,20})$/.exec(start);
+  const link = q.get("link") || (sl && sl[1]);
   return {
+    demo: q.get("demo") === "1" || start === "demo",
     link: link ? toAccountId(link) : null,
     matchId: /^\d{7,11}$/.test(matchId || "") ? Number(matchId) : null,
     slot: /^\d{1,3}$/.test(slot || "") ? Number(slot) : null,
@@ -4104,6 +4150,11 @@ async function boot() {
   if (matchId) {
     navStack.push([homeScreen, []]);
     go(matchScreen, matchId, slot, account);
+  } else if (startParams().demo) {
+    // кнопка «Посмотреть пример разбора» из приветствия бота
+    step("demo_bot");
+    navStack.push([homeScreen, []]);
+    go(matchScreen, DEMO_MATCH, null, DEMO_ACCOUNT, 0, true);
   } else if (new URLSearchParams(location.search).get("tab") === "bonus") {
     navRoot("bonus", bonusScreen);
   } else {

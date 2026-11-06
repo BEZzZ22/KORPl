@@ -18,7 +18,7 @@ export const REF_MAX = 20;         // больше двадцати друзей
 const DIGEST_BATCH = 8;            // человек за один заход крона: лимит подзапросов воркера
 const WEEK_MS = 7 * 86400_000;
 
-const mskDay = (t) => new Date(t + 3 * 3600_000).toISOString().slice(0, 10);
+export const mskDay = (t) => new Date(t + 3 * 3600_000).toISOString().slice(0, 10);
 const dayBefore = (d) => new Date(Date.parse(`${d}T00:00:00Z`) - 86400_000).toISOString().slice(0, 10);
 const plural = (n, one, few, many) => {
   const a = n % 10, b = n % 100;
@@ -178,30 +178,35 @@ export function digestText(s) {
 }
 
 // Крон: по понедельникам с 10:00 до 13:59 МСК, понемногу за заход, каждому раз в неделю
-export async function weeklyDigest(env, tg, now = Date.now(), fetcher = fetch) {
-  const d = new Date(now), kv = env.COACH_KV;
-  if (!kv || d.getUTCDay() !== 1 || d.getUTCHours() < 7 || d.getUTCHours() > 10) return 0;
+// Понедельник, 10:00–13:59 МСК: окно сводки недели
+export const digestWindow = (now) => { const d = new Date(now); return d.getUTCDay() === 1 && d.getUTCHours() >= 7 && d.getUTCHours() <= 10; };
+
+export async function weeklyDigest(env, tg, now = Date.now(), fetcher = fetch, batch = DIGEST_BATCH) {
+  const kv = env.COACH_KV;
+  if (!kv || !digestWindow(now)) return 0;
   const week = mskDay(now);
   if (await kv.get(`digest:${week}:end`)) return 0;
-  let sent = 0, seen = 0, cursor;
+  let sent = 0, seen = 0, cursor, missed = 0;
   for (let page = 0; page < 20; page++) {
     const got = await kv.list({ prefix: "user:", cursor });
     for (const k of got.keys) {
       const id = k.name.slice(5);
       if (!/^\d{1,20}$/.test(id)) continue; // user:<id>:a<аккаунт> — второй аккаунт того же человека
       if (await kv.get(`digest:${week}:${id}`)) continue;
-      if (seen >= DIGEST_BATCH) return sent;
-      seen++;
-      await kv.put(`digest:${week}:${id}`, "1", { expirationTtl: 9 * 86400 });
-      if (await kv.get(`nodigest:${id}`)) continue;
+      if (seen >= batch) return sent;
+      const mark = () => kv.put(`digest:${week}:${id}`, "1", { expirationTtl: 9 * 86400 });
+      if (await kv.get(`nodigest:${id}`)) { await mark(); continue; }
       const user = await kv.get(k.name, "json").catch(() => null);
       const acc = Number(user && user.account_id);
-      if (!acc) continue;
-      let matches = null;
-      try {
-        const res = await fetcher(`https://api.opendota.com/api/players/${acc}/recentMatches`, { headers: OD_HEADERS, signal: AbortSignal.timeout(8000) });
-        matches = res.ok ? await res.json() : null;
-      } catch { /* OpenDota не ответила — в эту неделю без сводки */ }
+      if (!acc) { await mark(); continue; }
+      // OpenDota режет воркер (429 с IP Cloudflare), поэтому катки приносит выгрузка из Actions (relay.js).
+      // Не ответила — не помечаем: человек получит сводку на следующем заходе, а не пропустит неделю
+      let res = null;
+      try { res = await fetcher(`https://api.opendota.com/api/players/${acc}/recentMatches`, { headers: OD_HEADERS, signal: AbortSignal.timeout(8000) }); } catch { res = null; }
+      if (!res || (!res.ok && res.status !== 404)) { missed++; continue; }
+      seen++;
+      await mark();
+      const matches = res.ok ? await res.json().catch(() => null) : null;
       const s = weekSummary(matches, now);
       if (!s) continue;
       if (await tg("sendMessage", { chat_id: Number(id), text: digestText(s), reply_markup: matchButton(s.worst.match_id, "Разобрать эту катку") })) sent++;
@@ -209,6 +214,43 @@ export async function weeklyDigest(env, tg, now = Date.now(), fetcher = fetch) {
     if (got.list_complete || !got.cursor) break;
     cursor = got.cursor;
   }
+  if (missed) return sent;
   await kv.put(`digest:${week}:end`, "1", { expirationTtl: 9 * 86400 });
+  return sent;
+}
+
+// ---------- напоминание «серия сгорит» ----------
+// Вечером (20:00–21:59 МСК) тем, у кого серия от 2 дней, а сегодня разбора ещё не было. Раз в день, не больше REMIND_BATCH
+// сообщений за заход крона. Отписка — та же /nopush, что и у пушей после катки
+const REMIND_BATCH = 25;
+export const remindWindow = (now) => { const h = new Date(now).getUTCHours(); return h >= 17 && h <= 18; };
+
+export async function streakReminders(env, tg, now = Date.now()) {
+  const kv = env.COACH_KV;
+  if (!kv || !remindWindow(now)) return 0;
+  const day = mskDay(now), yesterday = dayBefore(day);
+  if (await kv.get(`streakrem:${day}:end`)) return 0;
+  let sent = 0, cursor;
+  for (let page = 0; page < 20; page++) {
+    const got = await kv.list({ prefix: "streak:", cursor });
+    for (const k of got.keys) {
+      const id = k.name.slice(7);
+      if (!/^\d{1,20}$/.test(id)) continue;
+      const mark = `streakrem:${day}:${id}`;
+      if (await kv.get(mark)) continue;
+      const s = await kv.get(k.name, "json").catch(() => null);
+      const n = Number(s && s.n) || 0;
+      if (!s || s.d !== yesterday || n < 2) continue;
+      if (sent >= REMIND_BATCH) return sent;
+      await kv.put(mark, "1", { expirationTtl: 2 * 86400 });
+      if (await kv.get(`nopush:${id}`)) continue;
+      const prize = streakPrize(n + 1) ? " За сегодняшний день серии — подарок: бесплатный полный разбор с тренером." : "";
+      if (await tg("sendMessage", { chat_id: Number(id), text: `Серия ${n} ${plural(n, "день", "дня", "дней")} подряд сгорит в полночь. Разбери сегодня одну катку, это минута.${prize}\n\nОтключить напоминания: /nopush`,
+        reply_markup: { inline_keyboard: [[{ text: "Разобрать катку", web_app: { url: APP_URL } }]] } })) sent++;
+    }
+    if (got.list_complete || !got.cursor) break;
+    cursor = got.cursor;
+  }
+  await kv.put(`streakrem:${day}:end`, "1", { expirationTtl: 2 * 86400 });
   return sent;
 }

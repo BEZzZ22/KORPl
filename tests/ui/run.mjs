@@ -684,6 +684,8 @@ if (!only || only.has("paywall")) {
     if (await p8.locator(".locked-tab").count()) throw new Error("«Кто слил» под замком");
     await p8.locator(".tab", { hasText: "Фазы" }).click();
     await p8.waitForSelector(".locked-tab .paywall-pack", { timeout: 10000 });
+    // под замком видна одна настоящая ошибка катки
+    if (!(await p8.locator(".locked-tab .teaser time").count())) throw new Error("под замком нет ошибки-примера");
     const file = join(OUT, `${String(shots.length + 1).padStart(2, "0")}-lock.png`);
     await p8.screenshot({ path: file, fullPage: true });
     shots.push(file);
@@ -845,6 +847,22 @@ if (!only || only.has("demo")) {
     await p4.goto(`${BASE}/index.html?link=${ACCOUNT}`);
     await p4.waitForSelector(".match-item", { timeout: 20000 });
     if (await p4.evaluate(() => localStorage.getItem("account_id")) !== String(ACCOUNT)) throw new Error("аккаунт из ссылки бота не привязан");
+  });
+  // новичок: привязка (Steam и Friend ID) и пример выше поля «ID матча»; ?demo=1 из приветствия бота открывает пример
+  await step("newbie", async () => {
+    await p4.evaluate(() => { localStorage.removeItem("account_id"); });
+    await p4.goto(`${BASE}/index.html`);
+    await p4.waitForSelector(".steam-btn", { timeout: 20000 });
+    const order = await p4.evaluate(() => {
+      const y = (sel) => { const el = document.querySelector(sel); return el ? el.getBoundingClientRect().top : -1; };
+      return { link: y('input[aria-label="Friend ID"]'), demo: y(".demo-entry"), match: y('input[aria-label="ID матча"]') };
+    });
+    if (!(order.link > 0 && order.link < order.demo && order.demo < order.match)) throw new Error(`порядок на главной новичка: ${JSON.stringify(order)}`);
+    const file = join(OUT, `${String(shots.length + 1).padStart(2, "0")}-newbie.png`);
+    await p4.screenshot({ path: file });
+    shots.push(file);
+    await p4.goto(`${BASE}/index.html?demo=1`);
+    await p4.waitForSelector(".hero-head", { timeout: 20000 });
   });
   // профиль скрыт: привязанного аккаунта в матче нет — выбор героя среди скрытых, разбор за выбранного
   await step("pickhidden", async () => {
