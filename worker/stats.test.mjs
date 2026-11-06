@@ -176,7 +176,7 @@ test("новичку на /start — приветствие с кнопкой, �
     assert.equal((await handleBotUpdate(env, msg(7, "/start ref_tt"))).greeted, 1);
     assert.equal((await handleBotUpdate(env, msg(7, "отчёт"))).greeted, 1);
     assert.deepEqual(await handleBotUpdate(env, msg(7, "123")), { forwarded: 1 });
-    assert.equal(await handleBotUpdate(env, msg(7, "/start", "group")), null);
+    assert.equal(await handleBotUpdate(env, msg(7, "привет", "group")), null);
   } finally { globalThis.fetch = real; }
   // письма человека ушли владельцу (id 5) с его id, подсказка — человеку
   const toOwner = sent.filter((m) => m.chat_id === 5);

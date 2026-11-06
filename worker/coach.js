@@ -8,6 +8,7 @@
 import LORE from "./lore.json" with { type: "json" };
 import { withStore, migrateStep, purgeExpired } from "./store.js";
 import { kickShorts } from "./kick.js";
+import { handlePartyMessage } from "./party.js";
 import { matchFromText, matchButton, MATCH_TEXT, accountFromText, linkButton, LINK_TEXT, OD_HEADERS, noteReferral, rewardReferral, referralFromStart, noteStartSource, bumpStreak, growthView, weeklyDigest } from "./growth.js";
 import { CHAT_ID, handleChatUpdate, chatChores, chatStatus, releaseIfPending } from "./chatguard.js";
 import { spendUnit, openMatch, spendChat, isOpen, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT, loginUser, roboLink, roboResult, robokassaOn, payUrl, tokenUser } from "./pay.js";
@@ -1489,6 +1490,9 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
   const guarded = await handleChatUpdate(env, (m, b) => tgCall(env, m, b), update, now);
   if (guarded) return { chat: guarded };
   const msg = update && update.message;
+  // пати-чаты: ID катки в группе — карточка «Кто слил» на всех (worker/party.js)
+  const party = await handlePartyMessage(env, (m, b) => tgCall(env, m, b), msg, now).catch((e) => { console.log(`пати: ${e && e.message || e}`); return null; });
+  if (party) return party;
   if (!msg || !msg.from || !msg.chat || msg.chat.type !== "private") return null;
   // написал боту, а в чате висит неподтверждённым — снимаем ограничение
   if (!msg.successful_payment && await releaseIfPending(env, (m, b) => tgCall(env, m, b), msg.from, now).catch(() => false)) {
