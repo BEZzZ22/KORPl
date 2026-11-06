@@ -90,9 +90,10 @@ export async function handlePartyMessage(env, tg, msg, now = Date.now(), fetcher
     { headers: OD_HEADERS, signal: AbortSignal.timeout(15000) }).catch(() => null);
   const match = res && res.ok ? await res.json().catch(() => null) : null;
   if (!match || !match.duration || !Array.isArray(match.players) || match.players.length !== 10) {
+    // 404 — катки правда нет; иначе OpenDota режет воркер (429 с IP Cloudflare), а с телефона в приложении она отвечает
     const text = res && res.status === 404
       ? `Катку ${t.match} OpenDota не знает. Если она только что закончилась — кинь ещё раз через пару минут.`
-      : `OpenDota пока не отдала катку ${t.match}. Попробуй через пару минут или открой разбор по кнопке.`;
+      : `Катка ${t.match}: кто тащил, кто слил и ошибки каждого — по кнопке «Полный разбор», откроется за пару секунд.`;
     await tg("sendMessage", { chat_id: chat, text, reply_parameters: reply, reply_markup: buttons(t.match) });
     return { party: "nomatch", match: t.match };
   }
