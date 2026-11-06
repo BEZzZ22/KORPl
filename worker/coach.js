@@ -2020,7 +2020,9 @@ export default {
     }
     // Выгрузка OpenDota из Actions (relay.js, tools/od-relay.mjs): ключ — токен бота
     if (new URL(request.url).pathname === "/relay" && (request.method === "GET" || request.method === "POST")) {
-      if (!env.BOT_TOKEN || !env.COACH_KV || request.headers.get("Authorization") !== `Bearer ${env.BOT_TOKEN}`) return new Response("Нельзя.", { status: 403 });
+      const auth = request.headers.get("Authorization") || "";
+      const okKey = (k) => Boolean(k) && auth === `Bearer ${k}`;
+      if (!env.BOT_TOKEN || !env.COACH_KV || !(okKey(env.RELAY_KEY) || okKey(env.BOT_TOKEN))) return new Response("Нельзя.", { status: 403 });
       const json = (x) => new Response(JSON.stringify(x), { headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } });
       if (request.method === "GET") return json(await relayTasks(env));
       let body;

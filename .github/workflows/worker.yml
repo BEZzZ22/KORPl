@@ -82,7 +82,10 @@ jobs:
           ROBOKASSA_PASS1: ${{ secrets.ROBOKASSA_PASS1 }}
           ROBOKASSA_PASS2: ${{ secrets.ROBOKASSA_PASS2 }}
         run: |
-          for name in CLAUDE_API_KEY GROQ_API_KEY GEMINI_API_KEY GH_TOKEN BOT_TOKEN OPENDOTA_KEY ROBOKASSA_LOGIN ROBOKASSA_PASS1 ROBOKASSA_PASS2; do
+          # ключ «Выгрузки OpenDota» (od-relay.yml): тот же вывод из токена Cloudflare, отдельного секрета не нужно
+          RELAY_KEY=$(printf 'dotarazbor-relay:%s' "$CLOUDFLARE_API_TOKEN" | sha256sum | cut -d' ' -f1)
+          export RELAY_KEY
+          for name in CLAUDE_API_KEY GROQ_API_KEY GEMINI_API_KEY GH_TOKEN BOT_TOKEN OPENDOTA_KEY ROBOKASSA_LOGIN ROBOKASSA_PASS1 ROBOKASSA_PASS2 RELAY_KEY; do
             value="${!name}"
             [ -z "$value" ] && continue
             printf '%s' "$value" | npx --yes wrangler@4 secret put "$name" -c wrangler.toml > /dev/null

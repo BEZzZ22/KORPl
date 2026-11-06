@@ -1,8 +1,8 @@
 # Выгрузка OpenDota для воркера: карточки в пати-чатах, «реплей разобран», пуш после катки, сводка недели.
 # Воркеру OpenDota отвечает 429 (общие IP Cloudflare), раннеру GitHub — 200. Прогон дежурит 5 ч 40 мин и раз в 20 с
-# спрашивает воркер GET /relay, что принести (tools/od-relay.mjs, worker/relay.js). Следующий прогон ждёт в очереди
-# concurrency, а если выгрузка молчит дольше полутора минут, воркер запускает её сам (workflow_dispatch).
-# Нужен секрет BOT_TOKEN. В лог — только числа.
+# спрашивает воркер GET /relay, что принести (tools/od-relay.mjs, worker/relay.js). В конце запускает себя снова,
+# запасные пути — крон раз в 30 минут и сам воркер (workflow_dispatch, если выгрузка молчит).
+# Ключ к воркеру выводится из секрета CLOUDFLARE_API_TOKEN (см. worker.yml). В лог — только числа.
 name: Выгрузка OpenDota
 
 on:
@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 concurrency:
   group: od-relay
@@ -30,5 +31,10 @@ jobs:
           node-version: 22
       - name: Дежурство
         env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: node tools/od-relay.mjs
+      - name: Следующее дежурство
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run od-relay.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
