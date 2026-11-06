@@ -883,8 +883,23 @@ async def main_login():
     print("Сессия дежурного сохранена.")
 
 
+SPAM_FILE = ROOT / "promo" / "spam_status.txt"
+
+
+async def spam_status(c):
+    """Спрашивает @SpamBot, ограничен ли акк, и кладёт ответ в promo/spam_status.txt (без личных данных)."""
+    import datetime
+    ent = await c.get_entity("SpamBot")
+    await c.send_message(ent, "/start")
+    await asyncio.sleep(8)
+    msgs = await c.get_messages(ent, limit=1)
+    txt = text_of(msgs[0]) if msgs else "нет ответа"
+    SPAM_FILE.write_text(datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="minutes") + "\n" + txt + "\n", encoding="utf-8")
+    return txt[:80]
+
+
 def git_save(msg):
-    files = [str(f) for f in (promo_tokens.DIR / "inbox_main.enc", INBOX, SENT, DONE) if f.exists()]
+    files = [str(f) for f in (promo_tokens.DIR / "inbox_main.enc", INBOX, SENT, DONE, SPAM_FILE) if f.exists()]
     sh("git", "add", *files)
     if not sh("git", "diff", "--cached", "--name-only"):
         return
@@ -1004,6 +1019,7 @@ async def listen():
     end = time.time() + LISTEN_MIN * 60
     print(f"Дежурю {LISTEN_MIN:.0f} мин")
     next_folder = 0
+    next_spam = 0
     try:  # при старте смены сразу выгружаем личку, чтобы ничего не пропустить между сменами
         await dump_inbox(c, acc == "main")
         git_save("Дежурный: входящие")
@@ -1011,6 +1027,13 @@ async def listen():
         print(f"выгрузка при старте: {type(e).__name__}")
     while time.time() < end:
         await asyncio.sleep(20)
+        if acc == "tg2" and time.time() >= next_spam:  # раз в час спрашиваем @SpamBot, чтобы видеть лимит без Ярика
+            next_spam = time.time() + 3600
+            try:
+                print(f"SpamBot: {await spam_status(c)}")
+                git_save("Дежурный: статус спамблока")
+            except Exception as e:
+                print(f"spambot: {type(e).__name__}")
         if acc == "tg2" and time.time() >= next_folder:  # папка «Люди» обновляется прямо из дежурного, второй клиент на сессии не нужен
             next_folder = time.time() + 1800
             try:
