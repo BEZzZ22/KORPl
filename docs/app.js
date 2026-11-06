@@ -3,7 +3,7 @@ import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan, skillPlan,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
 } from "./engine.js?v=45";
-import { aegisBadge, openShowcase } from "./aegis.js?v=9";
+import { aegisBadge, openShowcase, whenGone } from "./aegis.js?v=9";
 import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=5";
 import { matchVerdicts } from "./blame.js?v=11";
 import { rankMedal3d } from "./medal3d.js?v=7";
@@ -2158,6 +2158,30 @@ function paywallBlock(onPaid, text = "Бесплатный разбор уже �
   if (!packs.length) getWallet(true).then((w) => { if (w && w.packs && !packBox.children.length) packBox.append(...w.packs.map(packBtn)); });
   // картой или СБП: страница оплаты на сайте во внешнем браузере, вход уже выполнен (ссылка с токеном на сутки)
   const card = walletState && walletState.cards && h("button", { class: "paywall-card", type: "button" }, "Картой или СБП (₽)");
+  // Вернулся из браузера после оплаты картой: раньше экран оставался с замком и пакетами, пока не откроешь катку
+  // заново. Теперь при возврате переспрашиваем кошелёк и открываем сами, как после звёзд
+  let watching = null;
+  const watchReturn = () => {
+    if (watching) return;
+    const before = { c: (walletState && walletState.credits) || 0, u: (walletState && walletState.until) || 0 };
+    let busy = false;
+    const check = async () => {
+      if (document.hidden || busy || !watching) return;
+      busy = true;
+      try {
+        // Робокасса шлёт уведомление воркеру чуть позже, чем человек возвращается
+        for (let i = 0; i < 4 && watching; i++) {
+          const w = await getWallet(true);
+          if (w && (w.credits > before.c || w.until > before.u || w.owner)) { stop(); haptic("heavy"); onPaid(w); return; }
+          await new Promise((r) => setTimeout(r, 2500));
+        }
+      } finally { busy = false; }
+    };
+    const stop = () => { if (watching) document.removeEventListener("visibilitychange", watching); watching = null; };
+    watching = check;
+    document.addEventListener("visibilitychange", check);
+    whenGone(card, stop);
+  };
   if (card) card.onclick = async () => {
     haptic();
     step("buy_card");
@@ -2165,7 +2189,8 @@ function paywallBlock(onPaid, text = "Бесплатный разбор уже �
     try {
       const { url } = await postCoach({ mode: "pay_link", initData: tg.initData }, 15000);
       if (tg.openLink) tg.openLink(url); else window.open(url, "_blank", "noopener");
-      status.textContent = "Оплата открылась в браузере. После оплаты вернись сюда и нажми «Разобрать с тренером».";
+      status.textContent = "Оплата открылась в браузере. После оплаты вернись сюда: открою сам.";
+      watchReturn();
     } catch (e) {
       status.textContent = coachError(e);
     } finally {
