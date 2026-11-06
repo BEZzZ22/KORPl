@@ -698,6 +698,19 @@ if (!only || only.has("paywall")) {
     }
     Object.assign(pay, { paid: false, lock: false });
   });
+  // оплата картой из замка: человек уходит в браузер, платит и возвращается — матч открывается сам
+  await step("card-return", async () => {
+    Object.assign(pay, { on: false, paid: false, lock: true });
+    await p8.goto(`${BASE}/index.html?match=${match.match_id}`);
+    await p8.waitForSelector(".tab.locked", { timeout: 20000 });
+    await p8.locator(".tab", { hasText: "Фазы" }).click();
+    await p8.locator(".locked-tab .paywall-card").click();
+    await p8.waitForFunction(() => /pay\.html#t=/.test(window.__link || ""), null, { timeout: 5000 });
+    pay.paid = true;
+    await p8.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await p8.waitForFunction(() => !document.querySelector(".locked-tab") && !document.querySelector(".tab.locked"), null, { timeout: 15000 });
+    Object.assign(pay, { paid: false, lock: false });
+  });
   // разборы на счету: замок с кнопкой «Открыть этот матч», списание только по нажатию
   await step("credit", async () => {
     Object.assign(pay, { on: false, paid: false, lock: true, credits: 3 });
