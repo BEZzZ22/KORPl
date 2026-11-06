@@ -1,0 +1,52 @@
+# Разовая рассылка всем юзерам бота от @DotaRazbor_bot. Текст — promo/broadcast/<job>.txt.
+# Кладёт в D1 заявку bcast_job, крон воркера раз в 3 минуты шлёт по 15 человек, каждому один раз (worker/broadcast.js).
+# Запускать только с согласия Ярика. Репо публичный: печатаем только числа.
+name: Рассылка юзерам
+
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Имя рассылки = файл promo/broadcast/<job>.txt"
+        required: true
+      confirm:
+        description: "Напиши да, чтобы отправить"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      JOB: ${{ inputs.job }}
+      CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Рассылка
+        run: |
+          [ "$CONFIRM" = "да" ] || { echo "Не подтверждено"; exit 1; }
+          [[ "$JOB" =~ ^[a-z0-9_-]{1,32}$ ]] || { echo "Плохое имя"; exit 1; }
+          f="promo/broadcast/$JOB.txt"; [ -s "$f" ] || { echo "Нет файла $f"; exit 1; }
+          d1() { npx --yes wrangler@4 d1 execute dotacoach --remote --json "$@" 2>/dev/null; }
+          python3 - "$JOB" "$f" > job.sql <<'PY'
+          import json, sys
+          job, path = sys.argv[1], sys.argv[2]
+          v = json.dumps({"id": job, "text": open(path, encoding="utf-8").read().strip()}, ensure_ascii=False).replace("'", "''")
+          print(f"INSERT OR REPLACE INTO kv (k, v, meta, exp) VALUES ('bcast_job', '{v}', NULL, NULL);")
+          PY
+          d1 --file job.sql > /dev/null
+          echo "Заявка лежит, ждём крон"
+          for i in $(seq 1 100); do
+            sleep 15
+            st=$(d1 --command "SELECT v FROM kv WHERE k = 'bcast_stat:$JOB'" | python3 -c 'import json,sys; r=json.load(sys.stdin)[0]["results"]; print(r[0]["v"] if r else "")' 2>/dev/null || true)
+            [ -n "$st" ] && printf '%s' "$st" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("дошло", d.get("ok"), "не дошло", d.get("fail"), "отписаны", d.get("skip")); sys.exit(0 if d.get("end") else 1)' && exit 0
+          done
+          echo "Не дождались конца, крон дошлёт сам"
