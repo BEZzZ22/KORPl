@@ -2,10 +2,10 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan, skillPlan,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
-} from "./engine.js?v=45";
+} from "./engine.js?v=46";
 import { aegisBadge, openShowcase, whenGone } from "./aegis.js?v=9";
 import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=5";
-import { matchVerdicts } from "./blame.js?v=11";
+import { matchVerdicts } from "./blame.js?v=12";
 import { rankMedal3d } from "./medal3d.js?v=7";
 import { heroCard3d } from "./herocard3d.js?v=5";
 import { tacticalTable } from "./map3d.js?v=10";
@@ -1573,6 +1573,7 @@ async function notYourMatch(matchId, slot = null, demo = false) {
 const ALL_TABS = [
   ["Обзор", overviewTab],
   ["Кто слил", blameTab],
+  ["Ход игры", storyTab],
   ["Фазы", phasesTab],
   ["Смерти", killersTab],
   ["Карта", mapTab],
@@ -2296,6 +2297,15 @@ function coachMicro(a) {
   return [...first.slice(0, 2), ...build, ...skill, ...first.slice(2)].slice(0, 4);
 }
 
+// Ход игры для тренера: итог, причины команды и личные ошибки, каждая строка с временем и фактом
+function storyLines(st) {
+  if (!st) return [];
+  return [
+    ...st.causes.slice(0, 3).map((c) => `Команда, ${c.clock}: ${c.title}. ${c.fact}`),
+    ...st.mistakes.slice(0, 3).map((m) => `Ты, ${m.clock}: ${m.title}. ${m.fact}`),
+  ];
+}
+
 function coachPayload(a) {
   const s = a.summary || {}, f = a.facts;
   return {
@@ -2306,6 +2316,7 @@ function coachPayload(a) {
     plan: a.build_plan ? a.build_plan.missing.slice(0, 3).map((i) => ({ item: i.item, why: i.why })) : [],
     draft: a.draft ? a.draft.notes.slice(0, 2).map((n) => n.text) : [],
     episodes: (a.episodes || []).slice(0, 4).map((e) => ({ clock: e.clock, kind: e.kind, facts: e.facts })),
+    story: storyLines(a.story),
     map: (a.replay_notes || []).slice(0, 5),
     past: pastReviews(a),
   };
@@ -2886,14 +2897,21 @@ function overviewTab(a) {
   const who = [s.role, s.rank && `ранг ${s.rank}`].filter(Boolean).join(" · ");
   const problems = (s.problems || []).slice(0, 3);
   const strengths = (s.strengths || []).slice(0, 2);
+  const st = a.story;
   return h("div", {},
     who && h("div", { class: "who" }, who, s.role_sure === false && h("span", { class: "muted" }, " · роль определена неточно")),
+    st && st.verdict && storyVerdict(a),
+    st && st.causes.length > 0 && h("h2", {}, st.won ? "Что решило игру" : "Где ушла игра"),
+    ...(st ? st.causes.slice(0, 3).map(storyCard) : []),
+    st && st.mistakes.length > 0 && h("h2", {}, "Твои ошибки по минутам"),
+    ...(st ? st.mistakes.slice(0, 3).map(storyCard) : []),
+    st && (st.causes.length > 3 || st.mistakes.length > 3 || st.fights.length > 0) && h("p", { class: "small muted" }, "Все драки по минутам, переломы и остальные ошибки — во вкладке «Ход игры»."),
     !a.lite && goalBlock(a),
     // тренеру нужен полный разбор: на итогах матча он бы потратил платный разбор впустую
     !a.lite && coachBlock(a),
     !a.lite && COACH_URL && chatFor(a).box,
     !a.lite && COACH_URL && compareBlock(a),
-    h("h2", {}, problems.length ? "Что было не так" : "Серьёзных ошибок нет"),
+    h("h2", {}, problems.length ? (st ? "Что ещё было не так" : "Что было не так") : "Серьёзных ошибок нет"),
     ...problems.map((p, i) => h("div", { class: "card problem" },
       h("div", { class: "problem-num" }, String(i + 1)),
       h("div", { class: "problem-body" },
@@ -3024,6 +3042,55 @@ function draftBlock(a) {
     h("h2", {}, "Драфт"),
     h("div", { class: "card draft-notes" }, ...d.notes.slice(0, 2).map((n) => h("div", { class: `draft-note ${n.severity}` },
       n.hero_id ? heroImg(n.hero_id, "mini-hero") : h("span", { class: "draft-note-dot" }), h("span", {}, n.text)))),
+  );
+}
+
+// ---------- ход игры: перевес, переломы, драки с последствиями, причины ----------
+
+function storyVerdict(a) {
+  const st = a.story;
+  return h("div", { class: `card story-verdict ${st.won ? "good" : "bad"}` },
+    h("div", { class: "story-label" }, st.won ? "Почему выиграли" : "Почему проиграли"),
+    h("p", {}, st.verdict));
+}
+
+function storyCard(x) {
+  return h("div", { class: "card story-item" },
+    h("div", { class: "story-head" }, h("span", { class: "problem-title" }, x.title), x.clock && h("time", {}, x.clock)),
+    h("div", { class: "problem-fact" }, x.fact),
+    x.why && h("div", { class: "story-why" }, x.why),
+    x.fix && h("div", { class: "problem-action" }, x.fix));
+}
+
+const FIGHT_LABEL = { won: "выиграли", lost: "проиграли", even: "размен" };
+
+function storyTab(a) {
+  const st = a.story;
+  if (!st) return h("div", {}, h("p", { class: "muted" }, "Для хода игры нужен разобранный реплей. Открой катку чуть позже."));
+  const arc = st.arc;
+  return h("div", {},
+    storyVerdict(a),
+    arc && h("div", { class: "card story-arc" },
+      h("div", {}, h("span", { class: "muted" }, "Пик перевеса "), h("b", {}, arc.peak > 0 ? `+${num(arc.peak)} на ${arc.peak_min}-й` : "не было")),
+      h("div", {}, h("span", { class: "muted" }, "Худшее отставание "), h("b", {}, arc.low < 0 ? `−${num(-arc.low)} на ${arc.low_min}-й` : "не было")),
+      h("div", {}, h("span", { class: "muted" }, "В конце "), h("b", {}, `${arc.final >= 0 ? "+" : "−"}${num(Math.abs(arc.final))}`))),
+    st.turns.length > 0 && h("h2", {}, "Переломы"),
+    ...st.turns.map((t) => h("div", { class: `card story-turn ${t.good ? "good" : "bad"}` }, h("p", {}, t.text))),
+    st.causes.length > 0 && h("h2", {}, st.won ? "Что решило игру" : "Где ушла игра"),
+    ...st.causes.map(storyCard),
+    st.mistakes.length > 0 && h("h2", {}, "Твои ошибки по минутам"),
+    ...st.mistakes.map(storyCard),
+    st.fights.length > 0 && h("h2", {}, "Все драки"),
+    st.fights.length > 0 && h("p", { class: "small muted" }, `Счёт: сколько убили вы и сколько потеряли.${COACH_URL ? " Нажми на драку — тренер разберёт её подробно." : ""}`),
+    st.fights.length > 0 && h("div", { class: "card story-fights" }, ...st.fights.map((f) => {
+      const cls = `story-fight ${f.result}${!f.present && !f.dead_at_start ? " absent" : ""}`;
+      const body = [h("time", {}, f.clock), h("span", { class: "story-res" }, FIGHT_LABEL[f.result]), h("span", {}, f.text.replace(/^\S+ /, ""))];
+      if (!COACH_URL) return h("div", { class: cls }, ...body);
+      return h("button", {
+        class: `${cls} askable`, type: "button",
+        onclick: () => { haptic(); chatFor(a).ask(`Разбери драку ${f.clock}: ${f.text} Что я сделал не так и как надо было?`); },
+      }, ...body);
+    })),
   );
 }
 

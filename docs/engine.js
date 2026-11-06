@@ -1,6 +1,8 @@
 // Движок разбора матча — единственный источник логики.
 // Его используют веб-приложение (app.js) и бот (через engine_cli.mjs).
 // Тексты: docs/texts.json, механики героев: docs/knowledge.json, нормы по рангам: docs/rank_norms.json.
+// Ход игры глазами тренера (драки, переломы, причины, личные ошибки по минутам) — docs/story.js.
+import { gameStory } from "./story.js?v=1";
 
 export const LANE = "Линия", FARM = "Фарм", FIGHTS = "Драки", SURVIVAL = "Выживание", ITEMS = "Предметы", VISION = "Видение";
 export const CATEGORIES = [LANE, FARM, FIGHTS, SURVIVAL, ITEMS, VISION];
@@ -672,7 +674,13 @@ class MatchAnalyzer {
       item_plan: this.itemPlan(),
       skill_plan: skillPlan(this.builds, this.p.hero_id, this.pos, this.p.ability_upgrades_arr),
       death_summary: this.deathSummary(),
+      story: this.storySafe(),
     };
+  }
+
+  // Ход игры не должен ронять весь разбор: на кривых данных просто нет этого блока
+  storySafe() {
+    try { return gameStory(this.match, this.p, this.od); } catch (e) { return null; }
   }
 
   runLite() {
