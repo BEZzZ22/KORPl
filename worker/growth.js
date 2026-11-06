@@ -106,6 +106,20 @@ export async function referralFromStart(env, tg, user, text, now = Date.now()) {
   return rewardReferral(env, tg, user.id, now, user.first_name);
 }
 
+// Откуда пришёл тот, кто сначала нажал /start в боте, а приложение открыл кнопкой (там start_param пустой).
+// Метка из ссылки t.me/<бот>?start=<метка> (свои ссылки партнёрам) или «bot», если просто нашёл бота.
+// trackUser берёт её, когда человек впервые откроет приложение без своей метки
+export const SRC_TTL = 30 * 86400;
+export const cleanSrc = (s) => (/^[A-Za-z0-9_-]{1,40}$/.test(String(s || "")) ? String(s) : "");
+export async function noteStartSource(env, user, text) {
+  if (!user || !user.id || !/^\/start(?:@\w+)?(?:\s|$)/i.test(String(text || "").trim())) return null;
+  const kv = env.COACH_KV;
+  if (await kv.get(`seen:${user.id}`) || await kv.get(`src0:${user.id}`)) return null;
+  const src = cleanSrc(startPayload(text)) || "bot";
+  await kv.put(`src0:${user.id}`, src, { expirationTtl: SRC_TTL });
+  return src;
+}
+
 // ---------- серия дней ----------
 // Приз — разбор тренера на 3-й день подряд и дальше каждые 7 дней (10, 17, 24…)
 export const streakPrize = (n) => n === 3 || (n > 3 && (n - 3) % 7 === 0);

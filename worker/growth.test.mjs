@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { withStore } from "./store.js";
-import { matchFromText, accountFromText, refOf, noteReferral, rewardReferral, referralFromStart, startPayload, bumpStreak, streakPrize, growthView, weekSummary, digestText, weeklyDigest } from "./growth.js";
+import { matchFromText, accountFromText, refOf, noteReferral, rewardReferral, referralFromStart, noteStartSource, startPayload, bumpStreak, streakPrize, growthView, weekSummary, digestText, weeklyDigest } from "./growth.js";
 import { getWallet } from "./pay.js";
 import { trackUser, onRealAnalysis } from "./coach.js";
 
@@ -230,4 +230,19 @@ test("сводка недели: по понедельникам, каждому
   assert.equal(sent[0].reply_markup.inline_keyboard[0][0].web_app.url, "https://bezzz22.github.io/KORPl/?match=9");
   assert.equal(await kv.get("digest:2026-11-09:end"), "1");
   assert.equal(await weeklyDigest(env, tg, now + 180_000, fetcher), 0);
+});
+
+test("источник через /start: метка партнёра или bot, потом ложится в seen при первом заходе в приложение", async () => {
+  const env = env0();
+  assert.equal(await noteStartSource(env, { id: 91 }, "/start soulix"), "soulix");
+  assert.equal(await noteStartSource(env, { id: 91 }, "/start other"), null);
+  assert.equal(await noteStartSource(env, { id: 92 }, "/start"), "bot");
+  assert.equal(await noteStartSource(env, { id: 93 }, "/start <script>"), "bot");
+  assert.equal(await noteStartSource(env, { id: 94 }, "привет"), null);
+  await trackUser(env, { id: 91, first_name: "А" }, { src: "" });
+  await trackUser(env, { id: 92, first_name: "Б" }, { src: "yt" });
+  assert.equal((await env.COACH_KV.getWithMetadata("seen:91")).metadata.src, "soulix");
+  assert.equal((await env.COACH_KV.getWithMetadata("seen:92")).metadata.src, "yt");
+  await env.COACH_KV.put("seen:95", "1");
+  assert.equal(await noteStartSource(env, { id: 95 }, "/start x"), null);
 });

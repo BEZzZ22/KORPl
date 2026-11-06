@@ -67,14 +67,19 @@ print(f"Рефералка: привели друзей {sum(1 for v in refn.val
 print(f"Призы за серию дней выдано: {len(prizes)}")
 
 # Откуда пришли: метка start_param первого захода (seen:<id>.src). Реферальные id не печатаем.
-KNOWN = {"yt": "YouTube", "ig": "Инста", "tgch": "TG-канал", "vk": "VK", "tt": "TikTok"}
+KNOWN = {"yt": "YouTube", "ig": "Инста", "tgch": "TG-канал", "vk": "VK", "tt": "TikTok", "bot": "нашёл бота сам (/start без метки)", "party": "из пати-чата (кнопка бота)", "chat": "из нашего чата (кнопка «писать в чате»)"}
 def src_name(s):
     s = str(s or "")
     if not s:
         return "без метки (прямой заход, бот, старые ссылки)"
     if s[0] == "r" and s[1:].isdigit():
         return "рефералка (друг позвал)"
-    return KNOWN.get(s, "другая метка (матч, ссылка из бота)")
+    if s[0] == "m" and s[1:].isdigit():
+        return "карточка катки (пати-чат или «поделиться»)"
+    if s in KNOWN:
+        return KNOWN[s]
+    # своя метка партнёра из t.me/<бот>?start=<метка>; цифры и мусор не печатаем
+    return f"метка {s}" if s.isascii() and s.replace("_", "").replace("-", "").isalnum() and not s.isdigit() and len(s) <= 24 else "другая метка"
 src = {}
 for r in rows(seen_f):
     if uid(r["k"]) in OWN:

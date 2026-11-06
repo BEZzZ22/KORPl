@@ -7,7 +7,7 @@ name: Воркер тренера
 on:
   push:
     branches: [claude/opus-55-capabilities-limits-ekkxhj]
-    paths: ["worker/**", ".github/workflows/worker.yml"]
+    paths: ["worker/**", "docs/blame.js", "docs/engine.js", ".github/workflows/worker.yml"]
   workflow_dispatch:
 
 permissions:
