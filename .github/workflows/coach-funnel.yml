@@ -23,7 +23,7 @@ jobs:
       - name: Воронка
         run: |
           d1() { npx --yes wrangler@4 d1 execute dotacoach --remote --json --command "$1" 2>/dev/null; }
-          d1 "SELECT k FROM kv WHERE k LIKE 'seen:%'" > seen.json
+          d1 "SELECT k, meta FROM kv WHERE k LIKE 'seen:%'" > seen.json
           d1 "SELECT k, meta FROM kv WHERE k LIKE 'act:%'" > act.json
           d1 "SELECT k, v FROM kv WHERE k LIKE 'wallet:%'" > wallet.json
           d1 "SELECT k, meta FROM kv WHERE k LIKE 'paid:%'" > paid.json
