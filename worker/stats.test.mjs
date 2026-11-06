@@ -185,7 +185,10 @@ test("новичку на /start — приветствие с кнопкой, �
   const toUser = sent.filter((m) => m.chat_id === 7);
   assert.equal(toUser.length, 3);
   assert.ok(toUser.every((m) => m.reply_markup.inline_keyboard[0][0].web_app.url));
-  assert.match(toUser[0].text, /^Привет!/);
+  // /start — картинка разбора с подписью и кнопкой примера
+  assert.match(toUser[0].caption, /^Привет!/);
+  assert.match(toUser[0].photo, /welcome\.jpg/);
+  assert.match(toUser[0].reply_markup.inline_keyboard[1][0].web_app.url, /\?demo=1$/);
   assert.match(toUser[2].text, /передам разработчику/);
   // владелец отвечает реплаем — уходит человеку
   sent.length = 0;

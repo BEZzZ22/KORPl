@@ -1187,3 +1187,13 @@ body.gated .tabbar { display: none; }
 /* Профиль: серия дней и «позови друга» */
 .grow-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 .grow-row b { font-size: 22px; white-space: nowrap; }
+
+/* Привязка: вход через Steam и Friend ID рядом */
+.steam-btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; margin: 12px 0 4px; }
+.steam-ic svg { width: 20px; height: 20px; fill: currentColor; display: block; }
+.or-line { text-align: center; margin: 8px 0; }
+
+/* Пейвол: одна настоящая ошибка из закрытых вкладок */
+.teaser { margin: 4px 0 12px; padding: 12px 14px; border-radius: var(--r-md); background: rgba(255, 255, 255, 0.04); }
+.teaser time { font-weight: 800; margin-right: 8px; color: var(--aegis); }
+.teaser p { margin: 6px 0 0; }

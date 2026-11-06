@@ -1,0 +1,34 @@
+# Выгрузка OpenDota для воркера: карточки в пати-чатах, «реплей разобран», пуш после катки, сводка недели.
+# Воркеру OpenDota отвечает 429 (общие IP Cloudflare), раннеру GitHub — 200. Прогон дежурит 5 ч 40 мин и раз в 20 с
+# спрашивает воркер GET /relay, что принести (tools/od-relay.mjs, worker/relay.js). Следующий прогон ждёт в очереди
+# concurrency, а если выгрузка молчит дольше полутора минут, воркер запускает её сам (workflow_dispatch).
+# Нужен секрет BOT_TOKEN. В лог — только числа.
+name: Выгрузка OpenDota
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: od-relay
+  cancel-in-progress: false
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Дежурство
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        run: node tools/od-relay.mjs

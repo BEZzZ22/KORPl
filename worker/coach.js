@@ -10,7 +10,8 @@ import { withStore, migrateStep, purgeExpired } from "./store.js";
 import { kickShorts } from "./kick.js";
 import { handlePartyMessage } from "./party.js";
 import { broadcastStep } from "./broadcast.js";
-import { matchFromText, matchButton, MATCH_TEXT, accountFromText, linkButton, LINK_TEXT, OD_HEADERS, noteReferral, rewardReferral, referralFromStart, noteStartSource, bumpStreak, growthView, weeklyDigest } from "./growth.js";
+import { relayTasks, relayRun, kickRelay, ODREQ_PREFIX } from "./relay.js";
+import { matchFromText, matchButton, MATCH_TEXT, accountFromText, linkButton, LINK_TEXT, OD_HEADERS, noteReferral, rewardReferral, referralFromStart, noteStartSource, bumpStreak, growthView, streakReminders } from "./growth.js";
 import { CHAT_ID, handleChatUpdate, chatChores, chatStatus, releaseIfPending } from "./chatguard.js";
 import { spendUnit, openMatch, spendChat, isOpen, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT, loginUser, roboLink, roboResult, robokassaOn, payUrl, tokenUser } from "./pay.js";
 
@@ -829,7 +830,11 @@ export async function requestParse(env, match) {
     if (i) await new Promise((r) => setTimeout(r, 1000));
     res = await fetch(`https://api.opendota.com/api/request/${match}${key}`, { method: "POST", headers: OD_HEADERS, signal: AbortSignal.timeout(10000) }).catch(() => null);
   }
-  if (!res || !res.ok) console.log(`request ${match}: ${res ? res.status : "сеть"}`);
+  if (!res || !res.ok) {
+    console.log(`request ${match}: ${res ? res.status : "сеть"}`);
+    // OpenDota режет воркер: заявку отправит выгрузка из Actions (relay.js)
+    if (env.COACH_KV) await env.COACH_KV.put(`${ODREQ_PREFIX}${match}`, "1", { expirationTtl: 3600 }).catch(() => {});
+  }
   lastOdStatus = res ? res.status : 0;
   return Boolean(res && res.ok);
 }
@@ -850,7 +855,7 @@ async function tgCall(env, method, body) {
 }
 
 // Крон: у кого реплей разобрался, пишем в личку с кнопкой открыть разбор. Не дождались — тоже пишем, а не молчим
-export async function checkWatches(env, now = Date.now()) {
+export async function checkWatches(env, now = Date.now(), fetcher = fetch, ask = (m) => requestParse(env, m)) {
   if (!env.COACH_KV || !env.BOT_TOKEN) return 0;
   const legacy = (await env.COACH_KV.get(WATCH_KEY, "json")) || [];
   if (legacy.length) {
@@ -873,8 +878,8 @@ export async function checkWatches(env, now = Date.now()) {
       await env.COACH_KV.delete(k.name);
       if (await sendTelegram(env, "sendMessage", {
         chat_id: user,
-        text: `Реплей матча ${match} так и не разобрался за 3 часа: OpenDota не смогла его обработать. Открой матч ещё раз позже или выбери другую катку.`,
-        reply_markup: { inline_keyboard: [[{ text: "Открыть приложение", web_app: { url: APP_URL } }]] },
+        text: `Реплей матча ${match} OpenDota так и не разобрала за 3 часа. Быстрый разбор (обзор, кто слил, сборка) уже есть, открой его. Полный подтянется, если OpenDota разберёт реплей позже.`,
+        reply_markup: { inline_keyboard: [[{ text: "Открыть разбор", web_app: { url: `${APP_URL}?match=${match}` } }]] },
       }).catch(() => false)) sent++;
       continue;
     }
@@ -882,7 +887,7 @@ export async function checkWatches(env, now = Date.now()) {
       if (parsed.size >= WATCH_MATCHES_PER_RUN) continue;
       let ok = null; // null — OpenDota не ответила, спросим на следующем кроне
       try {
-        const res = await fetch(`https://api.opendota.com/api/matches/${match}`, { headers: OD_HEADERS, signal: AbortSignal.timeout(15000) });
+        const res = await fetcher(`https://api.opendota.com/api/matches/${match}`, { headers: OD_HEADERS, signal: AbortSignal.timeout(15000) });
         const m = res.ok ? await res.json() : null;
         if (m) ok = Boolean(m.players && m.players.length && m.players[0].lh_t != null);
         else console.log(`watch: OpenDota ${res.status} по матчу ${match}`);
@@ -892,7 +897,7 @@ export async function checkWatches(env, now = Date.now()) {
     // заявка с телефона могла не дойти (OpenDota у провайдера закрыта, 429): просим с сервера, с паузой всё дольше
     const re = Number(meta.re) || 0;
     if (parsed.get(match) === false && re < WATCH_REASK_MAX && now - (Number(meta.rt) || Number(meta.t) || now) > WATCH_REASK * (re + 1)) {
-      await requestParse(env, match);
+      await ask(match);
       await env.COACH_KV.put(k.name, "1", { metadata: { ...meta, re: re + 1, rt: now }, expirationTtl: Math.ceil((WATCH_TTL - age) / 1000) + 3600 });
     }
     if (!parsed.get(match)) continue;
@@ -1397,6 +1402,7 @@ async function webhookSecret(token) {
   return [...hash.slice(0, 20)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+const COMMANDS_VERSION = "1";
 export async function ensureWebhook(env) {
   if (!env.COACH_KV || !env.BOT_TOKEN) return false;
   if ((await env.COACH_KV.get("tg_webhook")) === WEBHOOK_VERSION) return true;
@@ -1406,6 +1412,9 @@ export async function ensureWebhook(env) {
     drop_pending_updates: false,
   }).catch(() => false);
   if (ok) await env.COACH_KV.put("tg_webhook", WEBHOOK_VERSION);
+  if (ok && (await env.COACH_KV.get("tg_commands")) !== COMMANDS_VERSION) {
+    if (await sendTelegram(env, "setMyCommands", { commands: BOT_COMMANDS, scope: { type: "all_private_chats" } }).catch(() => false)) await env.COACH_KV.put("tg_commands", COMMANDS_VERSION);
+  }
   return ok;
 }
 
@@ -1429,6 +1438,22 @@ const HINT_TEXT = "Разбор каток — в приложении: жми �
   + "Вопрос, жалобу или проблему с оплатой можно написать прямо сюда — передам разработчику.";
 const HINT_TTL = 3600;
 const appButton = { inline_keyboard: [[{ text: "Открыть разбор", web_app: { url: APP_URL } }]] };
+const WELCOME_PHOTO = `${APP_URL}welcome.jpg?v=1`;
+const welcomeButtons = { inline_keyboard: [[{ text: "Открыть разбор", web_app: { url: APP_URL } }], [{ text: "Посмотреть пример разбора", web_app: { url: `${APP_URL}?demo=1` } }]] };
+const HELP_TEXT = "Что умеет бот:\n"
+  + "• Кинь ID матча или ссылку с OpenDota/Dotabuff/Stratz — открою разбор: кто слил, ошибки по таймкодам, повтор на карте.\n"
+  + "• Кинь Friend ID — привяжу аккаунт, и после каждой катки напишу, можно ли разобрать.\n"
+  + "• Добавь меня в чат с пати — там тоже разбираю катки.\n\n"
+  + "Команды:\n/pay — тренер и оплата\n/nopush — не писать после каток и про серию (/push — вернуть)\n/nodigest — без сводки недели (/digest — вернуть)\n/paysupport — вопрос по оплате\n/terms — условия";
+// Меню команд у поля ввода: без него /pay, /nopush и прочие никто не находил
+export const BOT_COMMANDS = [
+  { command: "start", description: "Открыть разбор каток" },
+  { command: "help", description: "Что умеет бот" },
+  { command: "pay", description: "Тренер и оплата" },
+  { command: "nopush", description: "Не писать после каток" },
+  { command: "nodigest", description: "Без сводки недели" },
+  { command: "paysupport", description: "Вопрос по оплате" },
+];
 
 // Письмо в бота от человека — владельцу. /paysupport обещает ответ «в этом чате», а раньше всё, кроме команд,
 // молча пропадало. Владелец отвечает реплаем на пересланное — ответ уходит человеку от имени бота
@@ -1458,7 +1483,9 @@ async function greet(env, msg) {
     if (await env.COACH_KV.get(key)) return null;
     await env.COACH_KV.put(key, "1", { expirationTtl: HINT_TTL });
   }
-  const ok = await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: start ? WELCOME_TEXT : HINT_TEXT, reply_markup: appButton }).catch(() => false);
+  // /start — с картинкой разбора и кнопкой примера: голый текст новички не дочитывали. Картинка не ушла — шлём текстом
+  const ok = (start && await sendTelegram(env, "sendPhoto", { chat_id: msg.chat.id, photo: WELCOME_PHOTO, caption: WELCOME_TEXT, reply_markup: welcomeButtons }).catch(() => false))
+    || await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: start ? WELCOME_TEXT : HINT_TEXT, reply_markup: start ? welcomeButtons : appButton }).catch(() => false);
   return { greeted: ok ? 1 : 0 };
 }
 
@@ -1496,7 +1523,10 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
   const msg = update && update.message;
   // пати-чаты: ID катки в группе — карточка «Кто слил» на всех (worker/party.js)
   const party = await handlePartyMessage(env, (m, b) => tgCall(env, m, b), msg, now).catch((e) => { console.log(`пати: ${e && e.message || e}`); return null; });
-  if (party) return party;
+  if (party) {
+    if (party.party === "queued") await kickRelay(env).catch(() => false);
+    return party;
+  }
   if (!msg || !msg.from || !msg.chat || msg.chat.type !== "private") return null;
   // написал боту, а в чате висит неподтверждённым — снимаем ограничение
   if (!msg.successful_payment && await releaseIfPending(env, (m, b) => tgCall(env, m, b), msg.from, now).catch(() => false)) {
@@ -1535,6 +1565,18 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
     const text = await refund(env, (m, b) => tgCall(env, m, b), back[1], now);
     await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text }).catch(() => false);
     return { refund: text };
+  }
+  if (/^\/help(?:@\w+)?$/i.test(cmd)) {
+    await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: HELP_TEXT, reply_markup: appButton }).catch(() => false);
+    return { help: 1 };
+  }
+  // пуш после катки и напоминание о серии: отписка и подписка обратно
+  if (/^\/(?:nopush|push)(?:@\w+)?$/i.test(cmd)) {
+    const off = /^\/nopush/i.test(cmd);
+    if (off) await env.COACH_KV.put(`nopush:${msg.from.id}`, "1"); else await env.COACH_KV.delete(`nopush:${msg.from.id}`);
+    const text = off ? "Больше не пишу после каток и про серию. Передумаешь — напиши /push." : "Включил: после каждой катки напишу, можно ли её разобрать, и напомню, если серия вот-вот сгорит.";
+    await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text }).catch(() => false);
+    return { push: off ? "off" : "on" };
   }
   // сводка недели по понедельникам: отписка и подписка обратно
   if (/^\/(?:nodigest|digest)(?:@\w+)?$/i.test(cmd)) {
@@ -1976,6 +2018,15 @@ export default {
       const ok = await requestParse(env, Number(parseReq[1]));
       return reply(ok ? 200 : 502, ok ? { ok: true } : { error: "OpenDota не приняла заявку.", od: lastOdStatus }, origin);
     }
+    // Выгрузка OpenDota из Actions (relay.js, tools/od-relay.mjs): ключ — токен бота
+    if (new URL(request.url).pathname === "/relay" && (request.method === "GET" || request.method === "POST")) {
+      if (!env.BOT_TOKEN || !env.COACH_KV || request.headers.get("Authorization") !== `Bearer ${env.BOT_TOKEN}`) return new Response("Нельзя.", { status: 403 });
+      const json = (x) => new Response(JSON.stringify(x), { headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } });
+      if (request.method === "GET") return json(await relayTasks(env));
+      let body;
+      try { body = JSON.parse(await request.text()); } catch { return new Response("Не JSON.", { status: 400 }); }
+      return json(await relayRun(env, (m, b) => tgCall(env, m, b), body, Date.now(), { checkWatches }));
+    }
     // запасной путь к OpenDota: свой лимит без банов, чтобы сбой OpenDota не забанил человека и у тренера
     if (request.method === "GET" && new URL(request.url).pathname.startsWith("/od/")) {
       if (!ALLOWED_ORIGINS.includes(origin)) return reply(403, { error: "Нельзя." }, origin);
@@ -2046,7 +2097,9 @@ export default {
     const chores = [migrateStep(env, now).catch((e) => console.log(`перенос из KV: ${e && e.message || e}`))];
     if (new Date(now).getUTCMinutes() < 3) chores.push(purgeExpired(env, now).catch(() => 0));
     if (new Date(now).getUTCMinutes() % 15 < 3) chores.push(kickShorts(env, now).catch((e) => console.log(`пинок Shorts: ${e && e.message || e}`)));
-    chores.push(weeklyDigest(env, (m, b) => tgCall(env, m, b), now).catch((e) => console.log(`сводка недели: ${e && e.message || e}`)));
+    // сводку недели и пуши шлёт выгрузка из Actions (POST /relay): сам воркер OpenDota не достаёт
+    chores.push(streakReminders(env, (m, b) => tgCall(env, m, b), now).catch((e) => console.log(`серия: ${e && e.message || e}`)));
+    chores.push(kickRelay(env, now).catch((e) => console.log(`выгрузка OpenDota: ${e && e.message || e}`)));
     chores.push(chatChores(env, (m, b) => tgCall(env, m, b), now).catch((e) => console.log(`чат: ${e && e.message || e}`)));
     chores.push(broadcastStep(env, (m, b) => tgCall(env, m, b), now).catch((e) => console.log(`рассылка: ${e && e.message || e}`)));
     ctx.waitUntil(Promise.all([checkWatches(env), checkReplays(env), reportOnRequest(env), ensureWebhook(env), ...chores]));

@@ -8,6 +8,8 @@ const BOT = "DotaRazbor_bot";
 const OD = "https://api.opendota.com/api";
 export const PARTY_GAP = 20_000;          // в одном чате не чаще раза в 20 секунд: защита от флуда
 const HEROES_KEY = "party_heroes", HEROES_TTL = 7 * 86400;
+export const PARTY_Q = "pq:";           // pq:<чат>:<матч> — сообщение в чате ждёт катку из выгрузки
+const PARTY_Q_TTL = 15 * 60;
 
 export const fullUrl = (id) => `https://t.me/${BOT}?startapp=m${id}`;
 export const addUrl = `https://t.me/${BOT}?startgroup=party`;
@@ -94,11 +96,37 @@ export async function handlePartyMessage(env, tg, msg, now = Date.now(), fetcher
     const text = res && res.status === 404
       ? `Катку ${t.match} OpenDota не знает. Если она только что закончилась — кинь ещё раз через пару минут.`
       : `Катка ${t.match}: кто тащил, кто слил и ошибки каждого — по кнопке «Полный разбор», откроется за пару секунд.`;
-    await tg("sendMessage", { chat_id: chat, text, reply_parameters: reply, reply_markup: buttons(t.match) });
+    const sent = await tg("sendMessage", { chat_id: chat, text, reply_parameters: reply, reply_markup: buttons(t.match) });
+    // не 404 — OpenDota режет воркер: катку принесёт выгрузка из Actions (relay.js), и это сообщение станет карточкой
+    if (!(res && res.status === 404) && sent && sent.message_id) {
+      await env.COACH_KV.put(`${PARTY_Q}${chat}:${t.match}`, JSON.stringify({ msg: sent.message_id, t: now }), { expirationTtl: PARTY_Q_TTL }).catch(() => {});
+      return { party: "queued", match: t.match };
+    }
     return { party: "nomatch", match: t.match };
   }
   const heroes = await partyHeroes(env, fetcher);
   await tg("sendMessage", { chat_id: chat, text: partyText(match, heroes), reply_parameters: reply, reply_markup: buttons(t.match), disable_web_page_preview: true });
   await env.COACH_KV.put(`party:${new Date(now + 3 * 3600_000).toISOString().slice(0, 10)}:${chat}:${t.match}`, "1", { expirationTtl: 30 * 86400 }).catch(() => {});
   return { party: "card", match: t.match };
+}
+
+// Выгрузка из Actions принесла катки: сообщение «по кнопке» в чате превращается в карточку
+export async function partyRelay(env, tg, data, heroes, list) {
+  const kv = env.COACH_KV;
+  let done = 0;
+  for (const k of await list(PARTY_Q)) {
+    const [, chat, id] = k.name.split(":");
+    const path = `/matches/${id}`;
+    if (!Object.prototype.hasOwnProperty.call(data, path)) continue;
+    const job = await kv.get(k.name, "json").catch(() => null);
+    await kv.delete(k.name);
+    const match = data[path];
+    if (!job || !job.msg || !match || !match.duration || !Array.isArray(match.players) || match.players.length !== 10) continue;
+    const ok = await tg("editMessageText", { chat_id: Number(chat), message_id: job.msg, text: partyText(match, heroes), reply_markup: buttons(Number(id)), disable_web_page_preview: true });
+    if (ok) {
+      done++;
+      await kv.put(`party:${new Date(Date.now() + 3 * 3600_000).toISOString().slice(0, 10)}:${chat}:${id}`, "1", { expirationTtl: 30 * 86400 }).catch(() => {});
+    }
+  }
+  return done;
 }

@@ -338,7 +338,7 @@ test("уведомления: не дождались за 3 часа — пиш
   await kv.put("watch:2:7654321", "1", { metadata: { t: now - 30 * 60 * 1000 } });
   const calls = mockFetch({ tg: [new Response("{}")], od: [new Response(JSON.stringify({ players: [{ lh_t: null }] })), new Response("{}")] });
   assert.equal(await checkWatches({ COACH_KV: kv, BOT_TOKEN: "x" }, now), 1);
-  assert.match(calls.find((c) => c.who === "tg").body.text, /так и не разобрался/);
+  assert.match(calls.find((c) => c.who === "tg").body.text, /так и не разобрала за 3 часа/);
   assert.ok(!kv.m.has("watch:1:1234567"));
   assert.ok(calls.some((c) => c.url.endsWith("/request/7654321")));
   assert.equal(kv.meta.get("watch:2:7654321").re, 1);
