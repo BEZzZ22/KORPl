@@ -44,5 +44,6 @@
  "farmzones": 51,
  "remind": 52,
  "early": 53,
- "check": 54
+ "check": 54,
+ "night": 55
 }
