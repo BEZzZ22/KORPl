@@ -8,7 +8,7 @@
 import LORE from "./lore.json" with { type: "json" };
 import { withStore, migrateStep, purgeExpired } from "./store.js";
 import { kickShorts } from "./kick.js";
-import { matchFromText, matchButton, MATCH_TEXT, accountFromText, linkButton, LINK_TEXT, OD_HEADERS, noteReferral, rewardReferral, referralFromStart, bumpStreak, growthView, weeklyDigest } from "./growth.js";
+import { matchFromText, matchButton, MATCH_TEXT, accountFromText, linkButton, LINK_TEXT, OD_HEADERS, noteReferral, rewardReferral, referralFromStart, noteStartSource, bumpStreak, growthView, weeklyDigest } from "./growth.js";
 import { CHAT_ID, handleChatUpdate, chatChores, chatStatus, releaseIfPending } from "./chatguard.js";
 import { spendUnit, openMatch, spendChat, isOpen, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT, loginUser, roboLink, roboResult, robokassaOn, payUrl, tokenUser } from "./pay.js";
 
@@ -1110,7 +1110,9 @@ export async function trackUser(env, user, batch, now = Date.now()) {
   const id = String(user.id);
   const seenKey = `seen:${id}`;
   if (!(await env.COACH_KV.get(seenKey))) {
-    const meta = { t: now, n: clip([user.first_name, user.last_name].filter(Boolean).join(" "), 40), u: clip(user.username, 32), src: clip(batch && batch.src, 40) };
+    // своя метка приложения важнее; нет её — та, с которой человек нажал /start в боте (noteStartSource)
+    const src = (batch && batch.src) || await env.COACH_KV.get(`src0:${id}`).catch(() => null) || "";
+    const meta = { t: now, n: clip([user.first_name, user.last_name].filter(Boolean).join(" "), 40), u: clip(user.username, 32), src: clip(src, 40) };
     await env.COACH_KV.put(seenKey, "1", { metadata: meta });
     // впервые запустил по ссылке друга (startapp=r<id>) — бонус обоим сразу: человек реально пришёл, а не просто получил ссылку
     if (!isOwner(env, id) && await noteReferral(env, id, batch && batch.src).catch(() => null)) {
@@ -1560,7 +1562,10 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
   const day = isOwner(env, msg.from.id) ? reportCommandDay(msg.text, now) : null;
   if (!day) {
     const fwd = !isOwner(env, msg.from.id) && await forwardToOwner(env, msg, now);
-    if (!isOwner(env, msg.from.id)) await referralFromStart(env, (m, b) => tgCall(env, m, b), msg.from, msg.text, now).catch(() => null);
+    if (!isOwner(env, msg.from.id)) {
+      await noteStartSource(env, msg.from, msg.text).catch(() => null);
+      await referralFromStart(env, (m, b) => tgCall(env, m, b), msg.from, msg.text, now).catch(() => null);
+    }
     const got = await greet(env, msg);
     return fwd ? { ...(got || {}), forwarded: 1 } : got;
   }
