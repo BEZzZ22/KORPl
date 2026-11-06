@@ -142,5 +142,11 @@
   "status": "PROCESSING_UPLOAD",
   "mode": "inbox",
   "at": "2026-11-05T19:07:13.799726+00:00"
+ },
+ "mapfails": {
+  "publish_id": "v_inbox_file~v2.7704954289693755414",
+  "status": "SEND_TO_USER_INBOX",
+  "mode": "inbox",
+  "at": "2026-11-06T07:23:00.619708+00:00"
  }
 }
