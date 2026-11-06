@@ -43,5 +43,6 @@
  "turbo": 50,
  "farmzones": 51,
  "remind": 52,
- "early": 53
+ "early": 53,
+ "check": 54
 }
