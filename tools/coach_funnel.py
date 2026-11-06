@@ -65,3 +65,26 @@ print(f"  ноль разборов и бесплатный потрачен: {s
 print()
 print(f"Рефералка: привели друзей {sum(1 for v in refn.values() if v > 0)} юзеров, друзей всего {sum(refn.values())}")
 print(f"Призы за серию дней выдано: {len(prizes)}")
+
+# Откуда пришли: метка start_param первого захода (seen:<id>.src). Реферальные id не печатаем.
+KNOWN = {"yt": "YouTube", "ig": "Инста", "tgch": "TG-канал", "vk": "VK", "tt": "TikTok"}
+def src_name(s):
+    s = str(s or "")
+    if not s:
+        return "без метки (прямой заход, бот, старые ссылки)"
+    if s[0] == "r" and s[1:].isdigit():
+        return "рефералка (друг позвал)"
+    return KNOWN.get(s, "другая метка (матч, ссылка из бота)")
+src = {}
+for r in rows(seen_f):
+    if uid(r["k"]) in OWN:
+        continue
+    try:
+        m = json.loads(r.get("meta") or "{}")
+    except Exception:
+        m = {}
+    src[src_name(m.get("src"))] = src.get(src_name(m.get("src")), 0) + 1
+print()
+print("Откуда пришли (метка первого захода):")
+for k, v in sorted(src.items(), key=lambda x: -x[1]):
+    print(f"  {k}: {v}")
