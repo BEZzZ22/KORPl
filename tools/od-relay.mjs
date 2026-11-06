@@ -2,7 +2,11 @@
 // Воркеру OpenDota отвечает 429 (общие IP Cloudflare), а раннеру GitHub — 200. Раз в 20 секунд спрашиваем воркер
 // GET /relay, что принести, ходим в OpenDota и отдаём ответы в POST /relay (worker/relay.js).
 // В лог — только числа: репо публичный, номера матчей и аккаунтов туда не пишем.
-// Нужен секрет BOT_TOKEN (тот же ключ, что у «Отчёта по юзерам»).
+// Ключ к воркеру — RELAY_KEY: sha256 от «dotarazbor-relay:» + CLOUDFLARE_API_TOKEN, тот же кладёт в воркер «Воркер тренера».
+// Отдельного секрета не нужно (BOT_TOKEN в секретах репо нет, он только в Cloudflare).
+import { createHash } from "node:crypto";
+
+const KEY = process.env.RELAY_KEY || (process.env.CLOUDFLARE_API_TOKEN ? createHash("sha256").update(`dotarazbor-relay:${process.env.CLOUDFLARE_API_TOKEN}`).digest("hex") : "");
 
 const WORKER = process.env.WORKER_URL || "https://dotacoach.2007rggg.workers.dev";
 const OD = "https://api.opendota.com/api";
@@ -54,7 +58,7 @@ async function od(path, init = {}) {
 
 async function worker(method, body) {
   const res = await fetch(`${WORKER}/relay`, {
-    method, headers: { Authorization: `Bearer ${process.env.BOT_TOKEN}`, "Content-Type": "application/json" },
+    method, headers: { Authorization: `Bearer ${KEY}`, "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(60000),
   }).catch(() => null);
   if (!res || !res.ok) throw new Error(`воркер ${method}: ${res ? res.status : "сеть"}`);
@@ -83,7 +87,7 @@ async function round() {
 }
 
 async function main() {
-  if (!process.env.BOT_TOKEN) { console.log("Нет секрета BOT_TOKEN"); process.exit(1); }
+  if (!KEY) { console.log("Нет секрета CLOUDFLARE_API_TOKEN"); process.exit(1); }
   const until = Date.now() + Number(process.env.RELAY_MINUTES || 340) * 60_000;
   let rounds = 0, fails = 0;
   while (Date.now() < until) {
