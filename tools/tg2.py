@@ -496,11 +496,22 @@ async def main_people_folder(c):
 
 
 async def refresh_people(c, main=False):
+    import datetime
     try:
         n = await (main_people_folder(c) if main else people_folder(c))
-        print(f"Папка {'«Админы Разбор»' if main else '«Люди»'}: {n}")
+        txt = f"ok, в папке {n}"
     except Exception as e:
-        print(f"папка: {type(e).__name__}: {str(e)[:80]}")
+        txt = f"ошибка {type(e).__name__}: {str(e)[:150]}"
+    print(f"Папка {'«Админы Разбор»' if main else '«Люди»'}: {txt}")
+    try:  # статус в репозиторий, чтобы видеть без логов Actions
+        fp = ROOT / "promo" / ("folder_status_main.txt" if main else "folder_status_tg2.txt")
+        new = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="minutes") + "\n" + txt + "\n"
+        old = fp.read_text(encoding="utf-8").split("\n", 1)[1] if fp.exists() else ""
+        if old != txt + "\n":
+            fp.write_text(new, encoding="utf-8")
+            git_save("Дежурный: статус папки")
+    except Exception as e:
+        print(f"статус папки: {type(e).__name__}")
 
 
 async def folder():
@@ -950,7 +961,7 @@ async def spam_status(c):
 
 
 def git_save(msg):
-    files = [str(f) for f in (promo_tokens.DIR / "inbox_main.enc", INBOX, SENT, DONE, SPAM_FILE) if f.exists()]
+    files = [str(f) for f in (promo_tokens.DIR / "inbox_main.enc", INBOX, SENT, DONE, SPAM_FILE, ROOT / "promo" / "folder_status_main.txt", ROOT / "promo" / "folder_status_tg2.txt") if f.exists()]
     sh("git", "add", *files)
     if not sh("git", "diff", "--cached", "--name-only"):
         return
