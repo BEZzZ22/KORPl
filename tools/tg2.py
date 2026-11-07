@@ -935,6 +935,9 @@ async def process_queue(c, state):
     import datetime
     from telethon.tl.types import User
 
+    import time as _t
+    if _t.time() < state.get("pause_until", 0):  # лимит Телеги: ждём, потом сами продолжаем
+        return False
     sh("git", "fetch", "-q", "origin", f"+refs/heads/{QUEUE_BRANCH}:refs/remotes/origin/{QUEUE_BRANCH}")
     raw = sh("git", "show", f"origin/{QUEUE_BRANCH}:promo/outreach.json")
     try:
@@ -967,8 +970,10 @@ async def process_queue(c, state):
         except Exception as e:
             print(f"ошибка отправки: {type(e).__name__}: {str(e)[:120]}")
             if type(e).__name__ in ("PeerFloodError", "FloodWaitError"):
-                # лимит Телеги: письмо остаётся в очереди, смену не долбим дальше
-                state["cold"] = COLD_MAX
+                # лимит Телеги: письмо остаётся в очереди, ждём и пробуем снова (не на всю смену)
+                wait = int(getattr(e, "seconds", 0) or 0) + 10
+                state["pause_until"] = _t.time() + (wait if type(e).__name__ == "FloodWaitError" else 3600)
+                print(f"лимит Телеги, пауза {wait if type(e).__name__ == 'FloodWaitError' else 3600} с")
                 break
         done.add(iid)
         changed = True
