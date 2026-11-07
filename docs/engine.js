@@ -48,6 +48,10 @@ const NETWORTH_GAP_20 = 5000; const SUPPORT_LEVEL_GAP = 3; const KILLS_NO_FARM =
 const DRAFT_MIN_GAMES = 40; const DRAFT_BAD_WR = 0.42; const DRAFT_GOOD_WR = 0.56;
 const LANE_XP_GAP = 1500;
 const BKB_SOLO_WINDOW = 240;
+// Саппорт забирает фарм: 20 крипов к 10:00 — выше 90-го перцентиля саппортов на любом ранге (rank_norms.json)
+const SUPPORT_CS_MIN = 20; const SUPPORT_CS_CORE_MAX = 35;
+// Сила героя в текущем патче на ранге игрока (hero_meta.json): игр на герое и ранге, пороги винрейта, место в списке
+const META_MIN_GAMES = 3000; const META_WEAK_WR = 0.47; const META_STRONG_WR = 0.53; const META_EDGE = 20; const META_MAX_AGE_DAYS = 35;
 // Дорогие предметы с активкой: купил и ни разу не нажал — деньги в пустоту
 const ACTIVE_ITEMS = ["black_king_bar", "blink", "force_staff", "hurricane_pike", "cyclone", "ghost", "glimmer_cape",
   "lotus_orb", "shivas_guard", "sheepstick", "orchid", "bloodthorn", "abyssal_blade", "silver_edge", "manta", "refresher",
@@ -419,6 +423,8 @@ class MatchAnalyzer {
     const refs = guides || {};
     this.guides = refs.guides || (refs.heroes && refs.author ? refs : null);
     this.builds = refs.builds || (refs.heroes && refs.vs ? refs : null);
+    // винрейт героев в пабах по рангам текущего патча
+    this.meta = refs.meta || null;
     this.matchups = Array.isArray(matchups) ? matchups : [];
     this.norms = norms || {};
     this.issues = [];
@@ -2143,6 +2149,7 @@ class MatchAnalyzer {
     this.checkKillsNoFarm();
     this.checkSupportLevel();
     this.checkBkbSolo();
+    this.checkSupportFarm();
   }
 
   micro(category, severity, key, params = {}, tipKey = `${key}_tip`) {
@@ -2550,6 +2557,20 @@ class MatchAnalyzer {
     this.micro(LANE, WARN, "micro_support_level", { opp: this.od.heroName(opp.hero_id), mine, theirs });
   }
 
+  // Саппорт к 10:00 добил больше крипов, чем положено, а кор на той же линии недофармил: фарм ушёл не тому
+  checkSupportFarm() {
+    const p = this.p, lh = p.lh_t;
+    if (this.core || !this.roleSure || this.dominant || this.minutes < 15 || !lh || lh.length < 11) return;
+    const onLane = (a) => a !== p && a.lane === p.lane && !a.is_roaming && this.roleOf.get(a) <= 3;
+    const core = this.allies.filter(onLane).sort((a, b) => this.roleOf.get(a) - this.roleOf.get(b))[0];
+    if (!core || !core.lh_t || core.lh_t.length < 11) return;
+    const mine = lh[10], theirs = core.lh_t[10];
+    if (mine < SUPPORT_CS_MIN || theirs >= SUPPORT_CS_CORE_MAX || mine * 1.5 < theirs) return;
+    // кор умирал или уходил с линии: тогда добивать за него правильно
+    if ((core.deaths_log || []).filter((d) => d.time < LANING_END).length >= 2) return;
+    this.micro(LANE, WARN, "micro_support_cs", { mine, creeps: plural(mine, "крип", "крипа", "крипов"), core: this.od.heroName(core.hero_id), core_lh: theirs });
+  }
+
   // Купил БКБ и в первые минуты умер один: «реализовывать» пошёл без команды
   checkBkbSolo() {
     if (!this.core || this.dominant) return;
@@ -2954,10 +2975,11 @@ class MatchAnalyzer {
       if (!m || m.games_played < DRAFT_MIN_GAMES) continue;
       rows.push({ hero_id: e.hero_id, name: this.od.heroName(e.hero_id), games: m.games_played, wr: m.wins / m.games_played });
     }
-    if (rows.length < 3) return null;
-    rows.sort((a, b) => a.wr - b.wr);
     const hero = this.od.heroName(this.p.hero_id);
-    const notes = [];
+    const meta = this.heroMetaNote();
+    if (rows.length < 3) return meta ? { hero_id: this.p.hero_id, hero, avg_wr: null, rows: [], notes: [meta] } : null;
+    rows.sort((a, b) => a.wr - b.wr);
+    const notes = meta ? [meta] : [];
     // Матчапы OpenDota — про-матчи, игр мало: 41% на 49 играх ещё случайность. Отклонение от 50% должно быть
     // больше полутора стандартных ошибок, иначе молчим
     const real = (wr, games) => Math.abs(wr - 0.5) >= 1.5 * Math.sqrt(0.25 / games);
@@ -2973,6 +2995,28 @@ class MatchAnalyzer {
     if (rows.length >= 4 && avg <= 0.47 && real(avg, total)) notes.push({ severity: WARN, text: this.say("draft_hard", { hero, wr: pyRound(avg * 100) }) });
     if (rows.length >= 4 && avg >= 0.53 && real(avg, total)) notes.push({ severity: GOOD, text: this.say("draft_easy", { hero, wr: pyRound(avg * 100) }) });
     return { hero_id: this.p.hero_id, hero, avg_wr: avg, rows: rows.map((r) => ({ ...r, wr: r.wr })), notes };
+  }
+
+  // Как герой игрока сейчас выигрывает в пабах на его ранге (текущий патч). Молчим, если цифры не про эту катку:
+  // патч только вышел, катка из прошлого патча или данные старше пяти недель от катки
+  heroMetaNote() {
+    const m = this.meta, idx = RANK_ORDER.indexOf(this.bracket);
+    if (!m || !m.fresh || !m.h || idx < 0 || !this.match.start_time) return null;
+    const t = this.match.start_time * 1000;
+    if (t < Date.parse(m.patch_date) || Math.abs(t - Date.parse(m.fetched)) > META_MAX_AGE_DAYS * 86400e3) return null;
+    const wr = (id) => { const r = (m.h[id] || [])[idx]; return r && r[0] >= META_MIN_GAMES ? r[1] / r[0] : null; };
+    const mine = wr(this.p.hero_id);
+    if (mine == null) return null;
+    const all = Object.keys(m.h).map(wr).filter((x) => x != null).sort((a, b) => b - a);
+    const place = all.filter((x) => x > mine).length + 1;
+    const [games] = m.h[this.p.hero_id][idx];
+    const params = { hero: this.od.heroName(this.p.hero_id), patch: m.patch, rank: RANKS[this.bracket][0], wr: tenths(mine * 100),
+      games: `${num(games)} ${plural(games, "игра", "игры", "игр")}`, place, from_end: all.length - place + 1, total: all.length };
+    params.weak_place = params.from_end === 1 ? `самый слабый из ${all.length}` : `${params.from_end}-й с конца из ${all.length}`;
+    params.strong_place = place === 1 ? `самый сильный из ${all.length}` : `${place}-й из ${all.length}`;
+    if (mine <= META_WEAK_WR && params.from_end <= META_EDGE) return { severity: WARN, hero_id: this.p.hero_id, text: this.say("meta_weak", params) };
+    if (mine >= META_STRONG_WR && place <= META_EDGE) return { severity: GOOD, hero_id: this.p.hero_id, text: this.say("meta_strong", params) };
+    return null;
   }
 
   verdict(scores, overall) {

@@ -9,8 +9,8 @@ import { createHash } from "node:crypto";
 
 const DOCS = new URL("../docs/", import.meta.url);
 const SNAP = new URL("./fixtures/versions.json", import.meta.url);
-// данные, которые раз в неделю обновляет workflow «Сборки героев» без смены версии: старый файл на один запуск не страшен
-const SKIP = new Set(["builds.json", "khan_builds.json"]);
+// данные, которые раз в неделю обновляет workflow «Сборки героев» без смены версии (сборки, гайды, сила героев, контрпики): старый файл на один запуск не страшен
+const SKIP = new Set(["builds.json", "khan_builds.json", "hero_meta.json", "counterpick.json"]);
 
 function current() {
   const refs = new Map(); // файл -> Set версий
