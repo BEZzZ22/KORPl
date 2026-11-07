@@ -160,5 +160,11 @@
   "status": "SEND_TO_USER_INBOX",
   "mode": "inbox",
   "at": "2026-11-07T07:44:46.951549+00:00"
+ },
+ "botshow": {
+  "publish_id": "v_inbox_file~v2.7705445764281174038",
+  "status": "PROCESSING_UPLOAD",
+  "mode": "inbox",
+  "at": "2026-11-07T15:15:48.426233+00:00"
  }
 }
