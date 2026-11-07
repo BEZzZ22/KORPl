@@ -650,3 +650,60 @@ test("без разобранного реплея: быстрый разбор 
   const tusk = analyze(m, m.players.find((x) => od.heroName(x.hero_id) === "Tusk"), od, kb, tx, pro, bench, {}, []);
   assert.ok(tusk.findings.some((f) => /смерт/i.test(f.text)));
 });
+
+// ---------- новые проверки: сила героя в патче на ранге и саппорт с фармом кора ----------
+
+const withMeta = (match, hero, meta) => {
+  const p = match.players.find((x) => od.heroName(x.hero_id) === hero);
+  return analyze(match, p, od, kb, tx, pro, bench, {}, [], null, { meta });
+};
+// 30 героев со Стража: у героя игрока свой винрейт, остальные ровно 50%
+const metaFor = (heroId, wr, extra = {}) => {
+  const h = {};
+  for (let id = 1; id <= 30; id++) h[id] = Array.from({ length: 8 }, () => [10000, 5000]);
+  h[heroId] = Array.from({ length: 8 }, () => [10000, Math.round(10000 * wr)]);
+  return { fetched: "2026-10-20", patch: "7.41", patch_date: "2026-03-24", fresh: true, h, ...extra };
+};
+const guardianMatch = () => { const m = copy(); for (const p of m.players) p.rank_tier = 25; return m; };
+const invokerId = () => copy().players.find((x) => od.heroName(x.hero_id) === "Invoker").hero_id;
+const metaNotes = (a) => (a.draft ? a.draft.notes : []).map((n) => n.text);
+
+test("патч: слабый на ранге герой получает пометку с цифрами патча", () => {
+  const a = withMeta(guardianMatch(), "Invoker", metaFor(invokerId(), 0.44));
+  const t = metaNotes(a).find((x) => /7\.41/.test(x));
+  assert.ok(t, "нет пометки о патче");
+  assert.match(t, /Страж/);
+  assert.match(t, /44,0%/);
+  assert.match(t, /10\s000 игр/);
+  assert.match(t, /самый слабый из 31/);
+});
+
+test("патч: сильный герой — хорошая пометка, средний — молчим", () => {
+  assert.ok(metaNotes(withMeta(guardianMatch(), "Invoker", metaFor(invokerId(), 0.56))).some((x) => /в силе|один из сильных/.test(x)));
+  assert.ok(!metaNotes(withMeta(guardianMatch(), "Invoker", metaFor(invokerId(), 0.5))).some((x) => /7\.41/.test(x)));
+});
+
+test("патч: не показываем старые цифры — свежий патч, катка из прошлого патча, данные старше пяти недель", () => {
+  const id = invokerId();
+  const silent = (meta) => !metaNotes(withMeta(guardianMatch(), "Invoker", meta)).some((x) => /7\.41/.test(x));
+  assert.ok(silent(metaFor(id, 0.44, { fresh: false })));
+  assert.ok(silent(metaFor(id, 0.44, { patch_date: "2026-11-01" })));
+  assert.ok(silent(metaFor(id, 0.44, { fetched: "2027-01-10" })));
+  // мало игр на ранге (у Титанов OpenDota игр не считает) — тоже молчим
+  const few = metaFor(id, 0.44); few.h[id] = few.h[id].map(() => [500, 200]);
+  assert.ok(silent(few));
+});
+
+// Tusk стоит на лёгкой линии с Clinkz
+const supportCs = (tusk, clinkz) => {
+  const m = copy();
+  const t = m.players.find((x) => od.heroName(x.hero_id) === "Tusk"), c = m.players.find((x) => od.heroName(x.hero_id) === "Clinkz");
+  t.lh_t[10] = tusk; c.lh_t[10] = clinkz;
+  return run(m, "Tusk").findings.some((f) => f.kind === "micro" && /к 10/i.test(f.text) && /Clinkz/.test(f.text));
+};
+
+test("саппорт забрал фарм у кора на своей линии", () => {
+  assert.ok(supportCs(24, 30));
+  assert.ok(!supportCs(12, 30), "обычный саппорт");
+  assert.ok(!supportCs(24, 60), "кор и так нафармил");
+});

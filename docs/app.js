@@ -2,10 +2,10 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan, skillPlan,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
-} from "./engine.js?v=46";
+} from "./engine.js?v=47";
 import { aegisBadge, openShowcase, whenGone } from "./aegis.js?v=9";
 import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=5";
-import { matchVerdicts } from "./blame.js?v=12";
+import { matchVerdicts } from "./blame.js?v=13";
 import { rankMedal3d } from "./medal3d.js?v=7";
 import { heroCard3d } from "./herocard3d.js?v=5";
 import { tacticalTable } from "./map3d.js?v=10";
@@ -45,7 +45,7 @@ const TURBO_MODE = 23;
 
 const tg = window.Telegram && window.Telegram.WebApp;
 const app = document.getElementById("app");
-let dictionary = null, knowledge = null, texts = null, itemIds = null, norms = {}, guides = null, builds = null;
+let dictionary = null, knowledge = null, texts = null, itemIds = null, norms = {}, guides = null, builds = null, heroMeta = null;
 let pollTimer = null;
 let section = "home", lastAnalysis = null, tabbar = null;
 // Растёт при каждом переходе: экран, догрузившийся после ухода с него, не перерисовывает чужой
@@ -1508,7 +1508,7 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false, 
   if (stale(seq)) return;
   let a;
   try {
-    a = analyze(match, player, dictionary, knowledge, texts, pro, bench, norms, matchups, replay, { guides, builds });
+    a = analyze(match, player, dictionary, knowledge, texts, pro, bench, norms, matchups, replay, { guides, builds, meta: heroMeta });
   } catch (e) {
     // иначе на необычном матче вечно крутится «Призываю матч…»
     console.error(e);
@@ -4181,8 +4181,9 @@ let booted = false;
 let extrasReady = null;
 function loadExtras() {
   const optional = (url, fallback) => fetch(url).then((r) => (r.ok ? r.json() : fallback)).catch(() => fallback);
-  return Promise.all([optional("rank_norms.json?v=4", {}), optional("khan_builds.json?v=1", null), optional("builds.json?v=1", null)])
-    .then(([rn, kh, bl]) => { norms = rn || {}; guides = kh; builds = bl; });
+  return Promise.all([optional("rank_norms.json?v=4", {}), optional("khan_builds.json?v=1", null), optional("builds.json?v=1", null),
+    optional("hero_meta.json?v=1", null)])
+    .then(([rn, kh, bl, hm]) => { norms = rn || {}; guides = kh; builds = bl; heroMeta = hm; });
 }
 
 async function boot() {
@@ -4220,7 +4221,7 @@ async function boot() {
     const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
       constants("heroes"), localDict("items", 200), localDict("abilities", 1000),
       constants("item_ids"),
-      ownJson("knowledge.json?v=12"), ownJson("texts.json?v=19"),
+      ownJson("knowledge.json?v=12"), ownJson("texts.json?v=20"),
     ]);
     dictionary = createDictionary({ heroes, items, abilities });
     itemIds = ids;

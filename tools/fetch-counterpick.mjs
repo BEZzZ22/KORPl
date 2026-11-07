@@ -91,6 +91,24 @@ await Promise.all(Array.from({ length: 4 }, async () => {
   }
 }));
 
+// Старая дизинформация: статьи dota2.ru пишут под разные патчи. Объяснение, где названа способность, которой
+// в текущей игре ни у кого нет (переделали или убрали), выбрасываем вместе с парой «враг — контрпик»
+const [abilities, heroAbilities, items] = await Promise.all(["abilities", "hero_abilities", "items"].map((c) => get(`https://api.opendota.com/api/constants/${c}`, "json")));
+const live = new Set(Object.values(heroAbilities).flatMap((x) => [...(x.abilities || []), ...(x.facets || []).flatMap((f) => (f && f.abilities) || [])]));
+const itemNames = Object.values(items).map((x) => x.dname).filter(Boolean);
+const liveNames = new Set(Object.entries(abilities).filter(([k, a]) => live.has(k) && a.dname).map(([, a]) => a.dname));
+const deadNames = [...new Set(Object.values(abilities).map((a) => a.dname))]
+  .filter((d) => d && d.length > 3 && !liveNames.has(d) && !itemNames.some((i) => i.includes(d)) && ![...liveNames].some((l) => l.includes(d)));
+const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const deadRe = deadNames.length ? new RegExp(`(?<![A-Za-z])(${deadNames.map(esc).join("|")})(?![A-Za-z])`) : null;
+const stale = new Set();
+for (const list of Object.values(out)) {
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = deadRe && deadRe.exec(list[i][1]);
+    if (m) { stale.add(m[1]); list.splice(i, 1); }
+  }
+}
+
 const texts = [], textId = new Map();
 const h = {};
 for (const [id, list] of Object.entries(out).sort((a, b) => Number(a[0]) - Number(b[0]))) {
@@ -102,5 +120,6 @@ for (const [id, list] of Object.entries(out).sort((a, b) => Number(a[0]) - Numbe
 writeFileSync(new URL("../docs/counterpick.json", import.meta.url), JSON.stringify({ t: texts, h }) + "\n");
 const n = Object.values(h);
 console.log(`героев: ${n.length}, без контрпиков: ${n.filter((x) => !x.length).length}, в среднем ${(n.reduce((s, x) => s + x.length, 0) / n.length).toFixed(1)}, объяснений ${texts.length}`);
+if (stale.size) console.log(`убрал объяснения со старыми способностями: ${[...stale].join(", ")}`);
 if (misses.size) console.log(`не распознал: ${[...misses].join("; ")}`);
 if (process.env.HEADINGS) console.log([...headings].join("\n"));

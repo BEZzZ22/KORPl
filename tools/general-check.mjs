@@ -63,7 +63,8 @@ if (!heroes) { console.log("OpenDota не отдала героев — пров
 const dictionary = createDictionary({ heroes, items: doc("items.json"), abilities: doc("abilities.json") });
 const knowledge = doc("knowledge.json"), texts = doc("texts.json");
 let norms = {}; try { norms = doc("rank_norms.json"); } catch {}
-const extra = { guides: (() => { try { return doc("khan_builds.json"); } catch { return null; } })(), builds: (() => { try { return doc("builds.json"); } catch { return null; } })() };
+const extra = { guides: (() => { try { return doc("khan_builds.json"); } catch { return null; } })(), builds: (() => { try { return doc("builds.json"); } catch { return null; } })(),
+  meta: (() => { try { return doc("hero_meta.json"); } catch { return null; } })() };
 
 const MODES = { 1: "all pick", 2: "CM", 3: "random draft", 4: "SD", 5: "all random", 16: "CD", 18: "ability draft", 22: "ranked AP", 23: "турбо" };
 const pub = (await od("/publicMatches", { cache: false })) || [];
