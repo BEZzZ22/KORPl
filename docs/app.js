@@ -207,8 +207,9 @@ function hapticTick() {
 
 // Стеклянная панель вкладок. «Линза» подчиняется пружине: едет за пальцем, тянется от скорости,
 // при нажатии разбухает, на отпускании мягко садится на вкладку. Содержимое меняется после паузы,
-// чтобы тяжёлая перерисовка не мешала жесту. live: переключать на лету (разбор) или при отпускании (навигация)
-function glassBar(bar, itemSelector, { live, onPick }) {
+// чтобы тяжёлая перерисовка не мешала жесту. live: переключать на лету (разбор) или при отпускании (навигация).
+// scroll: ряд шире экрана и листается пальцем вбок — тогда линза не ездит за пальцем, вкладка выбирается тапом
+function glassBar(bar, itemSelector, { live, onPick, scroll = false }) {
   const lens = h("div", { class: "lens", "aria-hidden": "true" });
   bar.prepend(lens);
   const items = () => [...bar.querySelectorAll(itemSelector)];
@@ -253,11 +254,22 @@ function glassBar(bar, itemSelector, { live, onPick }) {
     lens.style.width = `${g.w}px`;
     T.x = g.l;
   };
+  // выбранная вкладка в длинном ряду должна быть видна целиком: подкручиваем ряд к ней
+  const reveal = (i, instant) => {
+    const g = geometry(i);
+    if (!g || bar.scrollWidth <= bar.clientWidth + 1) return;
+    const pad = 24, from = bar.scrollLeft, to = from + bar.clientWidth;
+    let left = from;
+    if (g.l - pad < from) left = g.l - pad;
+    else if (g.l + g.w + pad > to) left = g.l + g.w + pad - bar.clientWidth;
+    if (left !== from) bar.scrollTo({ left: Math.max(0, left), behavior: instant || reduce ? "auto" : "smooth" });
+  };
   const place = (i, instant = false) => {
     active = i; hover = i;
     snap(i);
     items().forEach((el, n) => el.classList.toggle("hot", n === i));
     if (instant || reduce) { S.x = T.x; S.vx = 0; apply(); } else run();
+    if (scroll) reveal(i, instant);
   };
   const indexAt = (x) => {
     const r = bar.getBoundingClientRect();
@@ -284,6 +296,18 @@ function glassBar(bar, itemSelector, { live, onPick }) {
     }
     run();
   };
+
+  if (scroll) {
+    // тап по вкладке; прокрутка ряда пальцем click не даёт, так что случайно не переключится
+    bar.addEventListener("click", (e) => {
+      const i = items().indexOf(e.target.closest(itemSelector));
+      if (i < 0) return;
+      if (i !== active) { hapticTick(); onPick(i); }
+      place(i);
+    });
+    if (window.ResizeObserver) new ResizeObserver(() => { if (active >= 0) place(active, true); }).observe(bar);
+    return { place, current: () => active };
+  }
 
   bar.addEventListener("pointerdown", (e) => {
     if (e.pointerType === "mouse" && e.button !== 0) return;
@@ -1690,7 +1714,7 @@ function analysisScreen(a) {
   lastAnalysis = a;
   const f = a.facts;
   const content = h("div", { class: "tab-content" });
-  const tabs = h("div", { class: "tabs", role: "tablist" });
+  const tabs = h("div", { class: "tabs scroll", role: "tablist" });
   let index = -1, lens = null;
   const pages = new Map();
   // без реплея есть только итоги матча: фазы, смерти, карта и графики пустые — эти вкладки не показываем
@@ -1749,7 +1773,7 @@ function analysisScreen(a) {
   if (COACH_URL && !a.demo && !a.lite) rememberForCompare(a);
   if (a._goalResult === undefined && !a.demo && !a.lite) { a._goalResult = trackProgress(a); if (a.hist_self) syncSoon(a.hist_self.account); }
   TABS.forEach(([name]) => tabs.append(h("button", { class: "tab", role: "tab" }, name)));
-  lens = glassBar(tabs, ".tab", { live: true, onPick: select });
+  lens = glassBar(tabs, ".tab", { live: true, onPick: select, scroll: true });
   // Свайп по содержимому листает вкладки; графики со своим жестом не трогаем
   // и всё, что само листается вбок (чипсы вопросов тренеру, таблицы): иначе прокрутка ряда уводит на соседнюю вкладку
   const scrollsX = (el) => {
