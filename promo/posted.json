@@ -45,5 +45,6 @@
  "remind": 52,
  "early": 53,
  "check": 54,
- "night": 55
+ "night": 55,
+ "faq_free": 56
 }
