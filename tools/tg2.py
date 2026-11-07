@@ -452,11 +452,55 @@ async def people_folder(c):
     return len(peers)
 
 
-async def refresh_people(c):
+async def main_people_folder(c):
+    """Папка «Админы Разбор» на основе: ТОЛЬКО те, кому мы писали из очереди (и кто ответил). Остальную личку Ярика не трогаем."""
+    from telethon.tl.functions.messages import GetDialogFiltersRequest, UpdateDialogFilterRequest
+    from telethon.tl.types import DialogFilter, TextWithEntities, User
+
+    title = "Админы Разбор"
+    names = set()
+    for fn in ("outreach_sent.json",):
+        fp = ROOT / "promo" / fn
+        if fp.exists():
+            names |= {k.lower() for k in json.loads(fp.read_text(encoding="utf-8"))}
+    peers = []
+    async for d in c.iter_dialogs(limit=400):
+        e = d.entity
+        if isinstance(e, User) and not e.bot and not e.is_self and (e.username or "").lower() in names:
+            peers.append(d.input_entity)
+    if not peers:
+        return 0
+    res = await c(GetDialogFiltersRequest())
+    filters = getattr(res, "filters", res)
+    fid = None
+    used = set()
+    for f in filters:
+        fi = getattr(f, "id", None)
+        if fi is None:
+            continue
+        used.add(fi)
+        t = getattr(f, "title", "")
+        t = getattr(t, "text", t)
+        if t == title:
+            fid = fi
+    if fid is None:
+        fid = max([4] + list(used)) + 1
+    peers = peers[:100]
     try:
-        print(f"Папка «Люди»: {await people_folder(c)}")
+        f = DialogFilter(id=fid, title=TextWithEntities(text=title, entities=[]), pinned_peers=[],
+                         include_peers=peers, exclude_peers=[])
+    except TypeError:
+        f = DialogFilter(id=fid, title=title, pinned_peers=[], include_peers=peers, exclude_peers=[])
+    await c(UpdateDialogFilterRequest(id=fid, filter=f))
+    return len(peers)
+
+
+async def refresh_people(c, main=False):
+    try:
+        n = await (main_people_folder(c) if main else people_folder(c))
+        print(f"Папка {'«Админы Разбор»' if main else '«Люди»'}: {n}")
     except Exception as e:
-        print(f"папка: {type(e).__name__}")
+        print(f"папка: {type(e).__name__}: {str(e)[:80]}")
 
 
 async def folder():
@@ -1052,6 +1096,9 @@ async def listen():
                 print(f"Папка «Люди»: {await people_folder(c)}")
             except Exception as e:
                 print(f"папка: {type(e).__name__}")
+        if acc == "main" and time.time() >= next_folder:  # папка админов на основе
+            next_folder = time.time() + 1800
+            await refresh_people(c, True)
         try:
             sent_any = await process_queue(c, state)
         except Exception as e:
@@ -1063,12 +1110,10 @@ async def listen():
             await dump_inbox(c, acc == "main")
             git_save("Дежурный: входящие")
             notify("Новое сообщение в рабочей переписке." if acc == "main" else "Новое сообщение на акке менеджера.")
-            if acc == "tg2":  # ответивший человек сразу попадает в папку «Люди»
-                await refresh_people(c)
+            await refresh_people(c, acc == "main")  # ответивший человек сразу попадает в папку
         elif sent_any:
             git_save("Дежурный: отправлено")
-            if acc == "tg2":  # кому только что написали, сразу в папку «Люди»
-                await refresh_people(c)
+            await refresh_people(c, acc == "main")  # кому только что написали, сразу в папку
     await c.disconnect()
     ref = os.environ.get("GITHUB_REF_NAME", "")
     if ref:  # следующая смена
