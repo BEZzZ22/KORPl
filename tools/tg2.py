@@ -457,7 +457,7 @@ async def main_people_folder(c):
     from telethon.tl.functions.messages import GetDialogFiltersRequest, UpdateDialogFilterRequest
     from telethon.tl.types import DialogFilter, TextWithEntities, User
 
-    title = "Админы Разбор"
+    title = "Админы Дота"
     names = set()
     for fn in ("outreach_sent.json",):
         fp = ROOT / "promo" / fn
