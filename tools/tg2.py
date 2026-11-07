@@ -452,6 +452,13 @@ async def people_folder(c):
     return len(peers)
 
 
+async def refresh_people(c):
+    try:
+        print(f"Папка «Люди»: {await people_folder(c)}")
+    except Exception as e:
+        print(f"папка: {type(e).__name__}")
+
+
 async def folder():
     """Папка «DotaRazbor»: наш канал, чат, бот. Папка «Люди»: личные диалоги с людьми."""
     from telethon.tl.functions.messages import UpdateDialogFilterRequest
@@ -1051,8 +1058,12 @@ async def listen():
             await dump_inbox(c, acc == "main")
             git_save("Дежурный: входящие")
             notify("Новое сообщение в рабочей переписке." if acc == "main" else "Новое сообщение на акке менеджера.")
+            if acc == "tg2":  # ответивший человек сразу попадает в папку «Люди»
+                await refresh_people(c)
         elif sent_any:
             git_save("Дежурный: отправлено")
+            if acc == "tg2":  # кому только что написали, сразу в папку «Люди»
+                await refresh_people(c)
     await c.disconnect()
     ref = os.environ.get("GITHUB_REF_NAME", "")
     if ref:  # следующая смена
