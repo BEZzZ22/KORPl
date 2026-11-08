@@ -1403,8 +1403,27 @@ async function webhookSecret(token) {
 }
 
 const COMMANDS_VERSION = "1";
+// Профиль бота для поиска Телеги: имя и описания с русскими словами «дота», «разбор катки» (решение Ярика 08.11).
+// Меняешь текст — подними PROFILE_VERSION, крон поставит заново. setMyName Телега часто режет лимитом — тогда повтор на следующем заходе
+export const PROFILE_VERSION = "1";
+export const BOT_PROFILE = {
+  name: "Дота Разбор — разбор катки Dota 2",
+  short_description: "Разбор твоей катки Dota 2: кто слил, ошибки по минутам, что собирать. Кидай ID матча",
+  description: "Разберу любую твою катку Dota 2 за секунды: кто тащил и кто слил, где ты ошибался по минутам, что собрать и как играют про на твоём герое. "
+    + "Бесплатно, прямо в Телеграме. Жми «Старт» и кидай ID матча или привяжи аккаунт",
+};
+export async function ensureProfile(env, send = (m, b) => sendTelegram(env, m, b)) {
+  if (!env.COACH_KV || !env.BOT_TOKEN || (await env.COACH_KV.get("tg_profile")) === PROFILE_VERSION) return false;
+  const ok = [];
+  ok.push(await send("setMyName", { name: BOT_PROFILE.name }).catch(() => false));
+  ok.push(await send("setMyShortDescription", { short_description: BOT_PROFILE.short_description }).catch(() => false));
+  ok.push(await send("setMyDescription", { description: BOT_PROFILE.description }).catch(() => false));
+  if (ok.every(Boolean)) await env.COACH_KV.put("tg_profile", PROFILE_VERSION);
+  return ok.every(Boolean);
+}
 export async function ensureWebhook(env) {
   if (!env.COACH_KV || !env.BOT_TOKEN) return false;
+  await ensureProfile(env).catch((e) => console.log(`профиль бота: ${e && e.message || e}`));
   if ((await env.COACH_KV.get("tg_webhook")) === WEBHOOK_VERSION) return true;
   const ok = await sendTelegram(env, "setWebhook", {
     url: `${env.WORKER_URL || WORKER_URL}/tg`, secret_token: await webhookSecret(env.BOT_TOKEN), allowed_updates: ["message", "edited_message", "callback_query", "chat_member", "pre_checkout_query"],
