@@ -55,3 +55,23 @@ test("повтор без реплея: смерти в драках берут 
   assert.ok(m.kills.some((k) => k.pos));
   assert.equal(m.posAt(0, 900), null);
 });
+
+test("повтор: сломанные варды, руны, Рошан, драки и выкупы", () => {
+  const m = replayModel(match, replay, ME, { heroKey: (id) => heroes[id].name.replace("npc_dota_hero_", ""), heroName: names.heroName });
+  // сломал вард только герой другой команды
+  const broken = m.wards.filter((w) => w.breaker != null);
+  assert.ok(broken.length > 10);
+  assert.ok(broken.every((w) => m.players[w.breaker].radiant !== w.radiant));
+  // все руны из runes_log, с реплеем у каждой есть место
+  const runes = match.players.reduce((n, p) => n + (p.runes_log || []).length, 0);
+  assert.equal(m.runes.length, runes);
+  assert.ok(m.runes.every((r) => r.pos));
+  // Рошан в одном из логов, Аегис у героя команды-убийцы
+  const rosh = m.objectives.filter((o) => o.kind === "roshan");
+  assert.ok(rosh.length >= 1 && rosh.every((o) => o.pos));
+  for (const o of rosh) if (o.aegis != null) assert.equal(m.players[o.aegis].radiant, o.radiant);
+  assert.ok(m.fights.length > 0 && m.fights.every((f) => f.r >= 7 && f.r <= 20));
+  assert.equal(m.buybacks.length, match.players.reduce((n, p) => n + (p.buyback_log || []).length, 0));
+  // у большинства убийств известно, откуда бил убийца
+  assert.ok(m.kills.filter((k) => k.from).length >= m.kills.length * 0.9);
+});
