@@ -81,6 +81,13 @@ export function minimap(points, { label, cls = "" } = {}) {
 
 const OBS_LIFE = 360, SEN_LIFE = 420;
 const OBS_VISION = 1600 / 128; // обзор обса 1600 единиц, клетка — 128
+// логова Рошана в координатах SVG: верхнее у лавы и нижнее у полумесяца
+const ROSH_PITS = [[38.5, 44.5], [85.5, 85]];
+// руны по номерам OpenDota (runes_log.key)
+export const RUNES = {
+  0: "двойного урона", 1: "ускорения", 2: "иллюзий", 3: "невидимости", 4: "восстановления",
+  5: "богатства", 6: "волшебства", 7: "воды", 8: "мудрости", 9: "щита",
+};
 
 // Все события и сущности для повтора. heroKey(hero_id) -> "tusk", heroName(hero_id) -> "Tusk"
 export function replayModel(match, replay, me, { heroKey, heroName }) {
@@ -116,7 +123,7 @@ export function replayModel(match, replay, me, { heroKey, heroName }) {
       const victim = byKey.get(k.key);
       if (!victim) continue;
       const vi = players.indexOf(victim);
-      kills.push({ t: k.time, killer: ki, victim: vi, pos: lastPos(vi, k.time) });
+      kills.push({ t: k.time, killer: ki, victim: vi, pos: lastPos(vi, k.time), from: posAt(ki, k.time) || lastPos(ki, k.time) });
     }
   });
   // без реплея место смерти берём из больших драк: OpenDota хранит его по игроку
@@ -132,21 +139,49 @@ export function replayModel(match, replay, me, { heroKey, heroName }) {
   }
   kills.sort((a, b) => a.t - b.t);
 
+  // кто сломал вард: attackername в obs_left_log. Свой же герой там — вард просто истёк
+  const heroIdx = (name) => { const v = byKey.get(name); return v ? players.indexOf(v) : -1; };
   const wards = [];
   match.players.forEach((p, i) => {
-    const left = new Map((p.obs_left_log || []).filter((w) => "ehandle" in w).map((w) => [w.ehandle, w.time]));
-    const senLeft = new Map((p.sen_left_log || []).filter((w) => "ehandle" in w).map((w) => [w.ehandle, w.time]));
-    for (const w of p.obs_log || []) {
-      if (typeof w.x !== "number") continue;
-      const end = left.has(w.ehandle) ? left.get(w.ehandle) : w.time + OBS_LIFE;
-      wards.push({ kind: "obs", owner: i, radiant: players[i].radiant, x: w.x, y: w.y, t: w.time, end, dewarded: end < w.time + OBS_LIFE - 10 });
-    }
-    for (const w of p.sen_log || []) {
-      if (typeof w.x !== "number") continue;
-      const end = senLeft.has(w.ehandle) ? senLeft.get(w.ehandle) : w.time + SEN_LIFE;
-      wards.push({ kind: "sen", owner: i, radiant: players[i].radiant, x: w.x, y: w.y, t: w.time, end });
+    const leftOf = (log) => new Map((log || []).filter((w) => "ehandle" in w).map((w) => [w.ehandle, w]));
+    const left = leftOf(p.obs_left_log), senLeft = leftOf(p.sen_left_log);
+    const add = (kind, w, l, life) => {
+      if (typeof w.x !== "number") return;
+      const end = l ? l.time : w.time + life;
+      const bi = l && l.attackername ? heroIdx(l.attackername) : -1;
+      const breaker = bi >= 0 && players[bi].radiant !== players[i].radiant ? bi : null;
+      wards.push({ kind, owner: i, radiant: players[i].radiant, x: w.x, y: w.y, t: w.time, end, breaker,
+        dewarded: breaker != null || (kind === "obs" && end < w.time + life - 10) });
+    };
+    for (const w of p.obs_log || []) add("obs", w, left.get(w.ehandle), OBS_LIFE);
+    for (const w of p.sen_log || []) add("sen", w, senLeft.get(w.ehandle), SEN_LIFE);
+  });
+
+  // руны: время и кто взял; место — где стоял герой (только с реплеем)
+  const runes = [];
+  match.players.forEach((p, i) => {
+    for (const r of p.runes_log || []) {
+      const kind = Number(r.key);
+      if (!RUNES[kind]) continue;
+      runes.push({ t: r.time, kind, who: i, pos: posAt(i, r.time) || lastPos(i, r.time) });
     }
   });
+  runes.sort((a, b) => a.t - b.t);
+
+  // выкупы
+  const buybacks = [];
+  match.players.forEach((p, i) => { for (const b of p.buyback_log || []) buybacks.push({ t: b.time, who: i }); });
+  buybacks.sort((a, b) => a.t - b.t);
+
+  // большие драки: центр — средняя точка смертей, радиус — до самой дальней
+  const fights = [];
+  for (const tf of match.teamfights || []) {
+    const spots = kills.filter((k) => k.pos && k.t >= tf.start - 5 && k.t <= tf.end + 5).map((k) => [mapX(k.pos[0]), mapY(k.pos[1])]);
+    if (spots.length < 2) continue;
+    const cx = spots.reduce((n, q) => n + q[0], 0) / spots.length, cy = spots.reduce((n, q) => n + q[1], 0) / spots.length;
+    const r = Math.max(7, Math.min(20, Math.max(...spots.map((q) => Math.hypot(q[0] - cx, q[1] - cy))) + 5));
+    fights.push({ t: tf.start, end: tf.end, x: cx, y: cy, r, deaths: spots.length });
+  }
 
   const buildings = [];
   const t4seen = { goodguys: 0, badguys: 0 };
@@ -156,16 +191,41 @@ export function replayModel(match, replay, me, { heroKey, heroName }) {
       spots.forEach((s, n) => buildings.push({ id: `${side}_${name}${name === "tower4" ? n : ""}`, key: `npc_dota_${side}_${name}`, side, kind: name.startsWith("tower") ? "tower" : name === "fort" ? "fort" : "rax", x: s[0], y: s[1], died: null }));
     }
   }
+  // где убили Рошана: у какого из двух логов стояли герои команды-убийцы.
+  // Без реплея — по смертям рядом по времени, иначе не рисуем
+  function roshanSpot(radiant, t) {
+    const near = [];
+    if (pos) players.forEach((p, i) => { if (p.radiant === radiant) { const q = posAt(i, t) || lastPos(i, t); if (q) near.push([mapX(q[0]), mapY(q[1])]); } });
+    else for (const k of kills) if (k.pos && k.t >= t - 60 && k.t <= t + 20) near.push([mapX(k.pos[0]), mapY(k.pos[1])]);
+    let best = null, bestD = Infinity;
+    for (const pit of ROSH_PITS) {
+      for (const q of near) {
+        const d = Math.hypot(q[0] - pit[0], q[1] - pit[1]);
+        if (d < bestD) { bestD = d; best = pit; }
+      }
+    }
+    return best && bestD < 22 ? best : null;
+  }
   const objectives = [];
+  const slotIdx = (slot) => players.findIndex((p) => p.slot === slot);
   for (const o of match.objectives || []) {
     if (o.type === "building_kill" && typeof o.key === "string") {
       const side = o.key.includes("goodguys") ? "goodguys" : o.key.includes("badguys") ? "badguys" : null;
       if (!side) continue;
       let b;
       if (/_tower4$/.test(o.key)) { b = buildings.find((x) => x.id === `${side}_tower4${t4seen[side]}`); t4seen[side]++; } else b = buildings.find((x) => x.key === o.key);
-      if (b && b.died == null) { b.died = o.time; objectives.push({ t: o.time, kind: "building", b }); }
+      const by = typeof o.unit === "string" ? heroIdx(o.unit) : -1;
+      if (b && b.died == null) { b.died = o.time; objectives.push({ t: o.time, kind: "building", b, by: by >= 0 ? by : null }); }
     } else if (o.type === "CHAT_MESSAGE_ROSHAN_KILL") {
-      objectives.push({ t: o.time, kind: "roshan", radiant: o.team === 2 });
+      const radiant = o.team === 2;
+      objectives.push({ t: o.time, kind: "roshan", radiant, pos: roshanSpot(radiant, o.time) });
+    } else if (o.type === "CHAT_MESSAGE_AEGIS") {
+      const i = slotIdx(o.player_slot);
+      const r = objectives.filter((x) => x.kind === "roshan" && o.time - x.t <= 30).pop();
+      if (r && i >= 0) r.aegis = i;
+    } else if (o.type === "CHAT_MESSAGE_FIRSTBLOOD") {
+      const i = slotIdx(o.player_slot);
+      if (i >= 0) objectives.push({ t: o.time, kind: "firstblood", by: i });
     }
   }
   // трон без записи падает в конце матча у проигравших
@@ -175,7 +235,7 @@ export function replayModel(match, replay, me, { heroKey, heroName }) {
   objectives.sort((a, b) => a.t - b.t);
 
   const meIdx = players.findIndex((p) => p.me);
-  return { players, kills, wards, buildings, objectives, duration, posAt, hasPos: Boolean(pos), meIdx,
+  return { players, kills, wards, runes, buybacks, fights, buildings, objectives, duration, posAt, hasPos: Boolean(pos), meIdx,
     goldAdv: match.radiant_gold_adv || [], radiantWin: match.radiant_win, start: pos ? Math.max(replay.start, -60) : 0 };
 }
 
@@ -193,28 +253,81 @@ function buildingLabel(b) {
   return `T${tier ? tier[1] : ""} ${who}${lane ? `, ${LANE_NAME[lane[1]]}` : ""}`;
 }
 
+// ---------- значки событий ----------
+// Значок — тёмная плашка с ободком цвета команды и светлым рисунком, коробка -5..5.
+// Ободок: зелёный — свои, красный — враги, золотой — ты. Рисунок говорит, что случилось
+const S = (d, extra = "") => el("path", { d, class: `gl-s${extra}` });
+const F = (d, extra = "") => el("path", { d, class: `gl-f${extra}` });
+const GLYPH = {
+  eye: () => [S("M-3.9 0Q0 -3.8 3.9 0Q0 3.8 -3.9 0Z"), el("circle", { r: 1.35, class: "gl-f" })],
+  eyeOff: () => [S("M-3.9 0Q0 -3.8 3.9 0Q0 3.8 -3.9 0Z", " gl-dim"), el("circle", { r: 1.35, class: "gl-f gl-dim" }), S("M-3.3 3.3L3.3 -3.3", " gl-cut")],
+  skull: () => [F("M0 -3.9C-2.7 -3.9 -3.7 -2 -3.7 -.3C-3.7 1.1 -3 1.8 -2.1 2.1V3.6H2.1V2.1C3 1.8 3.7 1.1 3.7 -.3C3.7 -2 2.7 -3.9 0 -3.9Z"),
+    el("circle", { cx: -1.35, cy: -.3, r: .95, class: "gl-hole" }), el("circle", { cx: 1.35, cy: -.3, r: .95, class: "gl-hole" }), F("M0 .9L-.55 1.9H.55Z", " gl-hole")],
+  aegis: () => [S("M0 -4L3.4 -2.7L3 1.1Q2.3 3.2 0 4.2Q-2.3 3.2 -3 1.1L-3.4 -2.7Z"), S("M0 -2.1V2.3M-1.6 -.5H1.6")],
+  swords: () => [S("M-3.4 -3.4L2.2 2.2M3.4 -3.4L-2.2 2.2M.9 3.5L3.5 .9M-3.5 .9L-.9 3.5")],
+  // снесённое здание: ромб, как на карте, с трещиной
+  tower: () => [F("M0 -3.5L3.5 0L0 3.5L-3.5 0Z"), S("M-.9 -2.5L.5 -.7L-.6 .5L.9 2.5", " gl-crack")],
+  drop: () => [F("M0 -3.6C1.9 -1 2.7 .3 2.7 1.3A2.7 2.7 0 0 1 -2.7 1.3C-2.7 .3 -1.9 -1 0 -3.6Z")],
+  buyback: () => [S("M2.9 -.4A3 3 0 1 1 1.6 -2.5"), S("M3.4 -3.6L3 -.3L-.2 -.9")],
+};
+const RUNE_GLYPH = {
+  0: () => [S("M-2.4 .4L0 -1.9L2.4 .4M-2.4 2.7L0 .4L2.4 2.7")], // двойной урон: две стрелки вверх
+  1: () => [S("M-2.5 -2.3L-.2 0L-2.5 2.3M.4 -2.3L2.7 0L.4 2.3")], // ускорение: две стрелки вперёд
+  2: () => [el("circle", { cx: -.9, r: 1.8, class: "gl-s" }), el("circle", { cx: .9, r: 1.8, class: "gl-s gl-dim" })], // иллюзии
+  3: () => [el("circle", { r: 2.3, class: "gl-s gl-dash" })], // невидимость
+  4: () => [S("M0 -2.5V2.5M-2.5 0H2.5")], // восстановление
+  5: () => [el("circle", { r: 2.3, class: "gl-s" }), S("M0 -1.1V1.1")], // богатство: монета
+  6: () => [F("M0 -2.9L.8 -.8L2.9 0L.8 .8L0 2.9L-.8 .8L-2.9 0L-.8 -.8Z")], // волшебство
+  7: () => GLYPH.drop(), // вода
+  8: () => [S("M-2.7 -1.8L0 -.8L2.7 -1.8V2L0 3L-2.7 2ZM0 -.8V3")], // мудрость: книга
+  9: () => [S("M0 -2.8L2.4 -1.9L2.1 .8Q1.6 2.3 0 3Q-1.6 2.3 -2.1 .8L-2.4 -1.9Z")], // щит
+};
+const HEX = "M0 -5L4.33 -2.5V2.5L0 5L-4.33 2.5V-2.5Z";
+
+// плашка со значком; side — "ally" | "foe" | "mine" | "gold"
+function badge(glyph, side, { hex = false, tint = "" } = {}) {
+  return el("g", { class: `bd ${side}` },
+    hex ? el("path", { d: HEX, class: "bd-plate" }) : el("circle", { r: 4.9, class: "bd-plate" }),
+    el("g", { class: `bd-gl${tint ? ` ${tint}` : ""}` }, glyph()));
+}
+// разлёт осколков: сломанный вард, снесённое здание
+function shards(n = 6) {
+  return el("g", { class: "fx-shards" }, Array.from({ length: n }, (_, i) => {
+    const a = (i / n) * Math.PI * 2 + 0.3;
+    return el("path", { d: `M${(Math.cos(a) * 5.6).toFixed(2)} ${(Math.sin(a) * 5.6).toFixed(2)}L${(Math.cos(a) * 8).toFixed(2)} ${(Math.sin(a) * 8).toFixed(2)}` });
+  }));
+}
+// маленький значок для ленты и подписи
+function iconSvg(node) {
+  return el("svg", { viewBox: "-5.6 -5.6 11.2 11.2", class: "lm-ico", "aria-hidden": "true" }, node);
+}
+
 // Подпись к значкам карты: что чем обозначено
 function legend() {
   const row = document.createElement("div");
   row.className = "lm-legend";
-  const item = (svgKids, text) => {
+  const item = (node, text) => {
     const span = document.createElement("span");
-    span.append(el("svg", { viewBox: "-5 -5 10 10", "aria-hidden": "true" }, svgKids), text);
+    span.append(iconSvg(node), text);
     return span;
   };
-  row.append(...[
-    item(el("circle", { r: 3.6, class: "lg-me" }), "ты"),
-    item(el("circle", { r: 3.6, class: "lg-ally" }), "свои"),
-    item(el("circle", { r: 3.6, class: "lg-foe" }), "враги"),
-    item(el("path", { d: "M-4 3 L0 -1 L4 1", class: "lg-path" }), "путь за минуту"),
-    item([el("circle", { r: 4, class: "lg-vis" }), el("circle", { r: 1.6, class: "lg-obs" })], "обс и обзор"),
-    item(el("rect", { x: -1.8, y: -1.8, width: 3.6, height: 3.6, class: "lg-sen" }), "сентри"),
-    item(el("path", { d: "M-2.5 -2.5 L2.5 2.5 M-2.5 2.5 L2.5 -2.5", class: "lg-death" }), "смерть"),
-    item(el("rect", { x: -2.2, y: -2.2, width: 4.4, height: 4.4, transform: "rotate(45)", class: "lg-tower" }), "башня"),
-    CAMPS.length > 0 && item(campIcon("large"), "кемп"),
-  ].filter(Boolean));
-  const camp = row.querySelector(".lm-camp");
-  if (camp) camp.setAttribute("transform", "scale(2.2)");
+  const ring = (cls) => el("circle", { r: 4.2, class: `lg-ring ${cls}` });
+  const camp = campIcon("large");
+  camp.setAttribute("transform", "scale(2.2)");
+  row.append(
+    item(ring("lg-me"), "ты"),
+    item(ring("lg-ally"), "свои"),
+    item(ring("lg-foe"), "враги"),
+    item(el("path", { d: "M-4.5 3.5L-1 -1.5L4.5 1", class: "lg-path" }), "след героя"),
+    item(badge(GLYPH.eye, "ally", { tint: "t-obs" }), "обс"),
+    item(badge(GLYPH.eye, "ally", { tint: "t-sen" }), "сентри"),
+    item(badge(GLYPH.eyeOff, "foe"), "сломали вард"),
+    item(badge(GLYPH.skull, "ally"), "смерть"),
+    item(el("g", {}, el("circle", { r: 4.6, class: "lg-fight" })), "драка"),
+    item(badge(RUNE_GLYPH[0], "ally", { hex: true }), "руна"),
+    item(badge(GLYPH.aegis, "gold"), "Рошан"),
+    item(el("rect", { x: -2.6, y: -2.6, width: 5.2, height: 5.2, rx: .6, transform: "rotate(45)", class: "lg-tower" }), "башня"),
+    CAMPS.length > 0 ? item(camp, "кемп") : "");
   return row;
 }
 
@@ -250,45 +363,130 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
     return g;
   }));
 
-  // варды
+  // ---------- события на карте ----------
+  // Узел события: снаружи позиция и масштаб, внутри .pop — он и вспышка проигрываются
+  // заново каждый раз, когда событие появляется (CSS-анимация стартует при показе)
+  const sideOf = (i) => (model.players[i].me ? "mine" : model.players[i].radiant === myRadiant ? "ally" : "foe");
+  const scaled = []; // [узел, x, y, масштаб] — при «Следить» значки ужимаются; x = null — только масштаб
+  const placeAt = (node, x, y, s, k = 1) => node.setAttribute("transform", `${x == null ? "" : `translate(${x.toFixed(1)} ${y.toFixed(1)}) `}scale(${(s * k).toFixed(3)})`);
+  const place = (node, x, y, s) => { scaled.push([node, x, y, s]); placeAt(node, x, y, s); return node; };
+  const evNode = (cls, x, y, s, title, ...kids) => place(el("g", { class: `lm-e ${cls}`, display: "none" }, el("title", {}, title), ...kids), x, y, s);
+  const ripple = (cls = "") => el("circle", { r: 4.9, class: `fx-ripple${cls}` });
+
+  // варды: значок глаза, у обса круг обзора разворачивается при установке
   const wLayer = el("g", { class: "lm-wards" });
   const wNodes = model.wards.map((w) => {
-    const ally = w.radiant === myRadiant;
-    const node = el("g", { class: `lm-w ${w.kind} ${ally ? "ally" : "foe"}${model.players[w.owner].me ? " mine" : ""}`, transform: `translate(${mapX(w.x).toFixed(1)} ${mapY(w.y).toFixed(1)})`, display: "none" },
-      el("title", {}, `${w.kind === "obs" ? "Обс" : "Сентри"} ${model.players[w.owner].name}, ${mm(w.t)}`),
-      w.kind === "obs" ? [el("circle", { r: OBS_VISION, class: "lm-vis" }), el("circle", { r: 1.25, class: "lm-dot" })] : el("rect", { x: -1, y: -1, width: 2, height: 2, rx: 0.3, class: "lm-dot" }));
+    const side = sideOf(w.owner);
+    const x = mapX(w.x), y = mapY(w.y);
+    const obs = w.kind === "obs";
+    const node = el("g", { class: `lm-w ${w.kind} ${side}`, transform: `translate(${x.toFixed(1)} ${y.toFixed(1)})`, display: "none" },
+      el("title", {}, `${obs ? "Обс" : "Сентри"} ${model.players[w.owner].name}, ${mm(w.t)}`),
+      obs && el("circle", { r: OBS_VISION, class: "lm-vis" }),
+      // сдвиг у внешней группы, масштаб у значка: круг обзора не ужимается
+      place(el("g", {}, el("g", { class: "pop" }, badge(GLYPH.eye, side, { tint: obs ? "t-obs" : "t-sen" }))), null, null, obs ? 0.5 : 0.42));
     wLayer.append(node);
     return node;
   });
+  // сломанный вард: глаз перечёркнут, осколки разлетаются; ободок — цвет того, кто сломал
+  const xLayer = el("g", { class: "lm-wbreaks" });
+  const xNodes = model.wards.map((w) => {
+    if (w.breaker == null) return null;
+    const node = evNode(`brk ${sideOf(w.breaker)}`, mapX(w.x), mapY(w.y), 0.5,
+      `${model.players[w.breaker].name} сломал ${w.kind === "obs" ? "обс" : "сентри"} ${model.players[w.owner].name}, ${mm(w.end)}`,
+      ripple(), shards(), el("g", { class: "pop" }, badge(GLYPH.eyeOff, sideOf(w.breaker))));
+    xLayer.append(node);
+    return node;
+  });
 
-  // смерти: крестик в цвет погибшего, видно 40 секунд игрового времени
+  // драки: пунктирный круг крутится, пока идёт драка
+  const fLayer = el("g", { class: "lm-fights" });
+  const fNodes = model.fights.map((f) => {
+    const node = el("g", { class: "lm-fight", transform: `translate(${f.x.toFixed(1)} ${f.y.toFixed(1)})`, display: "none" },
+      el("title", {}, `Драка ${mm(f.t)}–${mm(f.end)}`),
+      el("circle", { r: f.r.toFixed(1), class: "f-zone" }),
+      el("g", { class: "f-spin" }, el("circle", { r: f.r.toFixed(1), class: "f-ring" })));
+    fLayer.append(node);
+    return node;
+  });
+
+  // убийства: удар от убийцы к жертве и череп на месте смерти с волной
+  const kLayer = el("g", { class: "lm-strikes" });
+  const kNodes = model.kills.map((k) => {
+    if (!k.pos || !k.from) return null;
+    const x1 = mapX(k.from[0]), y1 = mapY(k.from[1]), x2 = mapX(k.pos[0]), y2 = mapY(k.pos[1]);
+    const len = Math.hypot(x2 - x1, y2 - y1);
+    if (len < 1.5 || len > 40) return null;
+    const node = el("line", { x1: x1.toFixed(1), y1: y1.toFixed(1), x2: x2.toFixed(1), y2: y2.toFixed(1), class: `lm-strike ${sideOf(k.killer)}`, display: "none" });
+    // через CSSOM: атрибут style режет политика безопасности страницы
+    node.style.setProperty("--len", len.toFixed(1));
+    kLayer.append(node);
+    return node;
+  });
   const dLayer = el("g", { class: "lm-deaths" });
   const dNodes = model.kills.map((k) => {
     if (!k.pos) return null;
     const v = model.players[k.victim];
-    const node = el("g", { class: `lm-d ${v.radiant === myRadiant ? "ally" : "foe"}${v.me ? " mine" : ""}`, transform: `translate(${mapX(k.pos[0]).toFixed(1)} ${mapY(k.pos[1]).toFixed(1)})`, display: "none" },
-      el("title", {}, `${model.players[k.killer].name} убил ${v.name}, ${mm(k.t)}`),
-      el("circle", { r: 2.6, class: "halo" }),
-      el("path", { d: "M-1.5 -1.5 L1.5 1.5 M-1.5 1.5 L1.5 -1.5" }));
+    const node = evNode(`death ${sideOf(k.victim)}`, mapX(k.pos[0]), mapY(k.pos[1]), 0.52,
+      `${model.players[k.killer].name} убил ${v.name}, ${mm(k.t)}`,
+      ripple(), ripple(" late"), el("g", { class: "pop" }, badge(GLYPH.skull, sideOf(k.victim))));
     dLayer.append(node);
     return node;
   });
 
-  // путь выбранного героя за последнюю минуту: чем свежее, тем ярче, стрелка в конце — куда идёт
+  // руны: шестигранник с рисунком руны там, где её взяли
+  const rLayer = el("g", { class: "lm-runes" });
+  const rNodes = model.runes.map((r) => {
+    if (!r.pos) return null;
+    const node = evNode(`rune k${r.kind} ${sideOf(r.who)}`, mapX(r.pos[0]), mapY(r.pos[1]), r.kind === 5 ? 0.4 : 0.5,
+      `${model.players[r.who].name}: руна ${RUNES[r.kind]}, ${mm(r.t)}`,
+      el("g", { class: "fx-spark" }, el("path", { d: "M0 -7.2V-5.8M7.2 0H5.8M0 7.2V5.8M-7.2 0H-5.8" })),
+      el("g", { class: "pop" }, badge(RUNE_GLYPH[r.kind], sideOf(r.who), { hex: true })));
+    rLayer.append(node);
+    return node;
+  });
+
+  // Рошан: знак Аегиса в логове, ударная волна. Рисуется поверх героев: в логове стоит вся команда
+  const oLayer = el("g", { class: "lm-rosh" });
+  const roshList = model.objectives.filter((o) => o.kind === "roshan" && o.pos);
+  const oNodes = roshList.map((o) => {
+    const side = o.aegis != null ? sideOf(o.aegis) : o.radiant === myRadiant ? "ally" : "foe";
+    const node = evNode(`roshan ${side}`, o.pos[0], o.pos[1], 0.7,
+      `Рошан у ${o.radiant === myRadiant ? "вас" : "врагов"}, ${mm(o.t)}`,
+      ripple(), ripple(" late"), el("g", { class: "f-spin" }, el("circle", { r: 6.6, class: "ro-ring" })), el("g", { class: "pop" }, badge(GLYPH.aegis, side)));
+    oLayer.append(node);
+    return node;
+  });
+  // здание падает: вспышка и осколки поверх ромба
+  const bfxLayer = el("g", { class: "lm-bfx" });
+  const bfxNodes = model.buildings.map((b) => (b.died == null ? null
+    : bfxLayer.appendChild(evNode(`bfall ${b.side === "goodguys" ? (myRadiant ? "ally" : "foe") : (myRadiant ? "foe" : "ally")}`, b.x, b.y, 0.5, buildingLabel(b), ripple(), shards(8)))));
+
+  // хвосты: каждый герой тянет за собой след последних секунд — видно, кто куда бежит
+  const TAIL = 8;
+  const tailLayer = el("g", { class: "lm-tails" });
+  const tails = model.players.map((p, i) => {
+    const g = el("g", { class: `tail ${sideOf(i)}` }, el("path", { class: "old" }), el("path", { class: "new" }));
+    tailLayer.append(g);
+    return g;
+  });
+
+  // путь выбранного героя за последнюю минуту: чем свежее, тем ярче
   const TRAIL = 60, TRAIL_PARTS = 6;
   const trail = el("g", { class: "lm-trail" });
   const trailParts = Array.from({ length: TRAIL_PARTS }, (_, n) => el("path", { d: "", opacity: (0.18 + (0.82 * (n + 1)) / TRAIL_PARTS).toFixed(2) }));
   const trailDots = el("g", { class: "lm-trail-dots" });
   trail.append(...trailParts, trailDots);
 
-  // герои
+  // герои: портрет в кольце; тебя видно по золотому пульсу, выбранного — по белому
   const hLayer = el("g", { class: "lm-heroes" });
   const hNodes = model.players.map((p, i) => {
     const node = el("g", { class: `lm-h ${p.radiant === myRadiant ? "ally" : "foe"}${p.me ? " mine" : ""}`, display: "none", "data-i": i },
-      el("circle", { r: 3.4, class: "ring" }),
-      // буквы видны, пока иконка не загрузилась или если CDN Steam недоступен
-      el("text", { class: "ini", y: 1.1, "text-anchor": "middle" }, p.name.slice(0, 2)),
-      el("image", { href: iconUrl(p.hero_id), x: -2.7, y: -2.7, width: 5.4, height: 5.4, "clip-path": "url(#lm-clip)", preserveAspectRatio: "xMidYMid slice" }),
+      el("g", { class: "pop" },
+        el("circle", { r: 3.4, class: "pulse" }),
+        el("circle", { r: 3.4, class: "ring" }),
+        // буквы видны, пока иконка не загрузилась или если CDN Steam недоступен
+        el("text", { class: "ini", y: 1.1, "text-anchor": "middle" }, p.name.slice(0, 2)),
+        el("image", { href: iconUrl(p.hero_id), x: -2.7, y: -2.7, width: 5.4, height: 5.4, "clip-path": "url(#lm-clip)", preserveAspectRatio: "xMidYMid slice" })),
       el("title", {}, p.name));
     node.addEventListener("click", (e) => { e.stopPropagation(); selected = selected === i ? -1 : i; haptic("light"); draw(true); });
     hLayer.append(node);
@@ -297,7 +495,7 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
 
   const map = el("svg", { class: "minimap live", viewBox: "0 0 128 128", role: "img", "aria-label": "Повтор матча на карте" },
     defs, el("image", { href: terrainUrl(), x: 0, y: 0, width: 128, height: 128, preserveAspectRatio: "none" }),
-    cLayer, bLayer, wLayer, dLayer, trail, hLayer);
+    cLayer, bLayer, fLayer, wLayer, xLayer, rLayer, bfxLayer, kLayer, dLayer, tailLayer, trail, hLayer, oLayer);
 
   // ---------- шкала: перевес по золоту, убийства, здания ----------
   const W = 300, H = 40, MID = H / 2;
@@ -390,7 +588,8 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
   info.className = "lm-info";
 
   // слои: тап по чипу прячет и показывает
-  const layers = [["heroes", "Герои", model.hasPos], ["camps", "Кемпы", CAMPS.length > 0], ["wards", "Варды", model.wards.length > 0], ["deaths", "Смерти", model.kills.some((k) => k.pos)], ["buildings", "Здания", true]];
+  const layers = [["heroes", "Герои", model.hasPos], ["wards", "Варды", model.wards.length > 0], ["deaths", "Убийства", model.kills.some((k) => k.pos)],
+    ["runes", "Руны", model.runes.some((r) => r.pos)], ["buildings", "Объекты", true], ["camps", "Кемпы", CAMPS.length > 0]];
   const chips = document.createElement("div");
   chips.className = "lm-layers";
   for (const [k, label, on] of layers) {
@@ -410,17 +609,45 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
   }
 
   // ---------- кадр ----------
-  const state = { w: [], d: [], b: [], h: [] };
+  const state = { w: [], x: [], f: [], k: [], d: [], r: [], o: [], bf: [], b: [], h: [] };
   const show = (arr, i, node, on) => { if (node && arr[i] !== on) { arr[i] = on; node.setAttribute("display", on ? "inline" : "none"); } };
-  let lastFeedKey = "", lastScore = "";
+  // значок гаснет к концу своей жизни; life — сколько игровых секунд виден
+  const fade = (node, age, life) => { if (!node) return; const o = Math.max(0.25, Math.min(1, 1 - (age - life * 0.6) / (life * 0.4))).toFixed(2); if (node.getAttribute("opacity") !== o) node.setAttribute("opacity", o); };
+  const LIFE = { brk: 30, death: 45, strike: 5, rune: 20, rosh: 60, bfall: 8 };
+  let lastFeedKey = "", lastScore = "", lastZoom = false;
 
   function draw(force = false) {
-    model.wards.forEach((w, i) => show(state.w, i, wNodes[i], t >= w.t && t < w.end));
-    model.kills.forEach((k, i) => show(state.d, i, dNodes[i], t >= k.t && t < k.t + 40));
+    model.wards.forEach((w, i) => {
+      show(state.w, i, wNodes[i], t >= w.t && t < w.end);
+      const on = xNodes[i] && t >= w.end && t < w.end + LIFE.brk;
+      show(state.x, i, xNodes[i], on);
+      if (on) fade(xNodes[i], t - w.end, LIFE.brk);
+    });
+    model.fights.forEach((f, i) => show(state.f, i, fNodes[i], t >= f.t - 2 && t < f.end + 4));
+    model.kills.forEach((k, i) => {
+      show(state.k, i, kNodes[i], t >= k.t && t < k.t + LIFE.strike);
+      const on = t >= k.t && t < k.t + LIFE.death;
+      show(state.d, i, dNodes[i], on);
+      if (on) fade(dNodes[i], t - k.t, LIFE.death);
+    });
+    model.runes.forEach((r, i) => {
+      const on = t >= r.t && t < r.t + LIFE.rune;
+      show(state.r, i, rNodes[i], on);
+      if (on) fade(rNodes[i], t - r.t, LIFE.rune);
+    });
+    roshList.forEach((o, i) => {
+      const on = t >= o.t && t < o.t + LIFE.rosh;
+      show(state.o, i, oNodes[i], on);
+      if (on) fade(oNodes[i], t - o.t, LIFE.rosh);
+    });
     model.buildings.forEach((b, i) => {
       const dead = b.died != null && t >= b.died;
       if (state.b[i] !== dead || force) { state.b[i] = dead; bNodes[i].classList.toggle("dead", dead); }
+      show(state.bf, i, bfxNodes[i], dead && t < b.died + LIFE.bfall);
     });
+    // при «Следить» карта вдвое крупнее: значки ужимаем, чтобы не закрывали героев
+    const zoom = Boolean(follow && selected >= 0 && model.hasPos);
+    if (zoom !== lastZoom) { lastZoom = zoom; for (const [node, x, y, s] of scaled) placeAt(node, x, y, s, zoom ? 0.6 : 1); }
     if (model.hasPos) {
       // слежение: карта приближается вдвое и держит выбранного героя в центре
       const focus = follow && selected >= 0 ? model.posAt(selected, t) : null;
@@ -440,6 +667,7 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
       });
       // выбранный герой рисуется поверх остальных
       if (selected >= 0 && hNodes[selected].nextSibling) hLayer.append(hNodes[selected]);
+      drawTails();
       drawTrail();
     }
     // счёт и перевес
@@ -466,17 +694,13 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
     followBtn.disabled = !model.hasPos || selected < 0;
     followBtn.setAttribute("aria-pressed", String(follow && selected >= 0));
     followBtn.classList.toggle("on", follow && selected >= 0);
-    // лента: последние 3 события до текущей секунды
-    const evs = [];
-    for (const k of model.kills) { if (k.t > t) break; evs.push({ t: k.t, kill: k }); }
-    for (const o of model.objectives) { if (o.t > t) break; evs.push({ t: o.t, obj: o }); }
-    evs.sort((a, b) => a.t - b.t);
-    const recent = evs.filter((e) => t - e.t < 90).slice(-3);
-    const key = recent.map((e) => `${e.t}${e.kill ? e.kill.victim : e.obj.kind}`).join("|");
+    // лента: последние 4 события за полторы минуты
+    const recent = feedAt(t);
+    const key = recent.map((e) => `${e.t}${e.type}${e.i}`).join("|");
     if (key !== lastFeedKey) {
       lastFeedKey = key;
       feed.replaceChildren(...(recent.length ? recent.reverse().map((e) => feedRow(e))
-        : [Object.assign(document.createElement("p"), { className: "lm-empty", textContent: t <= 0 ? "Жми плей: матч пойдёт с первой секунды, убийства и снесённые здания появятся здесь." : "Последние полторы минуты тихо." })]));
+        : [Object.assign(document.createElement("p"), { className: "lm-empty", textContent: t <= 0 ? "Жми плей: матч пойдёт с первой секунды, убийства, сломанные варды, руны и снесённые здания появятся здесь." : "Последние полторы минуты тихо." })]));
     }
     if (selected >= 0) {
       const p = model.players[selected];
@@ -513,30 +737,85 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
     trail.setAttribute("class", `lm-trail${selected < 0 ? "" : model.players[selected].me ? " mine" : model.players[selected].radiant === myRadiant ? " ally" : " foe"}`);
   }
 
+  // все события ленты по времени: убийства, сломанные варды, руны (кроме богатства), Рошан, здания, выкупы
+  const events = [
+    ...model.kills.map((k, i) => ({ t: k.t, type: "kill", i, k, first: i === 0 })),
+    ...model.wards.map((w, i) => (w.breaker != null ? { t: w.end, type: "brk", i, w } : null)).filter(Boolean),
+    ...model.runes.map((r, i) => (r.kind !== 5 ? { t: r.t, type: "rune", i, r } : null)).filter(Boolean),
+    ...model.objectives.filter((o) => o.kind === "roshan" || o.kind === "building").map((o, i) => ({ t: o.t, type: o.kind, i, o })),
+    ...model.buybacks.map((b, i) => ({ t: b.t, type: "bb", i, b })),
+  ].sort((a, b) => a.t - b.t);
+  function feedAt(now) {
+    const out = [];
+    for (const e of events) { if (e.t > now) break; if (now - e.t < 90) out.push(e); }
+    return out.slice(-4);
+  }
+
   function feedRow(e) {
     const row = document.createElement("button");
     row.type = "button";
-    row.className = "lm-ev";
+    row.className = `lm-ev ${e.type}`;
     // тап по событию — перемотка за 10 секунд до него: видно, как к этому пришли
     row.addEventListener("click", () => { haptic("light"); seek(e.t - 10); });
     const time = Object.assign(document.createElement("time"), { textContent: mm(e.t) });
-    if (e.kill) {
-      const killer = model.players[e.kill.killer], victim = model.players[e.kill.victim];
-      const ours = killer.radiant === myRadiant;
-      row.classList.add(ours ? "ours" : "theirs");
-      row.append(time,
-        Object.assign(document.createElement("span"), { textContent: killer.name }),
-        Object.assign(document.createElement("i"), { textContent: "убил" }),
-        Object.assign(document.createElement("span"), { textContent: victim.name + (victim.me ? " (ты)" : "") }));
-    } else if (e.obj.kind === "building") {
-      const ours = (e.obj.b.side === "goodguys") !== myRadiant;
-      row.classList.add(ours ? "ours" : "theirs");
-      row.append(time, Object.assign(document.createElement("span"), { textContent: `${buildingLabel(e.obj.b)} — снесли` }));
+    const span = (text) => Object.assign(document.createElement("span"), { textContent: text });
+    const word = (text) => Object.assign(document.createElement("i"), { textContent: text });
+    const nm = (i) => model.players[i].name + (model.players[i].me ? " (ты)" : "");
+    const ours = (i) => model.players[i].radiant === myRadiant;
+    let ico, good, parts;
+    if (e.type === "kill") {
+      good = ours(e.k.killer);
+      ico = badge(GLYPH.skull, sideOf(e.k.victim));
+      parts = [e.first && word("Первая кровь:"), span(nm(e.k.killer)), word("убил"), span(nm(e.k.victim))];
+    } else if (e.type === "brk") {
+      good = ours(e.w.breaker);
+      ico = badge(GLYPH.eyeOff, sideOf(e.w.breaker));
+      parts = [span(nm(e.w.breaker)), word(`сломал ${e.w.kind === "obs" ? "обс" : "сентри"}`), span(nm(e.w.owner))];
+    } else if (e.type === "rune") {
+      good = ours(e.r.who);
+      ico = badge(RUNE_GLYPH[e.r.kind], sideOf(e.r.who), { hex: true });
+      parts = [span(nm(e.r.who)), word(`взял руну ${RUNES[e.r.kind]}`)];
+    } else if (e.type === "roshan") {
+      good = e.o.radiant === myRadiant;
+      ico = badge(GLYPH.aegis, "gold");
+      parts = [span(`Рошан у ${good ? "вас" : "врагов"}`), e.o.aegis != null && word("Аегис у"), e.o.aegis != null && span(nm(e.o.aegis))];
+    } else if (e.type === "building") {
+      good = (e.o.b.side === "goodguys") !== myRadiant;
+      ico = badge(GLYPH.tower, good ? "foe" : "ally");
+      parts = [span(buildingLabel(e.o.b)), word(e.o.by != null ? "снёс" : "— снесли"), e.o.by != null && span(nm(e.o.by))];
     } else {
-      row.classList.add(e.obj.radiant === myRadiant ? "ours" : "theirs");
-      row.append(time, Object.assign(document.createElement("span"), { textContent: `Рошан у ${e.obj.radiant === myRadiant ? "вас" : "врагов"}` }));
+      good = ours(e.b.who);
+      ico = badge(GLYPH.buyback, sideOf(e.b.who));
+      parts = [span(nm(e.b.who)), word("выкупился")];
     }
+    row.classList.add(good ? "ours" : "theirs");
+    row.append(time, iconSvg(ico), ...parts.filter(Boolean));
     return row;
+  }
+
+  // хвосты всех героев за последние секунды: старая часть бледнее, телепорт рвёт линию
+  function drawTails() {
+    model.players.forEach((p, i) => {
+      let dOld = "", dNew = "", prev = null;
+      if (state.h[i]) {
+        const marks = [];
+        for (let s = Math.ceil(Math.max(t0, t - TAIL)); s < t; s++) marks.push(s);
+        marks.push(t);
+        for (const s of marks) {
+          const q = model.posAt(i, s);
+          if (!q) { prev = null; continue; }
+          const x = mapX(q[0]), y = mapY(q[1]);
+          if (prev && Math.hypot(x - prev[0], y - prev[1]) < 8) {
+            const seg = `M${prev[0].toFixed(1)} ${prev[1].toFixed(1)}L${x.toFixed(1)} ${y.toFixed(1)}`;
+            if (s > t - TAIL / 2) dNew += seg; else dOld += seg;
+          }
+          prev = [x, y];
+        }
+      }
+      const [o, n] = tails[i].childNodes;
+      o.setAttribute("d", dOld);
+      n.setAttribute("d", dNew);
+    });
   }
 
   function frame(now) {

@@ -974,13 +974,14 @@ body { background: transparent; }
 .lm-score small { font-weight: 600; font-size: 11px; margin-left: 5px; }
 .lm-score .ours { color: var(--radiant); }
 .lm-score .theirs { color: var(--dire); }
-.lm-feed { display: flex; flex-direction: column; gap: 4px; min-height: 78px; }
-.lm-ev { width: 100%; min-height: 0; color: inherit; text-align: left; box-shadow: none; border: 0; font-family: inherit; cursor: pointer; display: flex; gap: 6px; align-items: baseline; font-size: 12.5px; line-height: 1.3; background: rgba(255, 255, 255, 0.035); border-radius: 8px; padding: 4px 10px; border-left: 2px solid var(--faint); animation: lm-in .25s var(--ease); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lm-feed { display: flex; flex-direction: column; gap: 4px; min-height: 104px; }
+.lm-ev { width: 100%; align-items: center; min-height: 0; color: inherit; text-align: left; box-shadow: none; border: 0; font-family: inherit; cursor: pointer; display: flex; gap: 6px; font-size: 12.5px; line-height: 1.3; background: rgba(255, 255, 255, 0.035); border-radius: 8px; padding: 4px 10px; border-left: 2px solid var(--faint); animation: lm-in .25s var(--ease); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lm-ev time { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 10.5px; }
 .lm-ev i { font-style: normal; color: var(--muted); }
 .lm-ev.ours { border-left-color: var(--radiant); }
 .lm-ev.theirs { border-left-color: var(--dire); }
 .lm-ev span { font-weight: 700; }
+.lm-ev .lm-ico { width: 14px; height: 14px; margin: 0 1px; }
 @keyframes lm-in { from { opacity: 0; transform: translateY(4px); } }
 
 .lm-controls { display: flex; align-items: center; gap: 8px; }
@@ -1005,33 +1006,32 @@ body { background: transparent; }
 .lm-step { flex: 1; min-height: 0; height: 34px; padding: 0 8px; border-radius: 10px; font-size: 12.5px; font-weight: 800; background: var(--slab-2); color: var(--text); box-shadow: none; border: 1px solid var(--line-2); font-variant-numeric: tabular-nums; }
 .lm-step:disabled { opacity: .4; }
 .lm-follow.on { color: #0b0c10; background: var(--aegis); border-color: var(--aegis); }
-.lm-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; color: var(--muted); }
-.lm-legend span { display: inline-flex; align-items: center; gap: 5px; }
-.lm-legend svg { width: 13px; height: 13px; overflow: visible; }
-.lm-legend .lg-me, .lm-legend .lg-ally, .lm-legend .lg-foe { fill: #0b0c10; stroke-width: 1.4; }
+.lm-legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px 8px; font-size: 11.5px; color: var(--muted); }
+.lm-legend span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.lm-legend .lm-ico { width: 16px; height: 16px; }
+.lm-legend .lg-ring { fill: #0b0c10; stroke-width: 1.1; }
 .lm-legend .lg-me { stroke: var(--aegis); }
 .lm-legend .lg-ally { stroke: #5fe0b0; }
 .lm-legend .lg-foe { stroke: #ff6b6f; }
-.lm-legend .lg-path { fill: none; stroke: var(--aegis); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.lm-legend .lg-vis { fill: #f5d36b; opacity: .18; }
-.lm-legend .lg-obs { fill: #f5d36b; }
-.lm-legend .lg-sen { fill: #7fd0ff; }
-.lm-legend .lg-death { stroke: #ff6b6f; stroke-width: 1.4; stroke-linecap: round; }
-.lm-legend .lg-tower { fill: #5fe0b0; }
+.lm-legend .lg-path { fill: none; stroke: var(--aegis); stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+.lm-legend .lg-fight { fill: none; stroke: #f3efe6; stroke-width: .8; stroke-dasharray: 1.6 1.2; }
+.lm-legend .lg-tower { fill: #5fe0b0; stroke: rgba(0, 0, 0, .7); stroke-width: .5; }
 .lm-layers { display: flex; flex-wrap: wrap; gap: 6px; }
 .lm-chip { min-height: 0; height: 30px; padding: 0 12px; border-radius: 999px; font-size: 12.5px; font-weight: 700; background: transparent; color: var(--muted); border: 1px solid var(--line-2); box-shadow: none; }
 .lm-chip.on { color: var(--text); background: rgba(232, 194, 122, 0.12); border-color: rgba(232, 194, 122, 0.45); }
 .lm-info { font-size: 12.5px; color: var(--muted); min-height: 1.4em; }
 .lm-info.foe { color: #f39a9d; }
 
-.minimap.live.hide-heroes .lm-heroes, .minimap.live.hide-heroes .lm-trail,
-.minimap.live.hide-camps .lm-camps, .minimap.live.hide-wards .lm-wards, .minimap.live.hide-deaths .lm-deaths, .minimap.live.hide-buildings .lm-buildings { display: none; }
+.minimap.live.hide-heroes .lm-heroes, .minimap.live.hide-heroes .lm-trail, .minimap.live.hide-heroes .lm-tails,
+.minimap.live.hide-camps .lm-camps, .minimap.live.hide-wards .lm-wards, .minimap.live.hide-wards .lm-wbreaks,
+.minimap.live.hide-deaths .lm-deaths, .minimap.live.hide-deaths .lm-strikes, .minimap.live.hide-deaths .lm-fights,
+.minimap.live.hide-runes .lm-runes, .minimap.live.hide-buildings .lm-buildings, .minimap.live.hide-buildings .lm-bfx, .minimap.live.hide-buildings .lm-rosh { display: none; }
 
 .lm-camp rect { fill: rgba(12, 13, 16, 0.78); stroke: #d9c7a0; stroke-width: .35; }
 .lm-camp line { stroke: #d9c7a0; stroke-width: .35; stroke-linecap: round; }
 .lm-camp.medium rect, .lm-camp.medium line { stroke: #f2c66b; }
 .lm-camp.large rect, .lm-camp.large line { stroke: #ff9a52; }
-.lm-camp.ancient rect, .lm-camp.ancient line { stroke: #c58cff; }
+.lm-camp.ancient rect, .lm-camp.ancient line { stroke: #f3efe6; }
 .lm-legend .lm-camp rect { stroke-width: .6; }
 .lm-legend .lm-camp line { stroke-width: .6; }
 .lm-b rect { stroke: rgba(0, 0, 0, 0.7); stroke-width: .35; }
@@ -1039,22 +1039,79 @@ body { background: transparent; }
 .lm-b.dire rect { fill: #ff6b6f; }
 .lm-b.fort rect { stroke: #fff; stroke-width: .3; }
 .lm-b.dead rect { fill: #3a3a3e; opacity: .55; }
-.lm-w .lm-vis { fill: currentColor; opacity: .07; }
-.lm-w .lm-dot { fill: currentColor; stroke: #000; stroke-width: .3; }
-.lm-w.ally { color: #f5d36b; }
-.lm-w.foe { color: #ff8a5c; }
-.lm-w.sen.ally { color: #7fd0ff; }
-.lm-w.sen.foe { color: #c58cff; }
-.lm-w.sen .lm-vis { display: none; }
-.lm-w.mine .lm-dot { stroke: #fff; stroke-width: .4; }
-.lm-d path { stroke-width: 1; stroke-linecap: round; }
-.lm-d .halo { opacity: .22; }
-.lm-d.ally path { stroke: #ff6b6f; }
-.lm-d.ally .halo { fill: #ff6b6f; }
-.lm-d.foe path { stroke: #5fe0b0; }
-.lm-d.foe .halo { fill: #5fe0b0; }
+/* значки событий: тёмная плашка, ободок цвета команды, светлый рисунок */
+.bd { color: #8a8f99; }
+.bd.ally { color: #5fe0b0; }
+.bd.foe { color: #ff6b6f; }
+.bd.mine, .bd.gold { color: var(--aegis); }
+.bd-plate { fill: rgba(11, 12, 16, 0.92); stroke: currentColor; stroke-width: .9; }
+.bd-gl { color: #f3efe6; }
+.bd-gl.t-obs { color: #f5d36b; }
+.bd-gl.t-sen { color: #7fd0ff; }
+.gl-s { fill: none; stroke: currentColor; stroke-width: 1; stroke-linecap: round; stroke-linejoin: round; }
+.gl-f { fill: currentColor; }
+.gl-hole { fill: #0b0c10; }
+.gl-dim { opacity: .45; }
+.gl-dash { stroke-dasharray: 1.1 .9; }
+.gl-crack { stroke: #0b0c10; stroke-width: .9; }
+.gl-cut { stroke: #ff6b6f; stroke-width: 1.3; }
+.bd.foe .gl-cut { stroke: #ff6b6f; }
+.bd.ally .gl-cut, .bd.mine .gl-cut { stroke: #5fe0b0; }
+.lm-ico { width: 15px; height: 15px; flex: none; overflow: visible; align-self: center; }
+
+.lm-w .lm-vis { fill: rgba(245, 211, 107, 0.06); stroke: rgba(245, 211, 107, 0.35); stroke-width: .25; stroke-dasharray: .8 .8; }
+.lm-w.foe .lm-vis { fill: rgba(255, 107, 111, 0.05); stroke: rgba(255, 107, 111, 0.35); }
+
+/* моушн: появление, волны, осколки. Перезапускается при каждом показе значка */
+.minimap.live .pop { animation: lm-pop .5s cubic-bezier(.2, 1.7, .4, 1) both; }
+.minimap.live .fx-ripple { fill: none; stroke: currentColor; stroke-width: .8; opacity: 0; animation: lm-ripple 1.1s cubic-bezier(.1, .7, .3, 1) both; }
+.minimap.live .fx-ripple.late { animation-delay: .25s; }
+.minimap.live .fx-shards path { stroke: currentColor; stroke-width: .9; stroke-linecap: round; }
+.minimap.live .fx-shards { opacity: 0; animation: lm-shards .8s cubic-bezier(.1, .7, .3, 1) both; }
+.lm-w .lm-vis { animation: lm-vis .7s cubic-bezier(.2, .8, .3, 1) both; }
+.lm-rosh, .lm-bfx, .lm-strikes, .lm-fights, .lm-tails, .lm-wbreaks, .lm-runes, .lm-deaths { pointer-events: none; }
+.lm-e { color: #8a8f99; }
+.lm-e.ally { color: #5fe0b0; }
+.lm-e.foe { color: #ff6b6f; }
+.lm-e.mine { color: var(--aegis); }
+.lm-e.roshan .fx-ripple { stroke-width: 1.2; }
+.lm-e .ro-ring { fill: none; stroke: var(--aegis); stroke-width: .5; stroke-dasharray: 2 1.6; opacity: .8; }
+.lm-e .f-spin, .lm-fight .f-spin { animation: lm-spin 6s linear infinite; }
+.lm-e.rune .fx-spark path { stroke: #f3efe6; stroke-width: .7; stroke-linecap: round; }
+.lm-e.rune .fx-spark { animation: lm-spark 1.6s ease-in-out infinite; }
+.lm-e.bfall { color: #f3efe6; }
+.lm-e.bfall .fx-ripple { stroke-width: 1.4; }
+.lm-strike { stroke: currentColor; stroke-width: .55; stroke-linecap: round; stroke-dasharray: var(--len) var(--len); animation: lm-strike .5s cubic-bezier(.3, .7, .3, 1) both; }
+.lm-strike.ally { color: #5fe0b0; }
+.lm-strike.foe { color: #ff6b6f; }
+.lm-strike.mine { color: var(--aegis); }
+.lm-fight .f-zone { fill: rgba(243, 239, 230, 0.05); animation: lm-breathe 1.4s ease-in-out infinite; }
+.lm-fight .f-ring { fill: none; stroke: rgba(243, 239, 230, 0.7); stroke-width: .45; stroke-dasharray: 2.2 1.6; }
+.lm-tails path { fill: none; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+.lm-tails .old { stroke-width: .6; opacity: .22; }
+.lm-tails .new { stroke-width: .9; opacity: .55; }
+.lm-tails .ally path { stroke: #5fe0b0; }
+.lm-tails .foe path { stroke: #ff6b6f; }
+.lm-tails .mine path { stroke: var(--aegis); }
+.minimap.live.zoomed .lm-tails path { stroke-width: .5; }
+@keyframes lm-pop { from { transform: scale(0); opacity: 0; } 60% { opacity: 1; } to { transform: scale(1); opacity: 1; } }
+@keyframes lm-ripple { 0% { transform: scale(.6); opacity: .95; } 100% { transform: scale(2.8); opacity: 0; } }
+@keyframes lm-shards { 0% { transform: scale(.5); opacity: 1; } 100% { transform: scale(1.7); opacity: 0; } }
+@keyframes lm-vis { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes lm-spin { to { transform: rotate(360deg); } }
+@keyframes lm-spark { 0%, 100% { opacity: .2; transform: scale(.85) rotate(0deg); } 50% { opacity: 1; transform: scale(1.1) rotate(45deg); } }
+@keyframes lm-strike { from { stroke-dashoffset: var(--len); } to { stroke-dashoffset: 0; } }
+@keyframes lm-breathe { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
+@keyframes lm-halo { 0% { transform: scale(1); opacity: .9; } 100% { transform: scale(1.9); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .minimap.live .pop, .lm-w .lm-vis, .lm-strike, .lm-e .f-spin, .lm-fight .f-spin, .lm-e.rune .fx-spark, .lm-fight .f-zone, .lm-h .pulse { animation: none; }
+  .minimap.live .fx-ripple, .minimap.live .fx-shards { display: none; }
+}
 .lm-h { cursor: pointer; }
 .lm-h .ring { stroke-width: .7; fill: #0b0c10; }
+.lm-h .pulse { fill: none; stroke-width: .6; opacity: 0; }
+.lm-h.mine .pulse { stroke: var(--aegis); animation: lm-halo 1.8s ease-out infinite; }
+.lm-h.sel .pulse { stroke: #fff; animation: lm-halo 1.2s ease-out infinite; }
 .lm-h.ally .ring { stroke: #5fe0b0; }
 .lm-h.foe .ring { stroke: #ff6b6f; }
 .lm-h.mine .ring { stroke: var(--aegis); stroke-width: 1; }
