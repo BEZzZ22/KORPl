@@ -3600,8 +3600,9 @@ function mapTab(a) {
       const model = replayModel(raw.match, raw.replay, raw.match.players.find((p) => p.account_id === a.hist_self.account) || null, {
         heroKey: (id) => dictionary.heroKey(id).replace("npc_dota_hero_", ""), heroName: (id) => dictionary.heroName(id),
       });
-      // портрет героя как в Доте; не загрузился — зеркало Steam, потом маленькая иконка
-      const heroPics = (id) => { const k = dictionary.heroKey(id).replace("npc_dota_hero_", ""); return [`${STEAM_CDN}/apps/dota2/images/dota_react/heroes/${k}.png`, `${STEAM_MIRROR}/apps/dota2/images/dota_react/heroes/${k}.png`, `${STEAM_CDN}/apps/dota2/images/dota_react/heroes/icons/${k}.png`]; };
+      // портрет героя как в Доте: сначала со своего сайта (CDN Steam в Телеграме открывается не у всех),
+      // потом Steam, его зеркало и маленькая иконка
+      const heroPics = (id) => { const k = dictionary.heroKey(id).replace("npc_dota_hero_", ""); return [`img/heroes/${k}.webp`, `${STEAM_CDN}/apps/dota2/images/dota_react/heroes/${k}.png`, `${STEAM_MIRROR}/apps/dota2/images/dota_react/heroes/${k}.png`, `${STEAM_CDN}/apps/dota2/images/dota_react/heroes/icons/${k}.png`]; };
       live = liveMap(model, { iconUrl: heroPics, haptic });
     } catch (e) {
       console.warn(e);
