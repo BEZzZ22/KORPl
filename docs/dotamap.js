@@ -463,6 +463,20 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
   const evNode = (cls, x, y, s, title, ...kids) => place(el("g", { class: `lm-e ${cls}`, display: "none" }, el("title", {}, title), ...kids), x, y, s);
   const ripple = (cls = "") => el("circle", { r: 4.9, class: `fx-ripple${cls}` });
 
+  // портрет героя в кольце цвета команды (коробка -5..5, как у значков); не загрузился — следующий адрес
+  function faceImage(id, r) {
+    const urls = [].concat(iconUrl(id));
+    const img = el("image", { href: urls[0], x: -r, y: -r, width: r * 2, height: r * 2, "clip-path": "url(#lm-clip)", preserveAspectRatio: "xMidYMid slice" });
+    let n = 0;
+    img.addEventListener("error", () => { n++; if (n < urls.length) img.setAttribute("href", urls[n]); else img.remove(); });
+    return img;
+  }
+  function faceBadge(i) {
+    const p = model.players[i];
+    return el("g", { class: `bd face ${sideOf(i)}` }, el("circle", { r: 4.9, class: "bd-plate" }),
+      el("text", { class: "ini", y: 1.4, "text-anchor": "middle" }, p.name.slice(0, 2)), faceImage(p.hero_id, 4.3));
+  }
+
   // варды: значок глаза, у обса круг обзора разворачивается при установке
   const wLayer = el("g", { class: "lm-wards" });
   const wNodes = model.wards.map((w) => {
@@ -518,7 +532,7 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
     const v = model.players[k.victim];
     const node = evNode(`death ${sideOf(k.victim)}`, mapX(k.pos[0]), mapY(k.pos[1]), 0.52,
       `${model.players[k.killer].name} убил ${v.name}, ${mm(k.t)}`,
-      ripple(), ripple(" late"), el("g", { class: "pop" }, badge(GLYPH.skull, sideOf(k.victim))));
+      ripple(), ripple(" late"), el("g", { class: "pop" }, faceBadge(k.victim), el("g", { transform: "translate(3.6 3.6) scale(.55)" }, badge(GLYPH.skull, sideOf(k.victim)))));
     dLayer.append(node);
     return node;
   });
@@ -570,13 +584,7 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
   // герои: портрет из Доты в кольце цвета команды; тебя видно по золотому пульсу, выбранного — по белому.
   // iconUrl может вернуть список адресов: не загрузился первый — берём следующий
   const HERO_R = 4.3;
-  function heroImage(id) {
-    const urls = [].concat(iconUrl(id));
-    const img = el("image", { href: urls[0], x: -HERO_R + 0.45, y: -HERO_R + 0.45, width: (HERO_R - 0.45) * 2, height: (HERO_R - 0.45) * 2, "clip-path": "url(#lm-clip)", preserveAspectRatio: "xMidYMid slice" });
-    let n = 0;
-    img.addEventListener("error", () => { n++; if (n < urls.length) img.setAttribute("href", urls[n]); else img.remove(); });
-    return img;
-  }
+  const heroImage = (id) => faceImage(id, HERO_R - 0.45);
   const hLayer = el("g", { class: "lm-heroes" });
   const hNodes = model.players.map((p, i) => {
     const node = el("g", { class: `lm-h ${p.radiant === myRadiant ? "ally" : "foe"}${p.me ? " mine" : ""}`, display: "none", "data-i": i },
@@ -897,36 +905,47 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
     const span = (text) => Object.assign(document.createElement("span"), { textContent: text });
     const word = (text) => Object.assign(document.createElement("i"), { textContent: text });
     const nm = (i) => model.players[i].name + (model.players[i].me ? " (ты)" : "");
+    // имя героя с его портретом
+    const who = (i) => {
+      const b = span(nm(i));
+      const face = document.createElement("img");
+      const urls = [].concat(iconUrl(model.players[i].hero_id));
+      let n = 0;
+      Object.assign(face, { className: `lm-face ${sideOf(i)}`, alt: "", src: urls[0] });
+      face.addEventListener("error", () => { n++; if (n < urls.length) face.src = urls[n]; else face.remove(); });
+      b.prepend(face);
+      return b;
+    };
     const ours = (i) => model.players[i].radiant === myRadiant;
     let ico, good, parts;
     if (e.type === "kill") {
       good = ours(e.k.killer);
       ico = badge(GLYPH.skull, sideOf(e.k.victim));
-      parts = [e.first && word("Первая кровь:"), span(nm(e.k.killer)), word("убил"), span(nm(e.k.victim))];
+      parts = [e.first && word("Первая кровь:"), who(e.k.killer), word("убил"), who(e.k.victim)];
     } else if (e.type === "brk") {
       good = ours(e.w.breaker);
       ico = badge(GLYPH.eyeOff, sideOf(e.w.breaker));
-      parts = [span(nm(e.w.breaker)), word(`сломал ${e.w.kind === "obs" ? "обс" : "сентри"}`), span(nm(e.w.owner))];
+      parts = [who(e.w.breaker), word(`сломал ${e.w.kind === "obs" ? "обс" : "сентри"}`), who(e.w.owner)];
     } else if (e.type === "rune") {
       good = ours(e.r.who);
       ico = badge(RUNE_GLYPH[e.r.kind], sideOf(e.r.who), { hex: true });
-      parts = [span(nm(e.r.who)), word(`взял руну ${RUNES[e.r.kind]}`)];
+      parts = [who(e.r.who), word(`взял руну ${RUNES[e.r.kind]}`)];
     } else if (e.type === "roshan") {
       good = e.o.radiant === myRadiant;
       ico = badge(GLYPH.roshan, "gold");
-      parts = [span(`Рошан у ${good ? "вас" : "врагов"}`), e.o.aegis != null && word("Аегис у"), e.o.aegis != null && span(nm(e.o.aegis))];
+      parts = [span(`Рошан у ${good ? "вас" : "врагов"}`), e.o.aegis != null && word("Аегис у"), e.o.aegis != null && who(e.o.aegis)];
     } else if (e.type === "building") {
       good = (e.o.b.side === "goodguys") !== myRadiant;
       ico = badge(GLYPH.tower, good ? "foe" : "ally");
-      parts = [span(buildingLabel(e.o.b)), word(e.o.by != null ? "снёс" : "— снесли"), e.o.by != null && span(nm(e.o.by))];
+      parts = [span(buildingLabel(e.o.b)), word(e.o.by != null ? "снёс" : "— снесли"), e.o.by != null && who(e.o.by)];
     } else if (e.type === "torm") {
       good = ours(e.x.who);
       ico = badge(GLYPH.tormentor, sideOf(e.x.who));
-      parts = [span(nm(e.x.who)), word("добил торментора")];
+      parts = [who(e.x.who), word("добил торментора")];
     } else {
       good = ours(e.b.who);
       ico = badge(GLYPH.buyback, sideOf(e.b.who));
-      parts = [span(nm(e.b.who)), word("выкупился")];
+      parts = [who(e.b.who), word("выкупился")];
     }
     row.classList.add(good ? "ours" : "theirs");
     row.append(time, iconSvg(ico), ...parts.filter(Boolean));

@@ -4,11 +4,11 @@ import {
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
 } from "./engine.js?v=47";
 import { aegisBadge, openShowcase, whenGone } from "./aegis.js?v=9";
-import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=8";
+import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=9";
 import { matchVerdicts } from "./blame.js?v=13";
 import { rankMedal3d } from "./medal3d.js?v=7";
 import { heroCard3d } from "./herocard3d.js?v=5";
-import { tacticalTable } from "./map3d.js?v=13";
+import { tacticalTable } from "./map3d.js?v=14";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -101,6 +101,24 @@ const STEAM_OFF_KEY = "steam_off";
 let steamOff = false;
 try { steamOff = Number(localStorage.getItem(STEAM_OFF_KEY) || 0) > Date.now() - 3 * 86400e3; } catch { /* без хранилища — со Steam */ }
 const steamProxy = () => `${COACH_URL}/img`;
+// Steam у некоторых провайдеров не отвечает ошибкой, а висит: тогда onerror не приходит.
+// Раз в запуск пробуем маленькую картинку: нет ответа за 3 с — все картинки Steam переводим на воркер
+function probeSteam() {
+  if (steamOff || typeof Image !== "function") return;
+  const probe = new Image();
+  const timer = setTimeout(() => { probe.onload = probe.onerror = null; useSteamProxy(); }, 3000);
+  probe.onload = () => clearTimeout(timer);
+  probe.onerror = () => { clearTimeout(timer); useSteamProxy(); };
+  probe.src = `${STEAM_CDN}/apps/dota2/images/dota_react/heroes/axe.png?probe=${Date.now()}`;
+}
+function useSteamProxy() {
+  if (steamOff) return;
+  steamOff = true;
+  try { localStorage.setItem(STEAM_OFF_KEY, String(Date.now())); } catch { /* не критично */ }
+  for (const el of document.querySelectorAll("img")) {
+    for (const base of [STEAM_CDN, STEAM_MIRROR]) if (el.src.startsWith(base)) el.src = steamProxy() + el.src.slice(base.length).split("?")[0];
+  }
+}
 function steamUrl(path) {
   const clean = String(path).split("?")[0];
   return (steamOff ? steamProxy() : STEAM_CDN) + clean;
@@ -133,8 +151,13 @@ function portrait(x) {
     } });
 }
 
+// Портрет героя: сначала свой с сайта (docs/img/heroes, 128x72), потом Steam и дальше по цепочке imgFallback
 function heroImg(heroId, cls = "hero-img") {
-  return img(dictionary.heroImage(heroId), cls, dictionary.heroName(heroId));
+  const path = dictionary.heroImage(heroId);
+  if (!path) return null;
+  const key = dictionary.heroKey(heroId).replace("npc_dota_hero_", "");
+  return h("img", { src: `img/heroes/${key}.webp`, class: cls, alt: dictionary.heroName(heroId), loading: "lazy",
+    onerror: (e) => { const el = e.currentTarget; if (el.src.includes("/img/heroes/")) el.src = steamUrl(path); else imgFallback(e); } });
 }
 
 function scoreColor(score) {
@@ -4302,6 +4325,7 @@ function loadExtras() {
 }
 
 async function boot() {
+  probeSteam();
   if (!booted && tg) {
     tg.ready();
     tg.expand();

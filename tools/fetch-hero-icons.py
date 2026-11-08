@@ -1,5 +1,5 @@
-# Портреты героев для карты матча -> docs/img/heroes/<key>.webp (64x64, лицо по центру).
-# У части игроков CDN Steam не открывается в Телеграме, поэтому карта берёт портреты со своего сайта.
+# Портреты героев -> docs/img/heroes/<key>.webp (128x72, как портрет Steam, только меньше).
+# У части игроков CDN Steam не открывается в Телеграме, поэтому приложение берёт портреты со своего сайта.
 # Запуск: python3 tools/fetch-hero-icons.py (нужен Pillow). Workflow «Портреты героев» — после выхода нового героя.
 import io
 import json
@@ -36,12 +36,8 @@ for h in heroes.values():
         failed.append(key)
         continue
     im = Image.open(io.BytesIO(raw)).convert("RGB")
-    w, hgt = im.size
-    side = min(w, hgt)
-    # квадрат по центру, чуть выше середины: на портретах лицо в верхней половине
-    left = (w - side) // 2
-    top = max(0, min(hgt - side, int((hgt - side) * 0.35)))
-    im.crop((left, top, left + side, top + side)).resize((64, 64), Image.LANCZOS).save(os.path.join(OUT, f"{key}.webp"), "WEBP", quality=82, method=6)
+    # весь портрет 16:9 в 128x72: и для плашек списков (object-fit: cover), и для круга на карте (обрезка по центру)
+    im.resize((128, 72), Image.LANCZOS).save(os.path.join(OUT, f"{key}.webp"), "WEBP", quality=84, method=6)
     done += 1
 print(f"портретов: {done}, не скачались: {len(failed)} {' '.join(failed)}")
 if done < 100:
