@@ -1971,6 +1971,28 @@ export function odTtl(path, body) {
   return 6 * 3600;
 }
 
+// Картинки Dota с CDN Steam: у части игроков провайдер не пускает к Steam, а воркер открывается.
+// Только картинки игры (/apps/dota2/images/), кэш Cloudflare на неделю
+const STEAM_IMG = /^\/apps\/dota2\/images\/[A-Za-z0-9_\-/]+\.(png|jpg|webp)$/;
+export async function proxySteamImage(url, cache = globalThis.caches && caches.default) {
+  const path = url.pathname.slice(4);
+  if (!STEAM_IMG.test(path) || path.includes("..")) return new Response("Нет такой картинки.", { status: 404 });
+  const key = new Request(`https://cdn.cloudflare.steamstatic.com${path}`);
+  const hit = cache && await cache.match(key).catch(() => null);
+  if (hit) return hit;
+  let res = null;
+  for (const host of ["https://cdn.cloudflare.steamstatic.com", "https://cdn.akamai.steamstatic.com"]) {
+    res = await fetch(`${host}${path}`, { signal: AbortSignal.timeout(10000) }).catch(() => null);
+    if (res && res.ok) break;
+  }
+  if (!res || !res.ok) return new Response("Steam не отдал картинку.", { status: res ? res.status : 502 });
+  const type = res.headers.get("Content-Type") || "image/png";
+  if (!type.startsWith("image/")) return new Response("Не картинка.", { status: 502 });
+  const out = new Response(await res.arrayBuffer(), { status: 200, headers: { "Content-Type": type, "Cache-Control": "public, max-age=604800" } });
+  if (cache) await cache.put(key, out.clone()).catch(() => {});
+  return out;
+}
+
 export async function proxyOpenDota(env, url, ip, origin, now = Date.now(), cache = globalThis.caches && caches.default) {
   const path = url.pathname.slice(3);
   if (!OD_PATH.test(path)) return reply(404, { error: "Нет такого пути." }, origin);
@@ -2071,6 +2093,8 @@ export default {
       try { body = JSON.parse(await request.text()); } catch { return new Response("Не JSON.", { status: 400 }); }
       return json(await relayRun(env, (m, b) => tgCall(env, m, b), body, Date.now(), { checkWatches }));
     }
+    // картинки Dota через воркер: до антиддоса, на экране их десятки
+    if (request.method === "GET" && new URL(request.url).pathname.startsWith("/img/")) return proxySteamImage(new URL(request.url));
     // запасной путь к OpenDota: свой лимит без банов, чтобы сбой OpenDota не забанил человека и у тренера
     if (request.method === "GET" && new URL(request.url).pathname.startsWith("/od/")) {
       if (!ALLOWED_ORIGINS.includes(origin)) return reply(403, { error: "Нельзя." }, origin);
