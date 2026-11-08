@@ -4,11 +4,11 @@ import {
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
 } from "./engine.js?v=47";
 import { aegisBadge, openShowcase, whenGone } from "./aegis.js?v=9";
-import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=7";
+import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=8";
 import { matchVerdicts } from "./blame.js?v=13";
 import { rankMedal3d } from "./medal3d.js?v=7";
 import { heroCard3d } from "./herocard3d.js?v=5";
-import { tacticalTable } from "./map3d.js?v=12";
+import { tacticalTable } from "./map3d.js?v=13";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -95,24 +95,41 @@ function render(...nodes) {
   updateTabbar();
 }
 
+// У части игроков провайдер не пускает к CDN Steam: тогда картинки идут через наш воркер (/img/...).
+// Один раз заметили, что через воркер пришло, а со Steam нет, — дальше сразу через воркер (помним 3 дня)
+const STEAM_OFF_KEY = "steam_off";
+let steamOff = false;
+try { steamOff = Number(localStorage.getItem(STEAM_OFF_KEY) || 0) > Date.now() - 3 * 86400e3; } catch { /* без хранилища — со Steam */ }
+const steamProxy = () => `${COACH_URL}/img`;
+function steamUrl(path) {
+  const clean = String(path).split("?")[0];
+  return (steamOff ? steamProxy() : STEAM_CDN) + clean;
+}
 function img(path, cls, alt = "") {
   if (!path) return null;
-  return h("img", { src: STEAM_CDN + path, class: cls, alt, loading: "lazy", onerror: imgFallback });
+  return h("img", { src: steamUrl(path), class: cls, alt, loading: "lazy", onerror: imgFallback });
 }
 // Картинка не пришла с одного CDN Steam (бывает у отдельных файлов и провайдеров) — берём с зеркала,
-// не пришла и оттуда — пустая плашка вместо значка битой картинки
+// потом через воркер; не пришла и оттуда — пустая плашка вместо значка битой картинки
 function imgFallback(e) {
   const el = e.currentTarget;
   if (el.src.startsWith(STEAM_CDN)) el.src = STEAM_MIRROR + el.src.slice(STEAM_CDN.length);
-  else el.classList.add("img-missing");
+  else if (el.src.startsWith(STEAM_MIRROR)) {
+    el.addEventListener("load", () => {
+      if (steamOff) return;
+      steamOff = true;
+      try { localStorage.setItem(STEAM_OFF_KEY, String(Date.now())); } catch { /* не критично */ }
+    }, { once: true });
+    el.src = steamProxy() + el.src.slice(STEAM_MIRROR.length).split("?")[0];
+  } else el.classList.add("img-missing");
 }
 
 // Вертикальный портрет, как в сетке героев в Доте. У новых героев (Muerta, Marci…) его нет — тогда обычная картинка, обрезанная по центру
 function portrait(x) {
-  return h("img", { src: `${STEAM_CDN}/apps/dota2/images/heroes/${x.key}_vert.jpg`, class: "hero-vert", alt: x.name, loading: "lazy",
+  return h("img", { src: steamUrl(`/apps/dota2/images/heroes/${x.key}_vert.jpg`), class: "hero-vert", alt: x.name, loading: "lazy",
     onerror: (e) => {
       const el = e.currentTarget;
-      if (!el.classList.contains("wide")) { el.classList.add("wide"); el.src = STEAM_CDN + x.img; } else imgFallback(e);
+      if (!el.classList.contains("wide")) { el.classList.add("wide"); el.src = steamUrl(x.img); } else imgFallback(e);
     } });
 }
 
@@ -3602,7 +3619,7 @@ function mapTab(a) {
       });
       // портрет героя как в Доте: сначала со своего сайта (CDN Steam в Телеграме открывается не у всех),
       // потом Steam, его зеркало и маленькая иконка
-      const heroPics = (id) => { const k = dictionary.heroKey(id).replace("npc_dota_hero_", ""); return [`img/heroes/${k}.webp`, `${STEAM_CDN}/apps/dota2/images/dota_react/heroes/${k}.png`, `${STEAM_MIRROR}/apps/dota2/images/dota_react/heroes/${k}.png`, `${STEAM_CDN}/apps/dota2/images/dota_react/heroes/icons/${k}.png`]; };
+      const heroPics = (id) => { const k = dictionary.heroKey(id).replace("npc_dota_hero_", ""); return [`img/heroes/${k}.webp`, steamUrl(`/apps/dota2/images/dota_react/heroes/${k}.png`), `${steamProxy()}/apps/dota2/images/dota_react/heroes/${k}.png`]; };
       live = liveMap(model, { iconUrl: heroPics, haptic });
     } catch (e) {
       console.warn(e);

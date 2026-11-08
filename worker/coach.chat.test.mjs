@@ -1,7 +1,7 @@
 // Тесты Claude, чата, сравнения, KV (кэш, расход), уведомлений и карточек: node --test worker/
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker, { buildPrompt, normalize, ask, chat, cleanChat, compare, telegramUser, checkWatches, usageStats, loreFor, proxyOpenDota, odTtl } from "./coach.js";
+import worker, { buildPrompt, normalize, ask, chat, cleanChat, compare, telegramUser, checkWatches, usageStats, loreFor, proxyOpenDota, odTtl, proxySteamImage } from "./coach.js";
 
 test("loreFor: лор только на вопрос про историю; герой из вопроса, иначе свой", () => {
   assert.equal(loreFor("что собирать против Tiny?", "Tusk"), "");
@@ -1016,4 +1016,24 @@ test("полный разбор: первый матч сам открывает
   assert.equal((await open(user, 3)).how, "sub");
   // владелец всегда открыт
   assert.equal((await open(boss, 4)).full, true);
+});
+
+test("картинки Steam через воркер: только картинки Dota, зеркало, кэш", async (t) => {
+  const real = globalThis.fetch;
+  t.after(() => { globalThis.fetch = real; });
+  const cache = memCache();
+  cache.put = async (r, res) => { cache.m.set(r.url, res); };
+  cache.match = async (r) => cache.m.get(r.url);
+  const u = (p) => new URL(`https://coach.example/img${p}`);
+  assert.equal((await proxySteamImage(u("/etc/passwd"), cache)).status, 404);
+  assert.equal((await proxySteamImage(u("/apps/dota2/images/../x.png"), cache)).status, 404);
+  const seen = [];
+  globalThis.fetch = async (url) => { seen.push(String(url)); return String(url).includes("cloudflare") ? new Response("", { status: 503 }) : new Response(new Uint8Array([1, 2, 3]), { headers: { "Content-Type": "image/png" } }); };
+  const res = await proxySteamImage(u("/apps/dota2/images/dota_react/heroes/tusk.png"), cache);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("Content-Type"), "image/png");
+  assert.equal(seen.length, 2);
+  assert.match(seen[1], /akamai/);
+  globalThis.fetch = async () => { throw new Error("второй раз — из кэша"); };
+  assert.equal((await proxySteamImage(u("/apps/dota2/images/dota_react/heroes/tusk.png"), cache)).status, 200);
 });

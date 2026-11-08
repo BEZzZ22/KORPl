@@ -1094,16 +1094,27 @@ body { background: transparent; }
 .lm-tails .foe path { stroke: #ff6b6f; }
 .lm-tails .mine path { stroke: var(--aegis); }
 .minimap.live.zoomed .lm-tails path { stroke-width: .5; }
-/* крипы: тройка точек цвета команды, на ходу покачивается, на фронте дрожит; искры там, где сшиблись */
-.lm-wave circle { stroke: rgba(0, 0, 0, .8); stroke-width: .3; }
+/* линии и крипы: линия в два цвета до фронта, штрихи текут к фронту; пачка — стрелка и три крипа, на фронте искры */
+.lane-part { fill: none; stroke-width: .7; stroke-linecap: round; stroke-dasharray: 1.4 1.6; opacity: .55; animation: lm-flow 1.2s linear infinite; }
+.lane-part.ally { stroke: #5fe0b0; }
+.lane-part.foe { stroke: #ff6b6f; }
+.lane-front .fr { stroke-width: 1.1; stroke-linecap: round; }
+.lane-front .fr.ally { stroke: #5fe0b0; }
+.lane-front .fr.foe { stroke: #ff6b6f; }
+.lane-front .fr-dot { fill: #f3efe6; stroke: #0b0c10; stroke-width: .3; }
+.lm-legend .lane-front .fr { stroke-width: 1.4; }
+.lm-legend .lane-part { stroke-width: 1.2; animation: none; opacity: .8; }
+.lm-wave circle { stroke: rgba(0, 0, 0, .85); stroke-width: .25; }
 .lm-wave.ally circle { fill: #7ff0c6; }
 .lm-wave.foe circle { fill: #ff8a8d; }
-.lm-wave .wv { animation: lm-march .5s ease-in-out infinite alternate; }
-.lm-wave.fighting .wv { animation: lm-jitter .18s linear infinite alternate; }
-.lm-clash path { stroke: #f3efe6; stroke-width: .45; stroke-linecap: round; }
+.lm-wave .wv-arrow { fill: none; stroke-width: .7; stroke-linecap: round; stroke-linejoin: round; }
+.lm-wave.ally .wv-arrow { stroke: #7ff0c6; }
+.lm-wave.foe .wv-arrow { stroke: #ff8a8d; }
+.lm-wave .wv { animation: lm-march .45s ease-in-out infinite alternate; }
+.lm-wave.fighting .wv { animation: lm-jab .35s ease-in-out infinite alternate; }
+.lm-clash path { stroke: #f3efe6; stroke-width: .4; stroke-linecap: round; }
 .lm-clash circle { fill: none; stroke: rgba(243, 239, 230, .55); stroke-width: .3; animation: lm-ripple 1s ease-out infinite; }
-.lm-clash .cl-spin { animation: lm-spin 1.2s linear infinite; }
-.lm-legend .lg-creep.ally { fill: #7ff0c6; stroke: rgba(0, 0, 0, .7); stroke-width: .4; }
+.lm-clash .cl-spin { animation: lm-spark 0.6s ease-in-out infinite; }
 /* Рошан и торменторы: живой — золотой ободок и мягкое свечение, мёртвый — серый с таймером */
 .lm-boss .boss-glow { fill: rgba(232, 194, 122, .14); animation: lm-breathe 2.4s ease-in-out infinite; }
 .lm-boss.dead .boss-glow, .lm-boss.maybe .boss-glow { display: none; }
@@ -1113,8 +1124,9 @@ body { background: transparent; }
 .lm-boss.maybe .bd-plate { stroke-dasharray: 2 1.4; }
 .lm-timer { font: 800 4.6px var(--sans); fill: #f3efe6; stroke: #0b0c10; stroke-width: 1.2px; paint-order: stroke; }
 .lm-boss.dead .lm-timer { fill: #c9ccd3; }
-@keyframes lm-march { from { transform: translateY(-.25px); } to { transform: translateY(.25px); } }
-@keyframes lm-jitter { from { transform: translateX(-.3px); } to { transform: translateX(.3px); } }
+@keyframes lm-march { from { transform: translateX(-.3px); } to { transform: translateX(.3px); } }
+@keyframes lm-jab { from { transform: translateX(-.35px); } to { transform: translateX(.45px); } }
+@keyframes lm-flow { to { stroke-dashoffset: -3; } }
 @keyframes lm-pop { from { transform: scale(0); opacity: 0; } 60% { opacity: 1; } to { transform: scale(1); opacity: 1; } }
 @keyframes lm-ripple { 0% { transform: scale(.6); opacity: .95; } 100% { transform: scale(2.8); opacity: 0; } }
 @keyframes lm-shards { 0% { transform: scale(.5); opacity: 1; } 100% { transform: scale(1.7); opacity: 0; } }
@@ -1125,7 +1137,7 @@ body { background: transparent; }
 @keyframes lm-breathe { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
 @keyframes lm-halo { 0% { transform: scale(1); opacity: .9; } 100% { transform: scale(1.9); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
-  .lm-wave .wv, .lm-clash circle, .lm-clash .cl-spin, .lm-boss .boss-glow, .minimap.live .pop, .lm-w .lm-vis, .lm-strike, .lm-e .f-spin, .lm-fight .f-spin, .lm-e.rune .fx-spark, .lm-fight .f-zone, .lm-h .pulse { animation: none; }
+  .lane-part, .lm-wave .wv, .lm-clash circle, .lm-clash .cl-spin, .lm-boss .boss-glow, .minimap.live .pop, .lm-w .lm-vis, .lm-strike, .lm-e .f-spin, .lm-fight .f-spin, .lm-e.rune .fx-spark, .lm-fight .f-zone, .lm-h .pulse { animation: none; }
   .minimap.live .fx-ripple, .minimap.live .fx-shards { display: none; }
 }
 .lm-h { cursor: pointer; }

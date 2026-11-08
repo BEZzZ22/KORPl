@@ -120,7 +120,16 @@ function laneGeo(pts) {
     }
     return best;
   };
-  return { len, at, project };
+  // ломаная пути от a до b (b < a — в обратную сторону) для атрибута d
+  const path = (a, b) => {
+    const lo = Math.min(a, b), hi = Math.max(a, b);
+    const pts2 = [at(lo)];
+    for (let i = 1; i < acc.length - 1; i++) if (acc[i] > lo && acc[i] < hi) pts2.push(pts[i]);
+    pts2.push(at(hi));
+    if (b < a) pts2.reverse();
+    return pts2.map((q, i) => `${i ? "L" : "M"}${q[0].toFixed(1)} ${q[1].toFixed(1)}`).join("");
+  };
+  return { len, at, project, path };
 }
 // руны по номерам OpenDota (runes_log.key)
 export const RUNES = {
@@ -281,7 +290,7 @@ export function replayModel(match, replay, me, { heroKey, heroName }) {
       const a = r.length ? Math.max(...r) : g.len * 0.06, b = d.length ? Math.min(...d) : g.len * 0.94;
       return (a + b) / 2;
     };
-    return { name, len: g.len, at: g.at, front };
+    return { name, len: g.len, at: g.at, path: g.path, front };
   });
 
   // Рошан: жив или мёртв и когда может вернуться
@@ -405,7 +414,8 @@ function legend() {
     item(badge(RUNE_GLYPH[0], "ally", { hex: true }), "руна"),
     item(badge(GLYPH.roshan, "gold"), "Рошан"),
     item(badge(GLYPH.tormentor, "gold"), "торментор"),
-    item(el("g", {}, el("circle", { cx: -2, cy: -1.4, r: 1.5, class: "lg-creep ally" }), el("circle", { cx: 2, cy: -1.4, r: 1.5, class: "lg-creep ally" }), el("circle", { cx: 0, cy: 2, r: 1.5, class: "lg-creep ally" })), "крипы"),
+    item(el("g", { class: "lm-wave ally" }, el("g", { transform: "scale(1.6) translate(1 0)" }, el("circle", { cx: -1.5, cy: -0.85, r: 0.6 }), el("circle", { cx: -1.5, cy: 0.85, r: 0.6 }), el("circle", { cx: -2.9, cy: 0, r: 0.6 }), el("path", { d: "M-0.4 -1.3L0.9 0L-0.4 1.3", class: "wv-arrow" }))), "пачка крипов"),
+    item(el("g", { class: "lane-front" }, el("path", { d: "M-4.5 0H-1", class: "lane-part ally" }), el("path", { d: "M1 0H4.5", class: "lane-part foe" }), el("path", { d: "M0 -3.6V0", class: "fr ally" }), el("path", { d: "M0 0V3.6", class: "fr foe" })), "фронт линии"),
     item(el("rect", { x: -2.6, y: -2.6, width: 5.2, height: 5.2, rx: .6, transform: "rotate(45)", class: "lg-tower" }), "башня"),
     CAMPS.length > 0 ? item(camp, "кемп") : "");
   return row;
@@ -582,18 +592,29 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
     return node;
   });
 
-  // пачки крипов: каждые 30 с из бараков, идут по линии со скоростью крипа до фронта и там рубятся
+  // Линии и крипы. Линия покрашена в два цвета: от своего барака до фронта — цвет стороны, штрихи текут к фронту.
+  // Фронт — яркая черта поперёк линии: там встречаются пачки. Пачка — стрелка по ходу движения и три крипа за ней,
+  // выходит каждые 30 с, идёт со скоростью крипа, на фронте разворачивается к врагу и рубится (искры)
   const WAVE_FIGHT = 22;
   const crLayer = el("g", { class: "lm-creeps" });
-  const waves = model.lanes.map((lane) => ({
-    lane,
-    rad: Array.from({ length: 4 }, () => crLayer.appendChild(waveNode(myRadiant ? "ally" : "foe"))),
-    dire: Array.from({ length: 4 }, () => crLayer.appendChild(waveNode(myRadiant ? "foe" : "ally"))),
-    clash: crLayer.appendChild(el("g", { class: "lm-clash", display: "none" }, el("g", { class: "cl-spin" }, el("path", { d: "M-1.6 -1.6L1.6 1.6M1.6 -1.6L-1.6 1.6" })), el("circle", { r: 2.4 }))),
-  }));
+  const radSide = myRadiant ? "ally" : "foe", direSide = myRadiant ? "foe" : "ally";
+  const waves = model.lanes.map((lane) => {
+    const radPath = crLayer.appendChild(el("path", { class: `lane-part ${radSide}` }));
+    const direPath = crLayer.appendChild(el("path", { class: `lane-part ${direSide}` }));
+    const frontNode = crLayer.appendChild(el("g", { class: "lane-front" },
+      el("path", { d: "M0 -2.6V0", class: `fr ${radSide}` }), el("path", { d: "M0 0V2.6", class: `fr ${direSide}` }), el("circle", { r: 0.75, class: "fr-dot" })));
+    return {
+      lane, radPath, direPath, frontNode,
+      rad: Array.from({ length: 4 }, () => crLayer.appendChild(waveNode(radSide))),
+      dire: Array.from({ length: 4 }, () => crLayer.appendChild(waveNode(direSide))),
+      clash: crLayer.appendChild(el("g", { class: "lm-clash", display: "none" }, el("g", { class: "cl-spin" }, el("path", { d: "M-1.4 -1.4L1.4 1.4M1.4 -1.4L-1.4 1.4M0 -2V2M-2 0H2" })), el("circle", { r: 2.6 }))),
+    };
+  });
   function waveNode(side) {
     return el("g", { class: `lm-wave ${side}`, display: "none" },
-      el("g", { class: "wv" }, el("circle", { cx: -1.2, cy: -0.9, r: 0.85 }), el("circle", { cx: 1.2, cy: -0.9, r: 0.85 }), el("circle", { cx: -1.2, cy: 1.1, r: 0.85 }), el("circle", { cx: 1.2, cy: 1.1, r: 0.85 })));
+      el("g", { class: "wv" },
+        el("circle", { cx: -1.5, cy: -0.85, r: 0.6 }), el("circle", { cx: -1.5, cy: 0.85, r: 0.6 }), el("circle", { cx: -2.9, cy: 0, r: 0.6 }),
+        el("path", { d: "M-0.4 -1.3L0.9 0L-0.4 1.3", class: "wv-arrow" })));
   }
 
   // Рошан всегда виден в своём логове: жив, мёртв (сколько до возрождения) или может уже вернуться
@@ -918,8 +939,19 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
       const F = lane.front(t);
       const travel = lane.len / CREEP_SPEED;
       const fight = { rad: false, dire: false };
+      // части линии: от барака Света до фронта и от барака Тьмы до фронта
+      const Fk = Math.round(F * 4) / 4;
+      if (w.lastF !== Fk) {
+        w.lastF = Fk;
+        w.radPath.setAttribute("d", lane.path(lane.len * 0.03, F - 1.6));
+        w.direPath.setAttribute("d", lane.path(lane.len * 0.97, F + 1.6));
+        const [fx, fy] = lane.at(F), [ax, ay] = lane.at(F + 1);
+        const ang = (Math.atan2(ay - fy, ax - fx) * 180) / Math.PI;
+        w.frontNode.setAttribute("transform", `translate(${fx.toFixed(2)} ${fy.toFixed(2)}) rotate(${ang.toFixed(1)})`);
+      }
       for (const side of ["rad", "dire"]) {
         const nodes = w[side];
+        const dir = side === "rad" ? 1 : -1;
         let n = 0;
         if (t >= 0) {
           for (let k = Math.floor(t / 30); k >= 0 && k * 30 > t - travel - WAVE_FIGHT; k--) {
@@ -928,10 +960,11 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
             const need = Math.abs(F - startS) / CREEP_SPEED; // сколько идти до фронта
             if (age > need + WAVE_FIGHT || n >= nodes.length) continue;
             const atFront = age >= need;
-            const d = atFront ? F + (side === "rad" ? -1.3 : 1.3) : startS + (side === "rad" ? 1 : -1) * age * CREEP_SPEED;
-            const [x, y] = lane.at(d);
+            const d = atFront ? F - dir * 2.2 : startS + dir * age * CREEP_SPEED;
+            const [x, y] = lane.at(d), [nx, ny] = lane.at(d + dir * 0.8);
+            const ang = (Math.atan2(ny - y, nx - x) * 180) / Math.PI;
             const node = nodes[n++];
-            node.setAttribute("transform", `translate(${x.toFixed(2)} ${y.toFixed(2)})`);
+            node.setAttribute("transform", `translate(${x.toFixed(2)} ${y.toFixed(2)}) rotate(${ang.toFixed(1)})`);
             node.classList.toggle("fighting", atFront);
             if (node.getAttribute("display") !== "inline") node.setAttribute("display", "inline");
             if (atFront) fight[side] = true;
