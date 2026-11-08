@@ -2,7 +2,7 @@
 // Его используют веб-приложение (app.js) и бот (через engine_cli.mjs).
 // Тексты: docs/texts.json, механики героев: docs/knowledge.json, нормы по рангам: docs/rank_norms.json.
 // Ход игры глазами тренера (драки, переломы, причины, личные ошибки по минутам) — docs/story.js.
-import { gameStory } from "./story.js?v=1";
+import { gameStory } from "./story.js?v=2";
 
 export const LANE = "Линия", FARM = "Фарм", FIGHTS = "Драки", SURVIVAL = "Выживание", ITEMS = "Предметы", VISION = "Видение";
 export const CATEGORIES = [LANE, FARM, FIGHTS, SURVIVAL, ITEMS, VISION];
@@ -810,8 +810,10 @@ class MatchAnalyzer {
         deathCount++;
       }
       problems.push(i);
-      if (problems.length === 3) break;
+      if (problems.length === 6) break;
     }
+    // Обзор убирает из запаса то, что уже сказал «Ход игры», и добирает следующие; задача и тренер берут первые три
+    const more = problems.splice(3);
     // Серьёзного нет — подсказываем, что подтянуть, по главным мелким замечаниям
     if (!problems.length) {
       for (const f of this.findings.filter((x) => x.severity === WARN && x.tip && x.kind !== "killer").slice(0, 2)) {
@@ -846,6 +848,7 @@ class MatchAnalyzer {
       role: ROLE_NAME[this.pos],
       role_sure: this.roleSure,
       problems,
+      problems_more: more,
       strengths,
       goal: problems.length && !problems[0].minor ? this.goalFor(problems[0]) : "Цель на следующую катку: повторить такой же матч — и ранг пойдёт вверх",
       goal_check: problems.length && !problems[0].minor ? this.goalCheckFor(problems[0]) : null,
@@ -3023,7 +3026,9 @@ class MatchAnalyzer {
     const values = Object.values(scores);
     const mean = overall ?? sum(values) / values.length;
     const key = mean >= 8 ? "verdict_top" : mean >= 6.5 ? "verdict_good" : mean >= 5 ? "verdict_mid" : "verdict_bad";
-    return this.say(key);
+    // итог смотрит и на результат: «Тяжёлая игра» на выигранной катке звучит как ошибка разбора
+    const withResult = `${key}_${this.won ? "win" : "loss"}`;
+    return this.say(this.texts[withResult] ? withResult : key);
   }
 
   collectFacts() {
