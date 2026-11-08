@@ -1,5 +1,5 @@
 # Воронка платного тренера по выгрузке D1 (json от wrangler). Репо публичный: печатаем только числа, без имён и id.
-# Аргументы: seen.json act.json wallet.json paid.json refn.json prize.json owner_ids
+# Аргументы: seen.json act.json wallet.json paid.json refn.json prize.json owner_ids [party.json]
 import json, sys, time
 
 def rows(path):
@@ -93,3 +93,12 @@ print()
 print("Откуда пришли (метка первого захода):")
 for k, v in sorted(src.items(), key=lambda x: -x[1]):
     print(f"  {k}: {v}")
+
+# Карточки в пати-чатах (worker/party.js, ключи party:<день>:<чат>:<матч>, живут 30 дней). id чатов не печатаем
+if len(sys.argv) > 8:
+    cards = [r["k"].split(":") for r in rows(sys.argv[8])]
+    cards = [c for c in cards if len(c) == 4]
+    print()
+    print(f"Пати-чаты за 30 дней: карточек {len(cards)}, чатов {len({c[2] for c in cards})}")
+    for d in sorted({c[1] for c in cards})[-7:]:
+        print(f"  {d}: {sum(1 for c in cards if c[1] == d)}")
