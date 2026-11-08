@@ -982,6 +982,12 @@ body { background: transparent; }
 .lm-ev.theirs { border-left-color: var(--dire); }
 .lm-ev span { font-weight: 700; }
 .lm-ev .lm-ico { width: 14px; height: 14px; margin: 0 1px; }
+.lm-ev span { display: inline-flex; align-items: center; gap: 4px; }
+.lm-face { width: 18px; height: 18px; border-radius: 50%; object-fit: cover; flex: none; box-shadow: 0 0 0 1.5px #8a8f99; background: #0b0c10; }
+.lm-face.ally { box-shadow: 0 0 0 1.5px #5fe0b0; }
+.lm-face.foe { box-shadow: 0 0 0 1.5px #ff6b6f; }
+.lm-face.mine { box-shadow: 0 0 0 1.5px var(--aegis); }
+.bd.face .ini { font: 800 4.2px var(--sans); fill: #cfd3dc; }
 @keyframes lm-in { from { opacity: 0; transform: translateY(4px); } }
 
 .lm-controls { display: flex; align-items: center; gap: 8px; }

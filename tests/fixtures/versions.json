@@ -8,16 +8,16 @@
   "sha": "fa104be1129fe933"
  },
  "app.js": {
-  "v": "144",
-  "sha": "032e457e083562ec"
+  "v": "145",
+  "sha": "dd8f42d5b1d611d7"
  },
  "blame.js": {
   "v": "14",
   "sha": "f9e65a53049368f5"
  },
  "dotamap.js": {
-  "v": "8",
-  "sha": "590fcc7f0bb03420"
+  "v": "9",
+  "sha": "75c3a25da6080ee6"
  },
  "engine.js": {
   "v": "48",
@@ -32,8 +32,8 @@
   "sha": "4cafbe1e014e4309"
  },
  "map3d.js": {
-  "v": "13",
-  "sha": "adb504dd7e4b5776"
+  "v": "14",
+  "sha": "55215fbbe6a42bba"
  },
  "medal3d.js": {
   "v": "7",
@@ -52,8 +52,8 @@
   "sha": "94baafafb2f5e7ab"
  },
  "style.css": {
-  "v": "73",
-  "sha": "705f0ff23f44a05a"
+  "v": "74",
+  "sha": "c65d066b633991f5"
  },
  "texts.json": {
   "v": "21",
