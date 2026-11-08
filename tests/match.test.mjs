@@ -75,3 +75,28 @@ test("повтор: сломанные варды, руны, Рошан, дра�
   // у большинства убийств известно, откуда бил убийца
   assert.ok(m.kills.filter((k) => k.from).length >= m.kills.length * 0.9);
 });
+
+test("повтор: линии крипов, Рошан в логове, торменторы", () => {
+  const opts = { heroKey: (id) => heroes[id].name.replace("npc_dota_hero_", ""), heroName: names.heroName };
+  const m = replayModel(match, replay, ME, opts);
+  assert.deepEqual(m.lanes.map((l) => l.name), ["top", "mid", "bot"]);
+  // пока стоят обе T1 — фронт около середины линии; снесли T1 Света внизу (10:04) — фронт сдвинулся к Свету
+  const bot = m.lanes.find((l) => l.name === "bot");
+  assert.ok(Math.abs(bot.front(60) / bot.len - 0.5) < 0.15);
+  assert.ok(bot.front(700) < bot.front(500));
+  // Рошан днём сверху, ночью снизу; после убийства 8–11 минут мёртв
+  assert.notDeepEqual(m.roshanAt(100).pit, m.roshanAt(400).pit);
+  assert.equal(m.roshanAt(1000).state, "alive");
+  assert.equal(m.roshanAt(1030).state, "dead");
+  assert.equal(m.roshanAt(1025 + 500).state, "maybe");
+  assert.equal(m.roshanAt(1025 + 700).state, "alive");
+  // торменторы с 20:00; убийство приходит из файла реплея
+  assert.equal(m.tormentorAt(1100, 0).state, "none");
+  assert.equal(m.tormentorAt(1300, 0).state, "alive");
+  const hero = heroes[match.players[0].hero_id].name.replace("npc_dota_hero_", "");
+  const withKill = replayModel(match, { ...replay, lasthits: [[1500, hero, "m"], [600, hero, "c"]] }, ME, opts);
+  assert.equal(withKill.tormentorKills.length, 1);
+  const w = withKill.tormentorKills[0].which;
+  assert.equal(withKill.tormentorAt(1600, w).state, "dead");
+  assert.equal(withKill.tormentorAt(2200, w).state, "alive");
+});

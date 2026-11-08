@@ -4,11 +4,11 @@ import {
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
 } from "./engine.js?v=47";
 import { aegisBadge, openShowcase, whenGone } from "./aegis.js?v=9";
-import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=6";
+import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=7";
 import { matchVerdicts } from "./blame.js?v=13";
 import { rankMedal3d } from "./medal3d.js?v=7";
 import { heroCard3d } from "./herocard3d.js?v=5";
-import { tacticalTable } from "./map3d.js?v=11";
+import { tacticalTable } from "./map3d.js?v=12";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -3600,7 +3600,9 @@ function mapTab(a) {
       const model = replayModel(raw.match, raw.replay, raw.match.players.find((p) => p.account_id === a.hist_self.account) || null, {
         heroKey: (id) => dictionary.heroKey(id).replace("npc_dota_hero_", ""), heroName: (id) => dictionary.heroName(id),
       });
-      live = liveMap(model, { iconUrl: (id) => `${STEAM_CDN}/apps/dota2/images/dota_react/heroes/icons/${dictionary.heroKey(id).replace("npc_dota_hero_", "")}.png`, haptic });
+      // портрет героя как в Доте; не загрузился — зеркало Steam, потом маленькая иконка
+      const heroPics = (id) => { const k = dictionary.heroKey(id).replace("npc_dota_hero_", ""); return [`${STEAM_CDN}/apps/dota2/images/dota_react/heroes/${k}.png`, `${STEAM_MIRROR}/apps/dota2/images/dota_react/heroes/${k}.png`, `${STEAM_CDN}/apps/dota2/images/dota_react/heroes/icons/${k}.png`]; };
+      live = liveMap(model, { iconUrl: heroPics, haptic });
     } catch (e) {
       console.warn(e);
     }
