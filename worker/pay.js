@@ -11,6 +11,9 @@
 // задано вопросов в чате); pay:<charge id> — оплата (для повторов вебхука и возврата); paid:<день>:<charge id> — для отчёта.
 
 export const PACKS = {
+  // одна катка (08.11, решение Ярика): человек хочет разбор вот этой проигранной, а не пакет. Это один разбор на счёт,
+  // приложение сразу тратит его на катку, с которой пришёл на оплату
+  p1: { stars: 10, rub: 19, credits: 1, one: true, title: "Этот матч целиком", text: "Один матч целиком: фазы, смерти, карта, сборка, графики и ИИ-тренер с чатом по этой катке." },
   p10: { stars: 49, rub: 79, credits: 10, title: "10 полных разборов", text: "Десять матчей целиком: фазы, смерти, карта, сборка, графики и ИИ-тренер с чатом. Не сгорают." },
   month: { stars: 129, rub: 199, days: 30, title: "Полный разбор на месяц", text: "30 дней полного разбора и ИИ-тренера: до 10 матчей в сутки, чат по каждой катке и сравнения." },
 };
@@ -57,7 +60,7 @@ export function walletView(w, now = Date.now()) {
   return {
     credits: w.c, free_left: Math.max(0, FREE_COACH - w.free), until: sub ? w.until : 0,
     sub_left: sub ? Math.max(0, SUB_PER_DAY - (w.d === mskDay(now) ? w.n : 0)) : 0,
-    packs: Object.entries(PACKS).map(([id, p]) => ({ id, stars: p.stars, rub: p.rub, title: p.title, credits: p.credits || 0, days: p.days || 0 })),
+    packs: Object.entries(PACKS).map(([id, p]) => ({ id, stars: p.stars, rub: p.rub, title: p.title, credits: p.credits || 0, days: p.days || 0, one: Boolean(p.one) })),
   };
 }
 
@@ -300,6 +303,7 @@ export async function roboResult(env, form, now = Date.now()) {
 export function thanksText(pack, view) {
   const p = PACKS[pack];
   if (p.days) return `Оплата прошла, спасибо! Тренер открыт до ${new Date(view.until + 3 * 3600_000).toISOString().slice(0, 10).split("-").reverse().join(".")}. Возвращайся в приложение и разбирай катки.`;
+  if (p.one) return "Оплата прошла, спасибо! Вернись в приложение: катка, с которой ты пришёл, откроется сама. Если закрыл её — открой любую, разбор уже на счету.";
   return `Оплата прошла, спасибо! Разборов тренера на счету: ${view.credits}. Возвращайся в приложение и разбирай катки.`;
 }
 

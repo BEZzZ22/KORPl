@@ -53,9 +53,9 @@ GitHub Actions ─> tools/*.py|mjs ─> YouTube / TikTok / VK / Instagram / TG-�
 | Загрузку на площадки | `tools/promo_yt.py`, `promo_tt.py`, `promo_vk.py`, `promo_ig.py`, `promo-post.mjs` / `promo_userbot.py` (TG-канал) |
 | Посмотреть чужой ролик по ссылке (кадры + речь) | скилл `.claude/skills/watch/` (`watch.py`: yt-dlp, ffmpeg, faster-whisper) |
 
-Маршруты воркера (`worker/coach.js`, `fetch`): `POST /` с `mode` = `card`, `sync`, `track`, `gate`, `vanity`, `feedback`, `replay`, `watch`, `wallet`, `buy`, `pay_link`, `open`, `web_wallet`, `web_buy`, `chat`, `compare` (без `mode` — разбор тренером); `POST /tg` — вебхук бота; `GET`/`POST /relay` — выгрузка OpenDota (ключ — RELAY_KEY из токена Cloudflare); `POST /robokassa` — оплата картой; `GET /od/*` — запасной путь к OpenDota; `GET /stats`, `/replay-queue`, `/card/<id>.png`; `POST /report`.
+Маршруты воркера (`worker/coach.js`, `fetch`): `POST /` с `mode` = `card`, `sync`, `track`, `gate`, `vanity`, `feedback`, `replay`, `watch`, `wallet`, `buy`, `pay_link`, `open`, `ref_match`, `web_wallet`, `web_buy`, `chat`, `compare` (без `mode` — разбор тренером); `POST /tg` — вебхук бота; `GET`/`POST /relay` — выгрузка OpenDota (ключ — RELAY_KEY из токена Cloudflare); `POST /robokassa` — оплата картой; `GET /od/*` — запасной путь к OpenDota; `GET /stats`, `/replay-queue`, `/card/<id>.png`; `POST /report`.
 
-Ключи хранилища (префиксы): `user:` профиль, `seen:` первый заход и источник, `wallet:` `pay:` `paid:` `robo:` `unl:` деньги (только D1, без запасного KV — `MONEY` в `store.js`), `ask:` лимиты вопросов, `watch:` подписки «разбор готов», `rq:` очередь реплеев, `streak:` серия, `digest:` сводка недели, `pq:` `odreq:` `relay_*` выгрузка OpenDota, `lastm:` `pushlast:` `nopush:` пуш после катки (не чаще раза в 60 ч), `cg*:` защита чата.
+Ключи хранилища (префиксы): `user:` профиль, `seen:` первый заход и источник, `wallet:` `pay:` `paid:` `robo:` `unl:` деньги (только D1, без запасного KV — `MONEY` в `store.js`), `ask:` лимиты вопросов, `watch:` подписки «разбор готов», `rq:` очередь реплеев, `streak:` серия, `refm:` катка, которую откроет бонус за друга, `top:` `topdone:` `notop:` топ недели в чате, `digest:` сводка недели, `pq:` `odreq:` `relay_*` выгрузка OpenDota, `lastm:` `pushlast:` `nopush:` пуш после катки (не чаще раза в 60 ч), `cg*:` защита чата.
 
 ## Секреты
 

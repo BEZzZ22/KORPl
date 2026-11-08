@@ -122,7 +122,7 @@ function coach(body) {
   if (raw.mode === "gate") return gateCalls++ === 0 ? { ok: false, channel: true, chat: false } : { ok: true, channel: true, chat: true };
   if (raw.mode === "feedback") return { ok: true };
   // платный тренер: в шаге paywall пробные кончились, пока не «оплатят» в окне Телеграма
-  const PACKS = [{ id: "p10", stars: 49, title: "10 разборов тренера", credits: 10, days: 0 }, { id: "month", stars: 129, title: "Тренер на месяц", credits: 0, days: 30 }];
+  const PACKS = [{ id: "p1", stars: 10, rub: 19, title: "Этот матч целиком", credits: 1, days: 0, one: true }, { id: "p10", stars: 49, title: "10 разборов тренера", credits: 10, days: 0 }, { id: "month", stars: 129, title: "Тренер на месяц", credits: 0, days: 30 }];
   if (raw.mode === "wallet") return { credits: pay.paid ? 10 : 0, free_left: 0, until: 0, sub_left: 0, packs: PACKS, cards: true, streak: 4, streak_today: false, ref_link: "https://t.me/DotaRazbor_bot?startapp=r1", ref_n: 2 };
   if (raw.mode === "pay_link") return { url: "https://bezzz22.github.io/KORPl/pay.html#t=8.9999999999.Ax.axel.0123456789abcdef0123456789abcdef" };
   if (raw.mode === "buy") return { link: `https://t.me/$inv_${raw.pack}` };
@@ -661,7 +661,7 @@ if (!only || only.has("paywall")) {
     await p8.locator(".coach-btn").click({ timeout: 20000 });
     await p8.waitForSelector(".paywall .paywall-pack", { timeout: 10000 });
     const packs = await p8.locator(".paywall-pack").count();
-    if (packs !== 2) throw new Error(`пакетов ${packs}, ждали 2`);
+    if (packs !== 3) throw new Error(`пакетов ${packs}, ждали 3`);
     await p8.locator(".paywall-card").click();
     await p8.waitForFunction(() => /pay\.html#t=/.test(window.__link || ""), null, { timeout: 5000 });
     await p8.locator(".paywall").scrollIntoViewIfNeeded();
@@ -670,7 +670,7 @@ if (!only || only.has("paywall")) {
     shots.push(file);
     await p8.locator(".paywall-pack").first().click();
     await p8.waitForSelector(".coach-moment", { timeout: 15000 });
-    if (!/inv_p10/.test(await p8.evaluate(() => window.__invoice || ""))) throw new Error("счёт не открылся");
+    if (!/inv_p1\b/.test(await p8.evaluate(() => window.__invoice || ""))) throw new Error("счёт не открылся");
     if (await p8.locator(".paywall").count()) throw new Error("после оплаты пейвол не убрался");
   });
   // со второго матча без подписки: «Обзор» и «Кто слил» открыты, остальные вкладки под замком до оплаты
