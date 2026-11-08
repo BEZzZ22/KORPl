@@ -296,3 +296,18 @@ test("/nodigest выключает сводку недели, /digest включ
     assert.ok(!kv.m.has("nodigest:7"));
   } finally { globalThis.fetch = real; }
 });
+
+test("профиль бота для поиска: имя и описания в лимитах Телеги, ставятся один раз", async () => {
+  const { BOT_PROFILE, ensureProfile, PROFILE_VERSION } = await import("./coach.js");
+  assert.ok(BOT_PROFILE.name.length <= 64 && BOT_PROFILE.short_description.length <= 120 && BOT_PROFILE.description.length <= 512);
+  const kv = memKV(), calls = [];
+  const env = { COACH_KV: kv, BOT_TOKEN: "x" };
+  let fail = true;
+  const send = async (m) => { calls.push(m); return !(fail && m === "setMyName"); };
+  assert.equal(await ensureProfile(env, send), false);
+  fail = false;
+  assert.equal(await ensureProfile(env, send), true);
+  assert.equal(await kv.get("tg_profile"), PROFILE_VERSION);
+  assert.equal(await ensureProfile(env, send), false);
+  assert.equal(calls.length, 6);
+});
