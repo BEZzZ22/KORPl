@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
-import { relayTasks, relayRun, mapFetcher, pushText, roundGap, kickRelay } from "./relay.js";
+import { relayTasks, relayRun, mapFetcher, pushText, roundGap, kickRelay, PUSH_GAP } from "./relay.js";
 import { handlePartyMessage, partyText } from "./party.js";
 import { checkWatches } from "./coach.js";
 import { streakReminders } from "./growth.js";
@@ -106,6 +106,19 @@ test("пуш после катки: первый обход запоминает
   // старая катка (больше 3 часов) — не пушим
   await relayRun(env, tg, { data: { "/players/42/recentMatches": g(102, now - 5 * 3600_000) }, users: { 7: 42 } }, now);
   assert.equal(sent.length, 1);
+  // новая свежая катка через час — молчим: зовём не чаще раза в 60 часов, одним сообщением
+  const later = now + 3600_000;
+  await relayRun(env, tg, { data: { "/players/42/recentMatches": g(103, later - 600_000) }, users: { 7: 42 } }, later);
+  assert.equal(sent.length, 1);
+  const soon = now + PUSH_GAP - 60_000;
+  await relayRun(env, tg, { data: { "/players/42/recentMatches": g(104, soon - 600_000) }, users: { 7: 42 } }, soon);
+  assert.equal(sent.length, 1);
+  // прошло 60 часов — снова можно
+  const after = now + PUSH_GAP + 60_000;
+  const r2 = await relayRun(env, tg, { data: { "/players/42/recentMatches": g(105, after - 600_000) }, users: { 7: 42 } }, after);
+  assert.equal(r2.push, 1);
+  assert.equal(sent.length, 2);
+  assert.match(sent[1].reply_markup.inline_keyboard[0][0].web_app.url, /\?match=105$/);
   assert.match(pushText(g(1, now)[0], { 1: ["npc_dota_hero_antimage", "Anti-Mage"] }), /^Катка на Anti-Mage: поражение/);
 });
 
