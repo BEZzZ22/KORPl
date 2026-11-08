@@ -1314,3 +1314,19 @@ body.gated .tabbar { display: none; }
 .duel-row span { text-align: center; }
 .duel-verdict { margin: 10px 0; font: 800 18px/1.2 var(--sans); color: var(--aegis); text-align: center; }
 .habit span:first-child { flex: 1; }
+/* 08.11: Обзор короче — «почему» и подробности свёрнуты, таймкоды ведут на карту */
+.story-why-box { margin-top: 8px; }
+.story-why-box > summary { font-size: 13px; color: var(--muted); padding: 2px 26px 2px 0; }
+.story-why-box .story-why { margin-top: 6px; }
+button.tc { display: inline; padding: 0 1px; margin: 0; min-height: 0; background: none; box-shadow: none; border: 0; border-radius: 0;
+  color: inherit; font: inherit; text-decoration: underline; text-decoration-color: var(--aegis); text-underline-offset: 3px; cursor: pointer; }
+button.tc:active { transform: none; color: var(--aegis); filter: none; }
+.story-more { display: block; width: 100%; text-align: left; margin: 2px 0 6px; }
+details.more-box { margin-top: 14px; }
+details.more-box > summary { font-weight: 700; padding-top: 2px; padding-bottom: 2px; }
+details.more-box[open] > summary { margin-bottom: 6px; }
+.hidden-by-id { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line, rgba(255,255,255,.08)); }
+.hidden-by-id .row { margin-top: 8px; }
+details.ach-more { margin-top: 10px; }
+details.ach-more > summary { font-weight: 700; }
+details.ach-more .ach-grid { margin-top: 10px; }

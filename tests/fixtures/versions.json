@@ -8,20 +8,20 @@
   "sha": "fa104be1129fe933"
  },
  "app.js": {
-  "v": "144",
-  "sha": "97eaa678b445ee4c"
+  "v": "145",
+  "sha": "dd8f42d5b1d611d7"
  },
  "blame.js": {
-  "v": "13",
-  "sha": "d5959071f4e3ba0a"
+  "v": "14",
+  "sha": "f9e65a53049368f5"
  },
  "dotamap.js": {
   "v": "9",
   "sha": "75c3a25da6080ee6"
  },
  "engine.js": {
-  "v": "47",
-  "sha": "26e66c3ca18c6711"
+  "v": "48",
+  "sha": "c0bdf621705d6c6f"
  },
  "herocard3d.js": {
   "v": "5",
@@ -48,20 +48,20 @@
   "sha": "877f05546d693107"
  },
  "story.js": {
-  "v": "1",
-  "sha": "137ef596c6293fc5"
+  "v": "2",
+  "sha": "94baafafb2f5e7ab"
  },
  "style.css": {
-  "v": "73",
-  "sha": "7f948bbf72942a6d"
+  "v": "74",
+  "sha": "c65d066b633991f5"
  },
  "texts.json": {
-  "v": "20",
-  "sha": "705c9c503f05809e"
+  "v": "21",
+  "sha": "c0747bf789d5aa09"
  },
  "theme.js": {
-  "v": "5",
-  "sha": "753e240bd10cf6b3"
+  "v": "6",
+  "sha": "ddb64cfa4ef3037c"
  },
  "v2.css": {
   "v": "13",

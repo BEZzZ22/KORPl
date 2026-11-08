@@ -458,11 +458,21 @@ await step("swipe", async () => {
   await page.evaluate(() => document.querySelector(".tab").click());
 });
 await step("compare", async () => {
+  // сравнение теперь в свёрнутом «Подробнее» внизу Обзора
+  if (!(await page.locator(".more-box").getAttribute("open").catch(() => null))) await page.locator(".more-box > summary").click();
   await page.locator(".compare summary").click();
   await page.locator(".compare-item").first().click();
   await page.waitForSelector(".compare-out p", { timeout: 10000 });
   await page.locator(".compare").scrollIntoViewIfNeeded();
   await shot("compare", { full: false });
+});
+// таймкод в Обзоре открывает повтор на карте у этой минуты
+await step("timecode", async () => {
+  await page.locator(".tabs .tab", { hasText: "Обзор" }).click();
+  await page.locator(".story-item button.tc").first().click();
+  await page.waitForFunction(() => /Карта/.test((document.querySelector(".tabs .tab.active") || {}).textContent || ""), null, { timeout: 5000 });
+  await page.waitForSelector(".live-map", { timeout: 10000 });
+  await page.locator(".tabs .tab", { hasText: "Обзор" }).click();
 });
 await step("moment-ask", async () => {
   await page.locator(".tabs .tab", { hasText: "Фазы" }).click();
@@ -596,14 +606,14 @@ if (!only || only.has("hidden")) {
     hideMatches = true;
     await p3.goto(`${BASE}/index.html`);
     await p3.waitForSelector(".hidden-matches .steps li", { timeout: 15000 });
-    await p3.locator(".hidden-matches button").click();
+    await p3.locator(".hidden-matches > button").click();
     await p3.waitForFunction(() => /Пока пусто/.test(document.querySelector(".hidden-matches [role=status]").textContent), null, { timeout: 10000 });
     await p3.waitForTimeout(300);
     const file = join(OUT, `${String(shots.length + 1).padStart(2, "0")}-hidden.png`);
     await p3.screenshot({ path: file, fullPage: true });
     shots.push(file);
     hideMatches = false;
-    await p3.locator(".hidden-matches button").click();
+    await p3.locator(".hidden-matches > button").click();
     await p3.waitForSelector(".match-item", { timeout: 10000 });
   });
   hideMatches = false;
