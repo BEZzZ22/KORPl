@@ -966,7 +966,7 @@ body { background: transparent; }
 .live-map { display: flex; flex-direction: column; gap: 10px; }
 .lm-frame { position: relative; border-radius: 16px; overflow: hidden; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 20px 50px -20px rgba(0, 0, 0, 0.9); background: #111; }
 .minimap.live { display: block; width: 100%; max-width: none; border-radius: 0; transform: none; box-shadow: none; touch-action: manipulation; }
-.lm-top { position: absolute; left: 8px; right: 8px; top: 8px; display: flex; justify-content: space-between; align-items: center; pointer-events: none; }
+.lm-top { display: flex; justify-content: space-between; align-items: center; pointer-events: none; }
 .lm-clock, .lm-score { background: rgba(8, 9, 12, 0.72); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 999px; padding: 3px 10px; font-variant-numeric: tabular-nums; }
 .lm-clock { font: 600 13px/1.4 var(--display); letter-spacing: .02em; }
 .lm-score { display: flex; gap: 5px; align-items: baseline; font-weight: 800; font-size: 14px; }
@@ -1025,7 +1025,7 @@ body { background: transparent; }
 .minimap.live.hide-heroes .lm-heroes, .minimap.live.hide-heroes .lm-trail, .minimap.live.hide-heroes .lm-tails,
 .minimap.live.hide-camps .lm-camps, .minimap.live.hide-wards .lm-wards, .minimap.live.hide-wards .lm-wbreaks,
 .minimap.live.hide-deaths .lm-deaths, .minimap.live.hide-deaths .lm-strikes, .minimap.live.hide-deaths .lm-fights,
-.minimap.live.hide-runes .lm-runes, .minimap.live.hide-buildings .lm-buildings, .minimap.live.hide-buildings .lm-bfx, .minimap.live.hide-buildings .lm-rosh { display: none; }
+.minimap.live.hide-runes .lm-runes, .minimap.live.hide-buildings .lm-buildings, .minimap.live.hide-buildings .lm-bfx, .minimap.live.hide-buildings .lm-rosh, .minimap.live.hide-buildings .lm-bosses, .minimap.live.hide-creeps .lm-creeps { display: none; }
 
 .lm-camp rect { fill: rgba(12, 13, 16, 0.78); stroke: #d9c7a0; stroke-width: .35; }
 .lm-camp line { stroke: #d9c7a0; stroke-width: .35; stroke-linecap: round; }
@@ -1069,7 +1069,7 @@ body { background: transparent; }
 .minimap.live .fx-shards path { stroke: currentColor; stroke-width: .9; stroke-linecap: round; }
 .minimap.live .fx-shards { opacity: 0; animation: lm-shards .8s cubic-bezier(.1, .7, .3, 1) both; }
 .lm-w .lm-vis { animation: lm-vis .7s cubic-bezier(.2, .8, .3, 1) both; }
-.lm-rosh, .lm-bfx, .lm-strikes, .lm-fights, .lm-tails, .lm-wbreaks, .lm-runes, .lm-deaths { pointer-events: none; }
+.lm-creeps, .lm-bosses, .lm-rosh, .lm-bfx, .lm-strikes, .lm-fights, .lm-tails, .lm-wbreaks, .lm-runes, .lm-deaths { pointer-events: none; }
 .lm-e { color: #8a8f99; }
 .lm-e.ally { color: #5fe0b0; }
 .lm-e.foe { color: #ff6b6f; }
@@ -1094,6 +1094,27 @@ body { background: transparent; }
 .lm-tails .foe path { stroke: #ff6b6f; }
 .lm-tails .mine path { stroke: var(--aegis); }
 .minimap.live.zoomed .lm-tails path { stroke-width: .5; }
+/* крипы: тройка точек цвета команды, на ходу покачивается, на фронте дрожит; искры там, где сшиблись */
+.lm-wave circle { stroke: rgba(0, 0, 0, .8); stroke-width: .3; }
+.lm-wave.ally circle { fill: #7ff0c6; }
+.lm-wave.foe circle { fill: #ff8a8d; }
+.lm-wave .wv { animation: lm-march .5s ease-in-out infinite alternate; }
+.lm-wave.fighting .wv { animation: lm-jitter .18s linear infinite alternate; }
+.lm-clash path { stroke: #f3efe6; stroke-width: .45; stroke-linecap: round; }
+.lm-clash circle { fill: none; stroke: rgba(243, 239, 230, .55); stroke-width: .3; animation: lm-ripple 1s ease-out infinite; }
+.lm-clash .cl-spin { animation: lm-spin 1.2s linear infinite; }
+.lm-legend .lg-creep.ally { fill: #7ff0c6; stroke: rgba(0, 0, 0, .7); stroke-width: .4; }
+/* Рошан и торменторы: живой — золотой ободок и мягкое свечение, мёртвый — серый с таймером */
+.lm-boss .boss-glow { fill: rgba(232, 194, 122, .14); animation: lm-breathe 2.4s ease-in-out infinite; }
+.lm-boss.dead .boss-glow, .lm-boss.maybe .boss-glow { display: none; }
+.lm-boss.dead .bd { color: #6b6f78; }
+.lm-boss.dead .bd-gl { color: #8a8f99; }
+.lm-boss.dead .bd-plate { stroke-dasharray: none; }
+.lm-boss.maybe .bd-plate { stroke-dasharray: 2 1.4; }
+.lm-timer { font: 800 4.6px var(--sans); fill: #f3efe6; stroke: #0b0c10; stroke-width: 1.2px; paint-order: stroke; }
+.lm-boss.dead .lm-timer { fill: #c9ccd3; }
+@keyframes lm-march { from { transform: translateY(-.25px); } to { transform: translateY(.25px); } }
+@keyframes lm-jitter { from { transform: translateX(-.3px); } to { transform: translateX(.3px); } }
 @keyframes lm-pop { from { transform: scale(0); opacity: 0; } 60% { opacity: 1; } to { transform: scale(1); opacity: 1; } }
 @keyframes lm-ripple { 0% { transform: scale(.6); opacity: .95; } 100% { transform: scale(2.8); opacity: 0; } }
 @keyframes lm-shards { 0% { transform: scale(.5); opacity: 1; } 100% { transform: scale(1.7); opacity: 0; } }
@@ -1104,11 +1125,11 @@ body { background: transparent; }
 @keyframes lm-breathe { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
 @keyframes lm-halo { 0% { transform: scale(1); opacity: .9; } 100% { transform: scale(1.9); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
-  .minimap.live .pop, .lm-w .lm-vis, .lm-strike, .lm-e .f-spin, .lm-fight .f-spin, .lm-e.rune .fx-spark, .lm-fight .f-zone, .lm-h .pulse { animation: none; }
+  .lm-wave .wv, .lm-clash circle, .lm-clash .cl-spin, .lm-boss .boss-glow, .minimap.live .pop, .lm-w .lm-vis, .lm-strike, .lm-e .f-spin, .lm-fight .f-spin, .lm-e.rune .fx-spark, .lm-fight .f-zone, .lm-h .pulse { animation: none; }
   .minimap.live .fx-ripple, .minimap.live .fx-shards { display: none; }
 }
 .lm-h { cursor: pointer; }
-.lm-h .ring { stroke-width: .7; fill: #0b0c10; }
+.lm-h .ring { stroke-width: .9; fill: #0b0c10; }
 .lm-h .pulse { fill: none; stroke-width: .6; opacity: 0; }
 .lm-h.mine .pulse { stroke: var(--aegis); animation: lm-halo 1.8s ease-out infinite; }
 .lm-h.sel .pulse { stroke: #fff; animation: lm-halo 1.2s ease-out infinite; }
@@ -1132,7 +1153,7 @@ body { background: transparent; }
 .ward-sum .ws-row b { font: 700 20px/1.2 var(--display); }
 .ward-sum .ws-row span { font-size: 11px; color: var(--muted); line-height: 1.25; }
 .ward-sum .ws-row .bad b { color: var(--dire); }
-.lm-h .ini { font: 800 3.6px var(--sans); fill: #cfd3dc; pointer-events: none; }
+.lm-h .ini { font: 800 4.2px var(--sans); fill: #cfd3dc; pointer-events: none; }
 
 /* ---------- кто слил ---------- */
 .eyebrow { display: block; font-size: 11.5px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--aegis); margin-bottom: 4px; }
