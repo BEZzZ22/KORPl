@@ -8,7 +8,7 @@
 // Ключи: pq:<чат>:<матч> — карточка в пати-чате ждёт катку; odreq:<матч> — заявку на разбор реплея отправить из Actions;
 // relay_seen — когда выгрузка последний раз спрашивала; relay_kick — когда воркер её запускал; relay_round — обход
 // всех привязанных аккаунтов (раз в час: пуш после катки, по понедельникам сводка); lastm:<tg id> — последняя катка,
-// о которой знаем; pushn:<tg id>:<день> — пушей за день; nopush:<tg id> — отписался от пушей.
+// о которой знаем; pushlast:<tg id> — когда был последний пуш (живёт PUSH_GAP); nopush:<tg id> — отписался от пушей.
 
 import { matchButton, mskDay, weeklyDigest, digestWindow } from "./growth.js";
 import { partyRelay, partyHeroes, PARTY_Q } from "./party.js";
@@ -18,7 +18,8 @@ export const RELAY_ROUND = 3600_000;
 const ACTIVE_DAYS = 14;
 const PUSH_BUDGET = 1200;               // запросов в сутки на обход аккаунтов из ~2000 бесплатных у OpenDota
 export const roundGap = (n) => RELAY_ROUND * Math.max(1, Math.ceil((n * 24) / PUSH_BUDGET));
-export const PUSH_PER_DAY = 3;
+// 08.11 решение Ярика: звать на разбор не после каждой катки, а одним сообщением раз в 2–3 дня
+export const PUSH_GAP = 60 * 3600_000;
 const PUSH_FRESH = 3 * 3600_000;        // катка закончилась больше 3 часов назад — уже не пушим
 const RELAY_STALE = 90_000;             // выгрузка не спрашивала полторы минуты — значит, не запущена
 const KICK_GAP = 10 * 60;               // запускаем не чаще раза в 10 минут: прогон стартует до минуты
@@ -99,10 +100,9 @@ export async function pushNewMatches(env, tg, users, data, heroes, now = Date.no
     if (!last) continue;
     if (now - (Number(m.start_time) + Number(m.duration)) * 1000 > PUSH_FRESH) continue;
     if (await kv.get(`nopush:${id}`)) continue;
-    const dayKey = `pushn:${id}:${mskDay(now)}`;
-    const n = Number(await kv.get(dayKey)) || 0;
-    if (n >= PUSH_PER_DAY) continue;
-    await kv.put(dayKey, String(n + 1), { expirationTtl: 2 * 86400 });
+    const gapKey = `pushlast:${id}`;
+    if (now - (Number(await kv.get(gapKey)) || 0) < PUSH_GAP) continue;
+    await kv.put(gapKey, String(now), { expirationTtl: PUSH_GAP / 1000 });
     if (await tg("sendMessage", { chat_id: Number(id), text: pushText(m, heroes), reply_markup: matchButton(m.match_id, "Разобрать катку") })) sent++;
   }
   return sent;
