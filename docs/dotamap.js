@@ -83,6 +83,45 @@ const OBS_LIFE = 360, SEN_LIFE = 420;
 const OBS_VISION = 1600 / 128; // обзор обса 1600 единиц, клетка — 128
 // логова Рошана в координатах SVG: верхнее у лавы и нижнее у полумесяца
 const ROSH_PITS = [[38.5, 44.5], [85.5, 85]];
+// Рошан живёт днём в верхнем логове, ночью в нижнем; день и ночь по 5 минут, игра начинается днём
+export const roshanPit = (t) => (Math.floor(Math.max(0, t) / 300) % 2 === 0 ? ROSH_PITS[0] : ROSH_PITS[1]);
+const ROSH_RESPAWN = [480, 660];
+// торменторы на круглых площадках в углах карты, появляются в 20:00, после убийства — через 10 минут
+const TORMENTORS = [[8, 3.8], [119.7, 123.6]];
+const TORMENTOR_AT = 1200, TORMENTOR_RESPAWN = 600;
+// линии от барака Света к бараку Тьмы, точки в координатах SVG
+const LANES = {
+  top: [[12.6, 94], [12.5, 90.6], [14.9, 70.8], [14.5, 49.5], [13.5, 22], [16, 16.5], [24.1, 18.3], [63, 17], [91.8, 18.9], [95.5, 19.2]],
+  mid: [[25.8, 98.2], [27.8, 96.4], [36.6, 85.8], [51.9, 75], [68.1, 58.9], [83.5, 47.5], [97.4, 34.6], [99.2, 31.5]],
+  bot: [[32.8, 112.4], [33.1, 111.8], [61.2, 112.9], [102.5, 111.5], [111, 111], [113, 102], [113, 77.4], [114, 61], [113.5, 40.3], [113.4, 38.2]],
+};
+export const CREEP_SPEED = 325 / 128; // клеток в секунду
+// длина пути и точка на нём: s — сколько клеток от барака Света
+function laneGeo(pts) {
+  const acc = [0];
+  for (let i = 1; i < pts.length; i++) acc.push(acc[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  const len = acc[acc.length - 1];
+  const at = (d) => {
+    const v = Math.max(0, Math.min(len, d));
+    let i = 1;
+    while (i < acc.length - 1 && acc[i] < v) i++;
+    const k = (v - acc[i - 1]) / Math.max(1e-6, acc[i] - acc[i - 1]);
+    return [pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * k, pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * k];
+  };
+  // ближайшая точка пути: [s, расстояние]
+  const project = (x, y) => {
+    let best = [0, Infinity];
+    for (let i = 1; i < pts.length; i++) {
+      const [ax, ay] = pts[i - 1], [bx, by] = pts[i];
+      const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+      const k = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2));
+      const d = Math.hypot(ax + dx * k - x, ay + dy * k - y);
+      if (d < best[1]) best = [acc[i - 1] + Math.sqrt(l2) * k, d];
+    }
+    return best;
+  };
+  return { len, at, project };
+}
 // руны по номерам OpenDota (runes_log.key)
 export const RUNES = {
   0: "двойного урона", 1: "ускорения", 2: "иллюзий", 3: "невидимости", 4: "восстановления",
@@ -191,21 +230,6 @@ export function replayModel(match, replay, me, { heroKey, heroName }) {
       spots.forEach((s, n) => buildings.push({ id: `${side}_${name}${name === "tower4" ? n : ""}`, key: `npc_dota_${side}_${name}`, side, kind: name.startsWith("tower") ? "tower" : name === "fort" ? "fort" : "rax", x: s[0], y: s[1], died: null }));
     }
   }
-  // где убили Рошана: у какого из двух логов стояли герои команды-убийцы.
-  // Без реплея — по смертям рядом по времени, иначе не рисуем
-  function roshanSpot(radiant, t) {
-    const near = [];
-    if (pos) players.forEach((p, i) => { if (p.radiant === radiant) { const q = posAt(i, t) || lastPos(i, t); if (q) near.push([mapX(q[0]), mapY(q[1])]); } });
-    else for (const k of kills) if (k.pos && k.t >= t - 60 && k.t <= t + 20) near.push([mapX(k.pos[0]), mapY(k.pos[1])]);
-    let best = null, bestD = Infinity;
-    for (const pit of ROSH_PITS) {
-      for (const q of near) {
-        const d = Math.hypot(q[0] - pit[0], q[1] - pit[1]);
-        if (d < bestD) { bestD = d; best = pit; }
-      }
-    }
-    return best && bestD < 22 ? best : null;
-  }
   const objectives = [];
   const slotIdx = (slot) => players.findIndex((p) => p.slot === slot);
   for (const o of match.objectives || []) {
@@ -218,7 +242,7 @@ export function replayModel(match, replay, me, { heroKey, heroName }) {
       if (b && b.died == null) { b.died = o.time; objectives.push({ t: o.time, kind: "building", b, by: by >= 0 ? by : null }); }
     } else if (o.type === "CHAT_MESSAGE_ROSHAN_KILL") {
       const radiant = o.team === 2;
-      objectives.push({ t: o.time, kind: "roshan", radiant, pos: roshanSpot(radiant, o.time) });
+      objectives.push({ t: o.time, kind: "roshan", radiant, pos: roshanPit(o.time) });
     } else if (o.type === "CHAT_MESSAGE_AEGIS") {
       const i = slotIdx(o.player_slot);
       const r = objectives.filter((x) => x.kind === "roshan" && o.time - x.t <= 30).pop();
@@ -234,8 +258,55 @@ export function replayModel(match, replay, me, { heroKey, heroName }) {
   if (fort && fort.died == null) { fort.died = duration; objectives.push({ t: duration, kind: "building", b: fort }); }
   objectives.sort((a, b) => a.t - b.t);
 
+  // линии и где на них встречаются пачки крипов.
+  // С реплеем фронт — там, где добивали крипов линии за последние 45 с; без него — посередине
+  // между крайними целыми башнями сторон (пока стоят T1 — середина линии, сносят — фронт уходит к базе)
+  // добивания из файла реплея: [время, герой, "c" крип | "r" Рошан | "m" торментор], место — позиция героя
+  const lasthits = (replay && Array.isArray(replay.lasthits) ? replay.lasthits : []).map(([lt, hero, kind]) => {
+    const v = byKey.get(`npc_dota_hero_${hero}`);
+    const i = v ? players.indexOf(v) : -1;
+    const q = i >= 0 ? posAt(i, lt) || lastPos(i, lt) : null;
+    return { t: lt, i, kind, q };
+  }).filter((x) => x.i >= 0);
+  const creepPts = lasthits.filter((x) => x.kind === "c" && x.q).map((x) => [x.t, mapX(x.q[0]), mapY(x.q[1])]);
+  const lanes = Object.entries(LANES).map(([name, pts]) => {
+    const g = laneGeo(pts);
+    const towers = buildings.filter((b) => b.kind === "tower" && b.key.endsWith(`_${name}`)).map((b) => ({ b, s: g.project(b.x, b.y)[0] }));
+    const hits = creepPts.map(([ct, x, y]) => { const [d, off] = g.project(x, y); return off < 7 ? [ct, d] : null; }).filter(Boolean);
+    const front = (now) => {
+      const near = hits.filter(([ct]) => ct <= now && ct > now - 45).map(([, d]) => d).sort((a, b) => a - b);
+      if (near.length >= 3) return near[Math.floor(near.length / 2)];
+      const up = (side) => towers.filter((x) => x.b.side === side && (x.b.died == null || x.b.died > now)).map((x) => x.s);
+      const r = up("goodguys"), d = up("badguys");
+      const a = r.length ? Math.max(...r) : g.len * 0.06, b = d.length ? Math.min(...d) : g.len * 0.94;
+      return (a + b) / 2;
+    };
+    return { name, len: g.len, at: g.at, front };
+  });
+
+  // Рошан: жив или мёртв и когда может вернуться
+  const roshKills = objectives.filter((o) => o.kind === "roshan").map((o) => o.t);
+  const roshanAt = (now) => {
+    const last = roshKills.filter((k) => k <= now).pop();
+    const since = last == null ? null : now - last;
+    const state = since == null || since >= ROSH_RESPAWN[1] ? "alive" : since >= ROSH_RESPAWN[0] ? "maybe" : "dead";
+    return { pit: roshanPit(now), state, back: state === "dead" ? ROSH_RESPAWN[0] - since : state === "maybe" ? ROSH_RESPAWN[1] - since : 0 };
+  };
+  // торменторы: убийства известны только из файла реплея; какой из двух — ближайший к добившему герою
+  const tormentorKills = lasthits.filter((x) => x.kind === "m").map(({ t: bt, i, q }) => ({
+    t: bt, who: i,
+    which: q ? (Math.hypot(mapX(q[0]) - TORMENTORS[0][0], mapY(q[1]) - TORMENTORS[0][1]) < Math.hypot(mapX(q[0]) - TORMENTORS[1][0], mapY(q[1]) - TORMENTORS[1][1]) ? 0 : 1) : null,
+  }));
+  const tormentorAt = (now, which) => {
+    if (now < TORMENTOR_AT) return { state: "none", back: TORMENTOR_AT - now };
+    const last = tormentorKills.filter((k) => k.which === which && k.t <= now).pop();
+    if (last && now - last.t < TORMENTOR_RESPAWN) return { state: "dead", back: TORMENTOR_RESPAWN - (now - last.t) };
+    return { state: "alive", back: 0 };
+  };
+
   const meIdx = players.findIndex((p) => p.me);
   return { players, kills, wards, runes, buybacks, fights, buildings, objectives, duration, posAt, hasPos: Boolean(pos), meIdx,
+    lanes, roshanAt, tormentorAt, tormentorKills, hasCreeps: creepPts.length > 0,
     goldAdv: match.radiant_gold_adv || [], radiantWin: match.radiant_win, start: pos ? Math.max(replay.start, -60) : 0 };
 }
 
@@ -268,6 +339,13 @@ const GLYPH = {
   // снесённое здание: ромб, как на карте, с трещиной
   tower: () => [F("M0 -3.5L3.5 0L0 3.5L-3.5 0Z"), S("M-.9 -2.5L.5 -.7L-.6 .5L.9 2.5", " gl-crack")],
   drop: () => [F("M0 -3.6C1.9 -1 2.7 .3 2.7 1.3A2.7 2.7 0 0 1 -2.7 1.3C-2.7 .3 -1.9 -1 0 -3.6Z")],
+  // Рошан: рогатая голова
+  roshan: () => [S("M-3.9 -3.9Q-3.6 -1.2 -1.9 -1.3M3.9 -3.9Q3.6 -1.2 1.9 -1.3"), F("M-2.5 -1.7Q0 -2.7 2.5 -1.7L2.3 1.4Q1.3 3.7 0 3.7Q-1.3 3.7 -2.3 1.4Z"),
+    el("circle", { cx: -1.05, cy: -.1, r: .6, class: "gl-hole" }), el("circle", { cx: 1.05, cy: -.1, r: .6, class: "gl-hole" }), S("M-.9 2H.9", " gl-crack")],
+  // торментор: висящий куб
+  tormentor: () => [S("M0 -3.9L3.4 -1.95V1.95L0 3.9L-3.4 1.95V-1.95Z"), S("M-3.4 -1.95L0 0L3.4 -1.95M0 0V3.9")],
+  // пачка крипов
+  creeps: () => [el("circle", { cx: -1.6, cy: -1.3, r: 1.15, class: "gl-f" }), el("circle", { cx: 1.6, cy: -1.3, r: 1.15, class: "gl-f" }), el("circle", { cx: 0, cy: 1.5, r: 1.15, class: "gl-f" })],
   buyback: () => [S("M2.9 -.4A3 3 0 1 1 1.6 -2.5"), S("M3.4 -3.6L3 -.3L-.2 -.9")],
 };
 const RUNE_GLYPH = {
@@ -325,7 +403,9 @@ function legend() {
     item(badge(GLYPH.skull, "ally"), "смерть"),
     item(el("g", {}, el("circle", { r: 4.6, class: "lg-fight" })), "драка"),
     item(badge(RUNE_GLYPH[0], "ally", { hex: true }), "руна"),
-    item(badge(GLYPH.aegis, "gold"), "Рошан"),
+    item(badge(GLYPH.roshan, "gold"), "Рошан"),
+    item(badge(GLYPH.tormentor, "gold"), "торментор"),
+    item(el("g", {}, el("circle", { cx: -2, cy: -1.4, r: 1.5, class: "lg-creep ally" }), el("circle", { cx: 2, cy: -1.4, r: 1.5, class: "lg-creep ally" }), el("circle", { cx: 0, cy: 2, r: 1.5, class: "lg-creep ally" })), "крипы"),
     item(el("rect", { x: -2.6, y: -2.6, width: 5.2, height: 5.2, rx: .6, transform: "rotate(45)", class: "lg-tower" }), "башня"),
     CAMPS.length > 0 ? item(camp, "кемп") : "");
   return row;
@@ -452,7 +532,7 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
     const side = o.aegis != null ? sideOf(o.aegis) : o.radiant === myRadiant ? "ally" : "foe";
     const node = evNode(`roshan ${side}`, o.pos[0], o.pos[1], 0.7,
       `Рошан у ${o.radiant === myRadiant ? "вас" : "врагов"}, ${mm(o.t)}`,
-      ripple(), ripple(" late"), el("g", { class: "f-spin" }, el("circle", { r: 6.6, class: "ro-ring" })), el("g", { class: "pop" }, badge(GLYPH.aegis, side)));
+      ripple(), ripple(" late"), el("g", { class: "f-spin" }, el("circle", { r: 6.6, class: "ro-ring" })));
     oLayer.append(node);
     return node;
   });
@@ -477,25 +557,57 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
   const trailDots = el("g", { class: "lm-trail-dots" });
   trail.append(...trailParts, trailDots);
 
-  // герои: портрет в кольце; тебя видно по золотому пульсу, выбранного — по белому
+  // герои: портрет из Доты в кольце цвета команды; тебя видно по золотому пульсу, выбранного — по белому.
+  // iconUrl может вернуть список адресов: не загрузился первый — берём следующий
+  const HERO_R = 4.3;
+  function heroImage(id) {
+    const urls = [].concat(iconUrl(id));
+    const img = el("image", { href: urls[0], x: -HERO_R + 0.45, y: -HERO_R + 0.45, width: (HERO_R - 0.45) * 2, height: (HERO_R - 0.45) * 2, "clip-path": "url(#lm-clip)", preserveAspectRatio: "xMidYMid slice" });
+    let n = 0;
+    img.addEventListener("error", () => { n++; if (n < urls.length) img.setAttribute("href", urls[n]); else img.remove(); });
+    return img;
+  }
   const hLayer = el("g", { class: "lm-heroes" });
   const hNodes = model.players.map((p, i) => {
     const node = el("g", { class: `lm-h ${p.radiant === myRadiant ? "ally" : "foe"}${p.me ? " mine" : ""}`, display: "none", "data-i": i },
       el("g", { class: "pop" },
-        el("circle", { r: 3.4, class: "pulse" }),
-        el("circle", { r: 3.4, class: "ring" }),
-        // буквы видны, пока иконка не загрузилась или если CDN Steam недоступен
-        el("text", { class: "ini", y: 1.1, "text-anchor": "middle" }, p.name.slice(0, 2)),
-        el("image", { href: iconUrl(p.hero_id), x: -2.7, y: -2.7, width: 5.4, height: 5.4, "clip-path": "url(#lm-clip)", preserveAspectRatio: "xMidYMid slice" })),
+        el("circle", { r: HERO_R, class: "pulse" }),
+        el("circle", { r: HERO_R, class: "ring" }),
+        // буквы видны, пока портрет не загрузился или если CDN Steam недоступен
+        el("text", { class: "ini", y: 1.3, "text-anchor": "middle" }, p.name.slice(0, 2)),
+        heroImage(p.hero_id)),
       el("title", {}, p.name));
     node.addEventListener("click", (e) => { e.stopPropagation(); selected = selected === i ? -1 : i; haptic("light"); draw(true); });
     hLayer.append(node);
     return node;
   });
 
+  // пачки крипов: каждые 30 с из бараков, идут по линии со скоростью крипа до фронта и там рубятся
+  const WAVE_FIGHT = 22;
+  const crLayer = el("g", { class: "lm-creeps" });
+  const waves = model.lanes.map((lane) => ({
+    lane,
+    rad: Array.from({ length: 4 }, () => crLayer.appendChild(waveNode(myRadiant ? "ally" : "foe"))),
+    dire: Array.from({ length: 4 }, () => crLayer.appendChild(waveNode(myRadiant ? "foe" : "ally"))),
+    clash: crLayer.appendChild(el("g", { class: "lm-clash", display: "none" }, el("g", { class: "cl-spin" }, el("path", { d: "M-1.6 -1.6L1.6 1.6M1.6 -1.6L-1.6 1.6" })), el("circle", { r: 2.4 }))),
+  }));
+  function waveNode(side) {
+    return el("g", { class: `lm-wave ${side}`, display: "none" },
+      el("g", { class: "wv" }, el("circle", { cx: -1.2, cy: -0.9, r: 0.85 }), el("circle", { cx: 1.2, cy: -0.9, r: 0.85 }), el("circle", { cx: -1.2, cy: 1.1, r: 0.85 }), el("circle", { cx: 1.2, cy: 1.1, r: 0.85 })));
+  }
+
+  // Рошан всегда виден в своём логове: жив, мёртв (сколько до возрождения) или может уже вернуться
+  const label = (y) => el("text", { class: "lm-timer", y, "text-anchor": "middle" });
+  // логово меняется днём и ночью, поэтому сдвиг ставит drawBosses, а не общий список масштаба
+  const roshNode = el("g", { class: "lm-boss rosh alive" }, el("title", {}, "Рошан"), el("circle", { r: 7, class: "boss-glow" }),
+    badge(GLYPH.roshan, "gold"), label(9.2));
+  const tormNodes = [0, 1].map((n) => place(el("g", { class: "lm-boss torm", display: "none" }, el("title", {}, "Торментор"), el("circle", { r: 7, class: "boss-glow" }),
+    badge(GLYPH.tormentor, "gold"), label(9.2)), TORMENTORS[n][0], TORMENTORS[n][1], 0.55));
+  const bossLayer = el("g", { class: "lm-bosses" }, roshNode, ...tormNodes);
+
   const map = el("svg", { class: "minimap live", viewBox: "0 0 128 128", role: "img", "aria-label": "Повтор матча на карте" },
     defs, el("image", { href: terrainUrl(), x: 0, y: 0, width: 128, height: 128, preserveAspectRatio: "none" }),
-    cLayer, bLayer, fLayer, wLayer, xLayer, rLayer, bfxLayer, kLayer, dLayer, tailLayer, trail, hLayer, oLayer);
+    cLayer, bLayer, crLayer, bossLayer, fLayer, wLayer, xLayer, rLayer, bfxLayer, kLayer, dLayer, tailLayer, trail, hLayer, oLayer);
 
   // ---------- шкала: перевес по золоту, убийства, здания ----------
   const W = 300, H = 40, MID = H / 2;
@@ -589,7 +701,7 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
 
   // слои: тап по чипу прячет и показывает
   const layers = [["heroes", "Герои", model.hasPos], ["wards", "Варды", model.wards.length > 0], ["deaths", "Убийства", model.kills.some((k) => k.pos)],
-    ["runes", "Руны", model.runes.some((r) => r.pos)], ["buildings", "Объекты", true], ["camps", "Кемпы", CAMPS.length > 0]];
+    ["runes", "Руны", model.runes.some((r) => r.pos)], ["creeps", "Крипы", true], ["buildings", "Объекты", true], ["camps", "Кемпы", CAMPS.length > 0]];
   const chips = document.createElement("div");
   chips.className = "lm-layers";
   for (const [k, label, on] of layers) {
@@ -645,13 +757,15 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
       if (state.b[i] !== dead || force) { state.b[i] = dead; bNodes[i].classList.toggle("dead", dead); }
       show(state.bf, i, bfxNodes[i], dead && t < b.died + LIFE.bfall);
     });
+    drawCreeps();
+    drawBosses();
     // при «Следить» карта вдвое крупнее: значки ужимаем, чтобы не закрывали героев
     const zoom = Boolean(follow && selected >= 0 && model.hasPos);
     if (zoom !== lastZoom) { lastZoom = zoom; for (const [node, x, y, s] of scaled) placeAt(node, x, y, s, zoom ? 0.6 : 1); }
     if (model.hasPos) {
       // слежение: карта приближается вдвое и держит выбранного героя в центре
       const focus = follow && selected >= 0 ? model.posAt(selected, t) : null;
-      const k = focus ? 0.62 : 1;
+      const k = focus ? 0.55 : 1;
       if (focus) {
         const cx = Math.max(32, Math.min(96, mapX(focus[0]))), cy = Math.max(32, Math.min(96, mapY(focus[1])));
         cam = playing && cam ? [cam[0] + (cx - cam[0]) * 0.25, cam[1] + (cy - cam[1]) * 0.25] : [cx, cy];
@@ -744,6 +858,7 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
     ...model.runes.map((r, i) => (r.kind !== 5 ? { t: r.t, type: "rune", i, r } : null)).filter(Boolean),
     ...model.objectives.filter((o) => o.kind === "roshan" || o.kind === "building").map((o, i) => ({ t: o.t, type: o.kind, i, o })),
     ...model.buybacks.map((b, i) => ({ t: b.t, type: "bb", i, b })),
+    ...model.tormentorKills.map((x, i) => (x.who != null ? { t: x.t, type: "torm", i, x } : null)).filter(Boolean),
   ].sort((a, b) => a.t - b.t);
   function feedAt(now) {
     const out = [];
@@ -777,12 +892,16 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
       parts = [span(nm(e.r.who)), word(`взял руну ${RUNES[e.r.kind]}`)];
     } else if (e.type === "roshan") {
       good = e.o.radiant === myRadiant;
-      ico = badge(GLYPH.aegis, "gold");
+      ico = badge(GLYPH.roshan, "gold");
       parts = [span(`Рошан у ${good ? "вас" : "врагов"}`), e.o.aegis != null && word("Аегис у"), e.o.aegis != null && span(nm(e.o.aegis))];
     } else if (e.type === "building") {
       good = (e.o.b.side === "goodguys") !== myRadiant;
       ico = badge(GLYPH.tower, good ? "foe" : "ally");
       parts = [span(buildingLabel(e.o.b)), word(e.o.by != null ? "снёс" : "— снесли"), e.o.by != null && span(nm(e.o.by))];
+    } else if (e.type === "torm") {
+      good = ours(e.x.who);
+      ico = badge(GLYPH.tormentor, sideOf(e.x.who));
+      parts = [span(nm(e.x.who)), word("добил торментора")];
     } else {
       good = ours(e.b.who);
       ico = badge(GLYPH.buyback, sideOf(e.b.who));
@@ -791,6 +910,58 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
     row.classList.add(good ? "ours" : "theirs");
     row.append(time, iconSvg(ico), ...parts.filter(Boolean));
     return row;
+  }
+
+  function drawCreeps() {
+    for (const w of waves) {
+      const { lane } = w;
+      const F = lane.front(t);
+      const travel = lane.len / CREEP_SPEED;
+      const fight = { rad: false, dire: false };
+      for (const side of ["rad", "dire"]) {
+        const nodes = w[side];
+        let n = 0;
+        if (t >= 0) {
+          for (let k = Math.floor(t / 30); k >= 0 && k * 30 > t - travel - WAVE_FIGHT; k--) {
+            const age = t - k * 30;
+            const startS = side === "rad" ? lane.len * 0.03 : lane.len * 0.97;
+            const need = Math.abs(F - startS) / CREEP_SPEED; // сколько идти до фронта
+            if (age > need + WAVE_FIGHT || n >= nodes.length) continue;
+            const atFront = age >= need;
+            const d = atFront ? F + (side === "rad" ? -1.3 : 1.3) : startS + (side === "rad" ? 1 : -1) * age * CREEP_SPEED;
+            const [x, y] = lane.at(d);
+            const node = nodes[n++];
+            node.setAttribute("transform", `translate(${x.toFixed(2)} ${y.toFixed(2)})`);
+            node.classList.toggle("fighting", atFront);
+            if (node.getAttribute("display") !== "inline") node.setAttribute("display", "inline");
+            if (atFront) fight[side] = true;
+          }
+        }
+        for (; n < nodes.length; n++) if (nodes[n].getAttribute("display") !== "none") nodes[n].setAttribute("display", "none");
+      }
+      const both = fight.rad && fight.dire;
+      if (both) { const [x, y] = lane.at(F); w.clash.setAttribute("transform", `translate(${x.toFixed(2)} ${y.toFixed(2)})`); }
+      const want = both ? "inline" : "none";
+      if (w.clash.getAttribute("display") !== want) w.clash.setAttribute("display", want);
+    }
+  }
+
+  const clockOf = (sec) => mm(Math.ceil(sec));
+  function setLabel(node, text) { const tl = node.querySelector(".lm-timer"); if (tl.textContent !== text) tl.textContent = text; }
+  function drawBosses() {
+    const r = model.roshanAt(t);
+    const [px, py] = r.pit;
+    const k = lastZoom ? 0.6 : 1;
+    placeAt(roshNode, px, py, 0.62, k);
+    roshNode.setAttribute("class", `lm-boss rosh ${r.state}`);
+    setLabel(roshNode, r.state === "dead" ? clockOf(r.back) : r.state === "maybe" ? `до ${clockOf(r.back)}` : "");
+    tormNodes.forEach((node, n) => {
+      const st = model.tormentorAt(t, n);
+      const on = st.state !== "none";
+      if (node.getAttribute("display") !== (on ? "inline" : "none")) node.setAttribute("display", on ? "inline" : "none");
+      node.setAttribute("class", `lm-boss torm ${st.state}`);
+      setLabel(node, st.state === "dead" ? clockOf(st.back) : "");
+    });
   }
 
   // хвосты всех героев за последние секунды: старая часть бледнее, телепорт рвёт линию
@@ -864,8 +1035,9 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
   steps.append(back, fwd, followBtn);
   const frameBox = document.createElement("div");
   frameBox.className = "lm-frame";
-  frameBox.append(map, top);
-  root.append(frameBox, controls, steps, info, feed, legend(), chips);
+  // часы и счёт над картой, а не поверх: углы карты (торменторы, базы) не закрыты
+  frameBox.append(map);
+  root.append(top, frameBox, controls, steps, info, feed, legend(), chips);
   if (io) io.observe(root);
   root.seek = seek;
   return root;

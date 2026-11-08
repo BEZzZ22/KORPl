@@ -2,6 +2,8 @@
 // Запуск: node tools/replay-summary.mjs <match_id> < parsed.jsonl > r/<match_id>.json
 // Формат результата (v1): каждые STEP секунд координаты каждого героя в клетках карты (64..192, как obs_log у OpenDota),
 // мёртвый или неизвестный — null. player_slot как в матче OpenDota: 0..4 Свет, 128..132 Тьма.
+// lasthits: [время, герой, что] — кто добил крипа линии ("c"), Рошана ("r") или торментора ("m"); герой без npc_dota_hero_.
+// Место добивания приложение берёт из позиций: по ним виден фронт линии и какой торментор убит.
 import { createInterface } from "node:readline";
 
 const STEP = 2;
@@ -9,12 +11,19 @@ const matchId = Number(process.argv[2]) || null;
 const byPlayer = new Map(); // player_slot -> Map(секунда -> [x, y] | null)
 const heroes = new Map();
 let tMin = Infinity, tMax = -Infinity;
+const lasthits = [];
+const KIND = [[/^npc_dota_(creep_goodguys|creep_badguys|goodguys_siege|badguys_siege)/, "c"], [/^npc_dota_roshan/, "r"], [/^npc_dota_miniboss/, "m"]];
 
 const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
 for await (const line of rl) {
   if (!line || line[0] !== "{") continue;
   let e;
   try { e = JSON.parse(line); } catch { continue; }
+  if (e.type === "DOTA_COMBATLOG_DEATH" && typeof e.targetname === "string" && /^npc_dota_hero_/.test(e.attackername || "")) {
+    const kind = KIND.find(([re]) => re.test(e.targetname));
+    if (kind) lasthits.push([Math.round(e.time), e.attackername.slice(14), kind[1]]);
+    continue;
+  }
   if (e.type !== "interval" || typeof e.slot !== "number" || e.slot < 0 || e.slot > 9) continue;
   const t = Math.round(e.time);
   if (t % STEP !== 0) continue;
@@ -43,5 +52,5 @@ for (const [slot, track] of [...byPlayer].sort((a, b) => a[0] - b[0])) {
 }
 process.stdout.write(JSON.stringify({
   v: 1, match_id: matchId, step: STEP, start, end: tMax,
-  heroes: Object.fromEntries(heroes), pos,
+  heroes: Object.fromEntries(heroes), pos, lasthits,
 }));
