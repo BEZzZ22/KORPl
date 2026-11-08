@@ -2,10 +2,10 @@
 import {
   analyze, createDictionary, isParsed, mmss, num, plural, proItemCounts, itemTimings, draftAdvice, checkGoal, achievements, formatMetric, formatRankMetric, itemPlan, skillPlan,
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
-} from "./engine.js?v=47";
+} from "./engine.js?v=48";
 import { aegisBadge, openShowcase, whenGone } from "./aegis.js?v=9";
 import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=8";
-import { matchVerdicts } from "./blame.js?v=13";
+import { matchVerdicts } from "./blame.js?v=14";
 import { rankMedal3d } from "./medal3d.js?v=7";
 import { heroCard3d } from "./herocard3d.js?v=5";
 import { tacticalTable } from "./map3d.js?v=13";
@@ -732,26 +732,32 @@ function hiddenMatchesCard(account) {
       await api(`/players/${account}/refresh`, { method: "POST" }).catch(() => {});
       const matches = (await api(`/players/${account}/recentMatches`)) || [];
       if (matches.length) { step("empty_found"); haptic("medium"); navRoot("home", homeScreen); return; }
-      status.textContent = "Пока пусто. Открытые данные видны только с новых каток: сыграй одну обычную (не с ботами) и проверь снова.";
+      status.textContent = "Пока пусто. Открытые данные видны только с новых каток: сыграй одну обычную (не с ботами) и проверь снова. А эту можно разобрать по ID ниже.";
     } catch {
       status.textContent = "OpenDota не отвечает. Попробуй через минуту.";
     }
     btn.disabled = false;
   };
+  // разбор скрытой катки уже работает: по ID приложение спросит, каким героем играл (pickHidden).
+  // Поле прямо в карточке: раньше отправляли «в поле сверху», и до него не доходили
+  const idInput = h("input", { inputmode: "numeric", placeholder: "ID матча или ссылка", "aria-label": "ID матча" });
+  const openId = () => {
+    const m = /(?:^|\D)(\d{7,11})(?!\d)/.exec(idInput.value);
+    if (m) { step("hidden_by_id"); go(matchScreen, Number(m[1]), null); } else idInput.focus();
+  };
   return h("div", { class: "card hidden-matches" },
     h("div", { class: "display" }, "Матчи скрыты в настройках Доты"),
     h("p", { class: "small" }, "Аккаунт нашёлся, но Дота не отдаёт твои игры. Это одна галочка:"),
     h("ol", { class: "steps" },
-      h("li", {}, "Открой Доту и нажми шестерёнку (настройки) в левом верхнем углу."),
-      h("li", {}, "Перейди на вкладку «Социальное» (в старом меню: «Расширенные настройки» → «Социальное»)."),
-      h("li", {}, "Включи пункт про публичные данные матчей — Expose Public Match Data."),
-      h("li", {}, "Сыграй одну обычную катку: старые игры так и останутся скрытыми."),
-      h("li", {}, "Вернись сюда и нажми «Проверить снова». Катка появляется через 5–15 минут после конца."),
+      h("li", {}, "В Доте: шестерёнка слева вверху → «Социальное»."),
+      h("li", {}, "Включи «Публичные данные матчей» (Expose Public Match Data)."),
+      h("li", {}, "Сыграй одну обычную катку и нажми «Проверить снова» через 5–15 минут после конца. Старые игры так и останутся скрытыми."),
     ),
     btn,
     status,
-    // разбор скрытой катки уже работает: по ID приложение спросит, каким героем играл (pickHidden)
-    h("p", { class: "small muted" }, "Разобрать катку можно и сейчас: вставь её ID в поле «ID матча» сверху (он есть в Доте в истории матчей) и выбери своего героя."),
+    h("div", { class: "hidden-by-id" },
+      h("p", { class: "small" }, h("b", {}, "Разобрать катку прямо сейчас"), " — вставь её ID из истории матчей в Доте:"),
+      h("div", { class: "row" }, h("div", { class: "grow" }, idInput), h("button", { type: "button", onclick: openId }, "Разобрать"))),
   );
 }
 
@@ -1785,6 +1791,18 @@ function analysisScreen(a) {
     if (lens && lens.current() !== i) lens.place(i);
   };
   a._select = (i) => { select(i); if (lens) lens.place(i); };
+  a._selectTab = (name) => {
+    const i = TABS.findIndex(([n]) => n === name);
+    if (i < 0) return false;
+    a._select(i);
+    tabs.scrollIntoView({ block: "start", behavior: reducedMotion() ? "auto" : "smooth" });
+    return true;
+  };
+  // таймкод из Обзора или тренера: вкладка «Карта», повтор за 10 секунд до момента
+  a._goMap = TABS.some(([n]) => n === "Карта") ? (sec) => {
+    if (!a._selectTab("Карта")) return;
+    requestAnimationFrame(() => { if (a._live && a._live.isConnected && a._live.seek) a._live.seek(sec - 10); });
+  } : null;
   // пример — чужая катка: в задачи, сравнение и облако её не пишем
   // быстрый разбор (без реплея) в историю, задачи и сравнение не пишем: там нет половины цифр
   if (COACH_URL && !a.demo && !a.lite) rememberForCompare(a);
@@ -2489,7 +2507,7 @@ function coachBlock(a) {
         const more = t && h("button", { class: "coach-more", type: "button" }, "Спросить подробнее");
         if (more) more.onclick = () => chatFor(a).ask(`Расскажи подробнее про ${t[1]}: что именно я сделал не так и как надо было сыграть?`);
         return seq(h("div", { class: "coach-moment" },
-          t && h("time", {}, t[1]),
+          t && h("time", {}, ...clockLinks(t[1], a)),
           ep && h("p", { class: "coach-facts" }, ep.facts.join("; ")),
           h("p", {}, err.replace(/^Ошибка:\s*/, "")),
           todo && h("p", { class: "coach-todo" }, h("b", {}, "Надо было: "), todo),
@@ -2766,8 +2784,14 @@ function progressBlocks(account) {
       h("b", {}, g.value != null ? formatMetric(g.check.metric, g.value) : "")))));
 
   const ach = achievements(list, done);
-  blocks.push(h("h2", {}, "Ачивки"));
-  blocks.push(h("div", { class: "ach-grid" }, ...ach.map((x, n) => h("button", {
+  // На виду только открытые и начатые (а если таких нет — две ближайшие), остальные свёрнуты:
+  // раньше стена из восьми «0 из 3» тянула профиль на девять экранов
+  const ratio = (x) => (x.done ? 2 : x.have / x.need);
+  const ranked = [...ach].sort((x, y) => ratio(y) - ratio(x));
+  let shown = ranked.filter((x) => x.done || x.have > 0);
+  if (shown.length < 2) shown = ranked.slice(0, 2);
+  const hidden = ach.filter((x) => !shown.includes(x));
+  const coin = (x, n) => h("button", {
     class: `ach ${x.done ? "on" : ""} coin-delay-${n % 4}`, type: "button", title: x.desc,
     // тап переворачивает монету: на обороте прогресс
     onclick: (e) => { hapticTick(); e.currentTarget.classList.toggle("flip"); },
@@ -2776,7 +2800,14 @@ function progressBlocks(account) {
     h("b", {}, x.title),
     h("span", {}, x.desc),
     !x.done && h("div", { class: "ach-bar" }, h("i", { "data-pct": Math.round((x.have / x.need) * 100) })),
-    h("em", {}, x.done ? "Открыто" : `${x.have} из ${x.need}`)))));
+    h("em", {}, x.done ? "Открыто" : `${x.have} из ${x.need}`));
+  const opened = ach.filter((x) => x.done).length;
+  blocks.push(h("h2", {}, `Ачивки · ${opened} из ${ach.length}`));
+  blocks.push(h("div", { class: "ach-grid" }, ...shown.map(coin)));
+  if (hidden.length) {
+    blocks.push(h("details", { class: "card ach-more" }, h("summary", {}, `Ещё ${hidden.length} ${plural(hidden.length, "ачивка", "ачивки", "ачивок")}`),
+      h("div", { class: "ach-grid" }, ...hidden.map((x, n) => coin(x, n + shown.length)))));
+  }
   if (!list.length) blocks.push(h("p", { class: "small muted" }, "Ачивки считаются по разобранным каткам: открывай свои игры."));
 
   const habits = habitsBlock(list);
@@ -3070,42 +3101,81 @@ function compareBlock(a) {
     out);
 }
 
+// Что из «Ход игры» уже сказано: эти проблемы движка в Обзоре не повторяем (раньше смерти от одного героя шли три раза)
+const STORY_COVERS = {
+  same_killer: (g) => g.startsWith("killer_"),
+  solo_deaths: (g) => g === "solo_deaths",
+  missed_fights: (g) => g === "missed_fights" || g === "kp",
+  unused_save: (g) => g.startsWith("unused_") || g === "silent_deaths",
+  died_no_damage: (g) => g === "silent_deaths",
+  died_first: (g) => g === "first_death",
+};
+const STORY_CAUSE_COVERS = { won_no_push: (g) => g === "roshan_skipped" };
+
+function overviewProblems(a, shown) {
+  const s = a.summary || {};
+  const covers = [
+    ...shown.mistakes.map((x) => STORY_COVERS[x.key]),
+    ...shown.causes.map((x) => STORY_CAUSE_COVERS[x.key]),
+  ].filter(Boolean);
+  const all = [...(s.problems || []), ...(s.problems_more || [])];
+  return all.filter((p) => !covers.some((c) => c(String(p.group || ""))));
+}
+
+function problemCard(p, i) {
+  return h("div", { class: "card problem" },
+    h("div", { class: "problem-num" }, String(i + 1)),
+    h("div", { class: "problem-body" },
+      h("div", { class: "problem-title" }, p.title),
+      h("div", { class: "problem-fact" }, p.fact),
+      h("div", { class: "problem-action" }, p.action),
+    ));
+}
+
+// Обзор: итог, что решило игру, твои ошибки и задача — сразу; всё остальное свёрнуто внизу.
+// Раньше он тянулся на 12 экранов айфона и повторял одно и то же
 function overviewTab(a) {
   const s = a.summary || {};
   const who = [s.role, s.rank && `ранг ${s.rank}`].filter(Boolean).join(" · ");
-  const problems = (s.problems || []).slice(0, 3);
   const strengths = (s.strengths || []).slice(0, 2);
   const st = a.story;
-  return h("div", {},
-    who && h("div", { class: "who" }, who, s.role_sure === false && h("span", { class: "muted" }, " · роль определена неточно")),
-    st && st.verdict && storyVerdict(a),
-    st && st.causes.length > 0 && h("h2", {}, st.won ? "Что решило игру" : "Где ушла игра"),
-    ...(st ? st.causes.slice(0, 3).map(storyCard) : []),
-    st && st.mistakes.length > 0 && h("h2", {}, "Твои ошибки по минутам"),
-    ...(st ? st.mistakes.slice(0, 3).map(storyCard) : []),
-    st && (st.causes.length > 3 || st.mistakes.length > 3 || st.fights.length > 0) && h("p", { class: "small muted" }, "Все драки по минутам, переломы и остальные ошибки — во вкладке «Ход игры»."),
-    !a.lite && goalBlock(a),
-    // тренеру нужен полный разбор: на итогах матча он бы потратил платный разбор впустую
-    !a.lite && coachBlock(a),
-    !a.lite && COACH_URL && chatFor(a).box,
-    !a.lite && COACH_URL && compareBlock(a),
-    h("h2", {}, problems.length ? (st ? "Что ещё было не так" : "Что было не так") : "Серьёзных ошибок нет"),
-    ...problems.map((p, i) => h("div", { class: "card problem" },
-      h("div", { class: "problem-num" }, String(i + 1)),
-      h("div", { class: "problem-body" },
-        h("div", { class: "problem-title" }, p.title),
-        h("div", { class: "problem-fact" }, p.fact),
-        h("div", { class: "problem-action" }, p.action),
-      ),
-    )),
-    strengths.length > 0 && h("h2", {}, "Что получилось"),
-    ...strengths.map((st) => h("div", { class: "strength" }, h("b", {}, st.title), st.fact && h("span", { class: "muted" }, ` — ${st.fact}`))),
+  const shown = { causes: st ? st.causes.slice(0, 2) : [], mistakes: st ? st.mistakes.slice(0, 3) : [] };
+  // на виду всего до шести карточек: «Ход игры» плюс то, чего он не сказал; остальное — в «Подробнее»
+  const allProblems = overviewProblems(a, shown);
+  const visible = st ? Math.max(1, 3 - shown.mistakes.length) : 3;
+  const problems = allProblems.slice(0, visible), moreProblems = allProblems.slice(visible, visible + 3);
+  const restStory = st && (st.causes.length > shown.causes.length || st.mistakes.length > shown.mistakes.length || st.fights.length > 0);
+  const card = (x) => storyCard(x, a);
+  const details = [
+    moreProblems.length > 0 && h("h2", {}, "Ещё ошибки"),
+    ...moreProblems.map((p, i) => problemCard(p, problems.length + i)),
+    COACH_URL && !a.lite && compareBlock(a),
     historyBlock(a),
     microBlock(a),
     draftBlock(a),
     h("h2", {}, "Оценки"),
     h("div", { class: "card" }, ...CATEGORIES.filter((c) => a.scores[c] != null).map((c) => h("div", { class: "score-row" },
       h("span", {}, c), h("div", { class: "bar" }, h("i", { "data-w": a.scores[c] })), h("b", {}, a.scores[c])))),
+  ].filter(Boolean);
+  return h("div", {},
+    who && h("div", { class: "who" }, who, s.role_sure === false && h("span", { class: "muted" }, " · роль определена неточно")),
+    st && st.verdict && storyVerdict(a),
+    shown.causes.length > 0 && h("h2", {}, st.won ? "Что решило игру" : "Где ушла игра"),
+    ...shown.causes.map(card),
+    shown.mistakes.length > 0 && h("h2", {}, "Твои ошибки"),
+    ...shown.mistakes.map(card),
+    problems.length > 0 && h("h2", {}, st ? "Что ещё было не так" : "Что было не так"),
+    !problems.length && !shown.mistakes.length && h("h2", {}, "Серьёзных ошибок нет"),
+    ...problems.map(problemCard),
+    restStory && h("button", { type: "button", class: "ghost story-more", onclick: () => { haptic("light"); if (a._selectTab) a._selectTab("Ход игры"); } },
+      "Все драки и переломы — во вкладке «Ход игры»"),
+    strengths.length > 0 && h("h2", {}, "Что получилось"),
+    ...strengths.map((x) => h("div", { class: "strength" }, h("b", {}, x.title), x.fact && h("span", { class: "muted" }, ` — ${x.fact}`))),
+    !a.lite && goalBlock(a),
+    // тренеру нужен полный разбор: на итогах матча он бы потратил платный разбор впустую
+    !a.lite && coachBlock(a),
+    !a.lite && COACH_URL && chatFor(a).box,
+    h("details", { class: "card more-box" }, h("summary", {}, moreProblems.length ? "Подробнее: ещё ошибки, цифры, драфт, оценки" : "Подробнее: цифры, мелочи, драфт, оценки"), ...details),
   );
 }
 
@@ -3232,12 +3302,24 @@ function storyVerdict(a) {
     h("p", {}, st.verdict));
 }
 
-function storyCard(x) {
+// «Почему так» свёрнуто: в карточке факт и что делать, объяснение по нажатию
+function storyCard(x, a) {
   return h("div", { class: "card story-item" },
-    h("div", { class: "story-head" }, h("span", { class: "problem-title" }, x.title), x.clock && h("time", {}, x.clock)),
+    h("div", { class: "story-head" }, h("span", { class: "problem-title" }, x.title), x.clock && h("time", {}, ...clockLinks(x.clock, a))),
     h("div", { class: "problem-fact" }, x.fact),
-    x.why && h("div", { class: "story-why" }, x.why),
-    x.fix && h("div", { class: "problem-action" }, x.fix));
+    x.fix && h("div", { class: "problem-action" }, x.fix),
+    x.why && h("details", { class: "story-why-box" }, h("summary", {}, "Почему это важно"), h("div", { class: "story-why" }, x.why)));
+}
+
+// Таймкоды кликабельные: тап открывает повтор на карте за 10 секунд до момента
+function clockLinks(text, a) {
+  if (!a || !a._goMap) return [text];
+  return String(text).split(/(\d{1,2}:\d{2})/).filter((part) => part !== "").map((part) => {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(part);
+    if (!m) return part;
+    const sec = Number(m[1]) * 60 + Number(m[2]);
+    return h("button", { type: "button", class: "tc", "aria-label": `Показать ${part} на карте`, onclick: (e) => { e.stopPropagation(); haptic("light"); step("tc_map"); a._goMap(sec); } }, part);
+  });
 }
 
 const FIGHT_LABEL = { won: "выиграли", lost: "проиграли", even: "размен" };
@@ -3255,9 +3337,9 @@ function storyTab(a) {
     st.turns.length > 0 && h("h2", {}, "Переломы"),
     ...st.turns.map((t) => h("div", { class: `card story-turn ${t.good ? "good" : "bad"}` }, h("p", {}, t.text))),
     st.causes.length > 0 && h("h2", {}, st.won ? "Что решило игру" : "Где ушла игра"),
-    ...st.causes.map(storyCard),
+    ...st.causes.map((x) => storyCard(x, a)),
     st.mistakes.length > 0 && h("h2", {}, "Твои ошибки по минутам"),
-    ...st.mistakes.map(storyCard),
+    ...st.mistakes.map((x) => storyCard(x, a)),
     st.fights.length > 0 && h("h2", {}, "Все драки"),
     st.fights.length > 0 && h("p", { class: "small muted" }, `Счёт: сколько убили вы и сколько потеряли.${COACH_URL ? " Нажми на драку — тренер разберёт её подробно." : ""}`),
     st.fights.length > 0 && h("div", { class: "card story-fights" }, ...st.fights.map((f) => {
@@ -3621,6 +3703,7 @@ function mapTab(a) {
       // потом Steam, его зеркало и маленькая иконка
       const heroPics = (id) => { const k = dictionary.heroKey(id).replace("npc_dota_hero_", ""); return [`img/heroes/${k}.webp`, steamUrl(`/apps/dota2/images/dota_react/heroes/${k}.png`), `${steamProxy()}/apps/dota2/images/dota_react/heroes/${k}.png`]; };
       live = liveMap(model, { iconUrl: heroPics, haptic });
+      a._live = live; // для таймкодов из Обзора: перемотка на момент
     } catch (e) {
       console.warn(e);
     }
@@ -4336,7 +4419,7 @@ async function boot() {
     const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
       constants("heroes"), localDict("items", 200), localDict("abilities", 1000),
       constants("item_ids"),
-      ownJson("knowledge.json?v=12"), ownJson("texts.json?v=20"),
+      ownJson("knowledge.json?v=12"), ownJson("texts.json?v=21"),
     ]);
     dictionary = createDictionary({ heroes, items, abilities });
     itemIds = ids;

@@ -346,7 +346,8 @@ export function gameStory(match, player, od) {
     add(mistakes, {
       key: "same_killer", time: heroDeaths.find((d) => d.key === topKey).time, clock: times.join(", "), weight: 2 + topN,
       title: `${topN} ${plural(topN, "смерть", "смерти", "смертей")} от ${keyName(topKey)}`,
-      fact: `${keyName(topKey)} убил тебя ${topN} ${plural(topN, "раз", "раза", "раз")} из ${myDeaths.length}: ${times.join(", ")}.`,
+      // время уже в строке над фактом: второй раз его не пишем
+      fact: `${keyName(topKey)} убил тебя ${topN} ${plural(topN, "раз", "раза", "раз")} из ${myDeaths.length}.`,
       why: "Одна и та же смерть дважды — это не случайность, а то, что ты не учёл его кнопки и не поменял ни позицию, ни сборку.",
       fix: `Против ${keyName(topKey)} держи дистанцию его главного умения, не стой с союзниками в одной куче и посмотри вкладку «Смерти»: там предметы, которые закрывают именно его урон.`,
     });
@@ -354,12 +355,13 @@ export function gameStory(match, player, od) {
   const fightAt = (t) => fights.find((f) => t >= f.start - 3 && t <= f.end + 3);
   const solo = myDeaths.filter((d) => d.time >= 600 && !fightAt(d.time) && !allyDeaths.some((a) => a.p !== player && Math.abs(a.time - d.time) <= SOLO_GAP));
   if (solo.length >= 2) {
-    const leadTxt = solo.map((d) => { const g = advAt(Math.floor(d.time / 60)); return `${clock(d.time)}${Math.abs(g) >= 2000 ? ` (${g > 0 ? "вели" : "отставали"} на ${k1(g)})` : ""}`; });
+    const leadTxt = solo.map((d) => { const g = advAt(Math.floor(d.time / 60)); return Math.abs(g) >= 2000 ? `В ${clock(d.time)} ${g > 0 ? "вели" : "отставали"} на ${k1(g)}` : null; }).filter(Boolean);
     const lostAfter = buildings.filter((b) => b.ours && solo.some((d) => b.time > d.time && b.time <= d.time + 120));
     add(mistakes, {
       key: "solo_deaths", time: solo[0].time, clock: solo.map((d) => clock(d.time)).join(", "), weight: 2 + solo.length * 1.2 + sum(lostAfter.map((b) => b.weight)) * 0.4,
       title: `Поймали одного ${solo.length} ${plural(solo.length, "раз", "раза", "раз")}`,
-      fact: `Смерти без драки и без своих рядом: ${leadTxt.join(", ")}.${lostAfter.length ? ` Следом враги сломали ${names(lostAfter)}.` : ""}`,
+      // время уже в строке над фактом: тут только перевес в момент смерти, если он был заметный
+      fact: `Смерти без драки и без своих рядом.${leadTxt.length ? ` ${leadTxt.join(", ")}.` : ""}${lostAfter.length ? ` Следом враги сломали ${names(lostAfter)}.` : ""}`,
       why: "Смерть в одиночку отдаёт врагам золото и время: они идут на вышку вчетвером против четверых, а ты 40–80 секунд смотришь в серый экран.",
       fix: "Фарми там, где есть твой вард или своя вышка рядом. Пропали с карты двое-трое врагов — уходи с линии ближе к своим, это и есть их ганг.",
     });
@@ -477,7 +479,7 @@ function verdictOf(won, arc, causes, mistakes) {
   const low = (t) => (/^[А-ЯЁ][а-яё]/.test(t) ? t.charAt(0).toLowerCase() + t.slice(1) : t);
   if (arc && !won && arc.drop && arc.drop.size >= 5000 && arc.drop.from >= 10) out.push(`Перевес ушёл с ${arc.drop.from}-й по ${arc.drop.to}-ю минуту: ${signedK(-arc.drop.size)}.`);
   const c = causes.slice(0, 2).map((x) => low(x.title));
-  if (c.length) out.push(`${won ? "Что могло стоить игры" : "Главное"}: ${c.join("; ")}.`);
+  if (c.length) out.push(`${won ? "Что мешало" : "Главное"}: ${c.join("; ")}.`);
   if (mistakes.length) out.push(`Твоё: ${mistakes.slice(0, 2).map((x) => low(x.title)).join("; ")}.`);
   return out.join(" ");
 }
