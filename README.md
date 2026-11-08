@@ -51,6 +51,7 @@ GitHub Actions ─> tools/*.py|mjs ─> YouTube / TikTok / VK / Instagram / TG-�
 | Справочники OpenDota (`items.json`, `abilities.json`, `builds.json`, `counterpick.json`) | генераторы `tools/fetch-*.mjs`, обновляет workflow «Сборки героев» |
 | Очередь роликов | `promo/yt_queue.json`, `ig_queue.json`, `queue.json` (TG-канал); TikTok/VK берут из YT-очереди. Ролики — `promo/shorts/`, `promo/reels/`, исходники моушна — `promo/motion/` |
 | Загрузку на площадки | `tools/promo_yt.py`, `promo_tt.py`, `promo_vk.py`, `promo_ig.py`, `promo-post.mjs` / `promo_userbot.py` (TG-канал) |
+| Посмотреть чужой ролик по ссылке (кадры + речь) | скилл `.claude/skills/watch/` (`watch.py`: yt-dlp, ffmpeg, faster-whisper) |
 
 Маршруты воркера (`worker/coach.js`, `fetch`): `POST /` с `mode` = `card`, `sync`, `track`, `gate`, `vanity`, `feedback`, `replay`, `watch`, `wallet`, `buy`, `pay_link`, `open`, `web_wallet`, `web_buy`, `chat`, `compare` (без `mode` — разбор тренером); `POST /tg` — вебхук бота; `GET`/`POST /relay` — выгрузка OpenDota (ключ — RELAY_KEY из токена Cloudflare); `POST /robokassa` — оплата картой; `GET /od/*` — запасной путь к OpenDota; `GET /stats`, `/replay-queue`, `/card/<id>.png`; `POST /report`.
 
