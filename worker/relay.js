@@ -10,7 +10,7 @@
 // всех привязанных аккаунтов (раз в час: пуш после катки, по понедельникам сводка); lastm:<tg id> — последняя катка,
 // о которой знаем; pushn:<tg id>:<день> — пушей за день; nopush:<tg id> — отписался от пушей.
 
-import { matchButton, mskDay, weeklyDigest, digestWindow } from "./growth.js";
+import { matchButton, mskDay, weeklyDigest, digestWindow, postWeeklyTop } from "./growth.js";
 import { partyRelay, partyHeroes, PARTY_Q } from "./party.js";
 
 export const ODREQ_PREFIX = "odreq:";
@@ -127,7 +127,10 @@ export async function relayRun(env, tg, body, now = Date.now(), { checkWatches }
   out.party = await partyRelay(env, tg, data, heroes, (p) => listAll(kv, p));
   if (checkWatches) out.watch = await checkWatches(env, now, fetcher, (m) => kv.put(`${ODREQ_PREFIX}${m}`, "1", { expirationTtl: 3600 }));
   if (body && body.users && typeof body.users === "object") {
-    if (digestWindow(now)) out.digest = await weeklyDigest(env, tg, now, fetcher, 30);
+    if (digestWindow(now)) {
+      out.digest = await weeklyDigest(env, tg, now, fetcher, 30);
+      out.top = await postWeeklyTop(env, tg, now).catch((e) => { console.log(`топ недели: ${e && e.message || e}`); return 0; });
+    }
     out.push = await pushNewMatches(env, tg, body.users, data, heroes, now);
   }
   return out;

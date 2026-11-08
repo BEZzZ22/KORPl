@@ -1690,7 +1690,7 @@ function lockedTab(a, onOpen) {
       if (r.full || r.off) { haptic("heavy"); onOpen(); return; }
       if (r.limit) { status.textContent = r.limit; return; }
       status.textContent = "";
-      box.append(paywallBlock(() => openNow(), "Чтобы открыть этот матч целиком, возьми подписку или пакет.", false));
+      box.append(paywallBlock(() => openNow(), "Чтобы открыть этот матч целиком, возьми подписку или пакет.", false, a.facts.match_id));
     } catch (e) {
       status.textContent = coachError(e);
     } finally {
@@ -1703,7 +1703,7 @@ function lockedTab(a, onOpen) {
     const btn = h("button", { class: "coach-btn", type: "button" }, `Открыть этот матч: на счету ${w.credits} ${plural(w.credits, "разбор", "разбора", "разборов")}`);
     btn.onclick = () => { haptic(); openNow(btn); };
     box.insertBefore(btn, status);
-  } else box.append(paywallBlock(() => openNow(), "Открой полный разбор этого и следующих матчей.", false));
+  } else box.append(paywallBlock(() => openNow(), "Открой этот матч целиком: одной каткой или пакетом.", false, a.facts.match_id));
   return box;
 }
 
@@ -2180,7 +2180,8 @@ const flameIcon = () => svg("svg", { class: "ic-flame", viewBox: "0 0 24 24", "a
   svg("path", { d: "M12 21c-3.6 0-6-2.4-6-5.6 0-3.3 2.4-5 3.6-7.9.4 1.6 1.3 2.6 2.4 3.1C12 7.5 13 5 15 3c.3 3 3 5.4 3 9.6C18 18 15.6 21 12 21Z" }));
 
 // Покупка: счёт от воркера, оплата в окне Телеграма. onPaid — когда звёзды дошли и кошелёк обновился
-function paywallBlock(onPaid, text = "Бесплатный разбор уже был.", about = true) {
+// matchId — катка, с которой пришли на замок: для «позови друга, и она откроется» (воркер запомнит её, mode ref_match)
+function paywallBlock(onPaid, text = "Бесплатный разбор уже был.", about = true, matchId = 0) {
   const status = h("p", { class: "small muted", role: "status" });
   const packs = (walletState && walletState.packs) || [];
   const buy = async (pack, btn) => {
@@ -2214,9 +2215,9 @@ function paywallBlock(onPaid, text = "Бесплатный разбор уже �
     }
   };
   const packBtn = (p) => {
-    const btn = h("button", { class: `paywall-pack${p.days ? " best" : ""}`, type: "button" },
-      h("b", {}, p.days ? "Месяц полного разбора" : `${p.credits} ${plural(p.credits, "полный разбор", "полных разбора", "полных разборов")}`),
-      h("span", { class: "paywall-sub" }, p.days ? "до 10 матчей в сутки" : "не сгорают"),
+    const btn = h("button", { class: `paywall-pack${p.days ? " best" : ""}${p.one ? " one" : ""}`, type: "button" },
+      h("b", {}, p.one ? "Только этот матч" : p.days ? "Месяц полного разбора" : `${p.credits} ${plural(p.credits, "полный разбор", "полных разбора", "полных разборов")}`),
+      h("span", { class: "paywall-sub" }, p.one ? "целиком, с тренером" : p.days ? "до 10 матчей в сутки" : "не сгорают"),
       h("span", { class: "paywall-price" }, `${p.stars}`, starIcon()));
     btn.onclick = () => { haptic(); buy(p, btn); };
     return btn;
@@ -2228,27 +2229,22 @@ function paywallBlock(onPaid, text = "Бесплатный разбор уже �
   const card = walletState && walletState.cards && h("button", { class: "paywall-card", type: "button" }, "Картой или СБП (₽)");
   // Вернулся из браузера после оплаты картой: раньше экран оставался с замком и пакетами, пока не откроешь катку
   // заново. Теперь при возврате переспрашиваем кошелёк и открываем сами, как после звёзд
-  let watching = null;
+  let watching = false;
   const watchReturn = () => {
     if (watching) return;
-    const before = { c: (walletState && walletState.credits) || 0, u: (walletState && walletState.until) || 0 };
-    let busy = false;
-    const check = async () => {
-      if (document.hidden || busy || !watching) return;
-      busy = true;
-      try {
-        // Робокасса шлёт уведомление воркеру чуть позже, чем человек возвращается
-        for (let i = 0; i < 4 && watching; i++) {
-          const w = await getWallet(true);
-          if (w && (w.credits > before.c || w.until > before.u || w.owner)) { stop(); haptic("heavy"); onPaid(w); return; }
-          await new Promise((r) => setTimeout(r, 2500));
-        }
-      } finally { busy = false; }
-    };
-    const stop = () => { if (watching) document.removeEventListener("visibilitychange", watching); watching = null; };
-    watching = check;
-    document.addEventListener("visibilitychange", check);
-    whenGone(card, stop);
+    watching = true;
+    watchWallet(card || packBox, onPaid);
+  };
+  // второй путь вместо тупика: позвал друга — бонус за него сразу откроет эту катку
+  const friend = matchId && tg && tg.initData && h("button", { class: "paywall-friend ghost", type: "button" }, "Позвать друга — и этот матч откроется бесплатно");
+  let friendWatch = false;
+  if (friend) friend.onclick = async () => {
+    haptic(); step("ref_lock");
+    postCoach({ mode: "ref_match", match_id: Number(matchId), initData: tg.initData }, 10000).catch(() => {});
+    const url = `https://t.me/share/url?url=${encodeURIComponent(refLink())}&text=${encodeURIComponent(REF_TEXT)}`;
+    if (tg.openTelegramLink) tg.openTelegramLink(url); else window.open(url, "_blank");
+    status.textContent = "Как только друг запустит бота по твоей ссылке, катка откроется сама, бот напишет. Считается только тот, кто бота ещё не открывал.";
+    if (!friendWatch) { friendWatch = true; watchWallet(friend, onPaid, true); }
   };
   if (card) card.onclick = async () => {
     haptic();
@@ -2270,9 +2266,33 @@ function paywallBlock(onPaid, text = "Бесплатный разбор уже �
     about && h("p", { class: "small muted" }, "Обзор матча и «Кто слил» бесплатные всегда. По подписке или пакету — матч целиком: фазы, смерти, карта, сборка, графики и ИИ-тренер с чатом."),
     packBox,
     card,
+    friend,
     status,
     h("p", { class: "small muted" }, "Вопросы по оплате — боту, команда /paysupport."));
 }
+// Вернулся в приложение (из браузера после оплаты картой или после того, как позвал друга): кошелёк вырос —
+// открываем сами. opened — бонус за друга уже открыл катку на воркере (refm), кошелёк при этом не растёт
+function watchWallet(anchor, onPaid, opened = false) {
+  const before = { c: (walletState && walletState.credits) || 0, u: (walletState && walletState.until) || 0, r: Number(walletState && walletState.ref_n) || 0 };
+  let busy = false, on = true;
+  const check = async () => {
+    if (document.hidden || busy || !on) return;
+    busy = true;
+    try {
+      // Робокасса шлёт уведомление воркеру чуть позже, чем человек возвращается
+      for (let i = 0; i < 4 && on; i++) {
+        const w = await getWallet(true);
+        const grew = w && (w.credits > before.c || w.until > before.u || w.owner || (opened && Number(w.ref_n) > before.r));
+        if (grew) { stop(); haptic("heavy"); onPaid(w); return; }
+        await new Promise((r) => setTimeout(r, 2500));
+      }
+    } finally { busy = false; }
+  };
+  const stop = () => { if (on) document.removeEventListener("visibilitychange", check); on = false; };
+  document.addEventListener("visibilitychange", check);
+  whenGone(anchor, stop);
+}
+
 // 402 от воркера: кошелёк в ответе, показываем покупку
 function isPaywall(e) {
   if (e && e.status === 402) { if (e.wallet) walletState = { ...walletState, ...e.wallet }; track("paywall"); step("paywall"); return true; }
@@ -2319,7 +2339,7 @@ function flushStats() {
   if (stats.since) { stats.secs += (Date.now() - stats.since) / 1000; stats.since = document.hidden ? 0 : Date.now(); }
   if (!stats.dirty && stats.secs < 30) return;
   const start = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) || "";
-  const body = JSON.stringify({ mode: "track", initData: tg.initData, open: stats.open, secs: Math.round(stats.secs), events: stats.events, src: /^l\d/.test(start) ? "steam" : start,
+  const body = JSON.stringify({ mode: "track", initData: tg.initData, open: stats.open, secs: Math.round(stats.secs), events: stats.events, src: /^l\d/.test(start) ? "steam" : /^m\d+(?:_s\d+)?_r\d+$/.test(start) ? start.replace(/^.*_(r\d+)$/, "$1") : start,
     path: stats.path.join(","), jserr: stats.jsError, ua: tg.platform || "" });
   const sent = navigator.sendBeacon && navigator.sendBeacon(COACH_URL, new Blob([body], { type: "text/plain" }));
   if (!sent) fetch(COACH_URL, { method: "POST", headers: { "Content-Type": "text/plain" }, body, keepalive: true }).catch(() => {});
@@ -2528,7 +2548,7 @@ function coachBlock(a) {
       if (isPaywall(e)) {
         ask.textContent = "Разобрать с тренером";
         note.textContent = "";
-        wall = paywallBlock(() => { if (wall) wall.remove(); wall = null; note.textContent = walletLine(walletState); ask.click(); });
+        wall = paywallBlock(() => { if (wall) wall.remove(); wall = null; note.textContent = walletLine(walletState); ask.click(); }, undefined, true, a.facts.match_id);
         box.append(wall);
         return;
       }
@@ -2620,7 +2640,7 @@ function chatBlock(a) {
       grow();
       if (isPaywall(e)) {
         note.textContent = "";
-        wall = paywallBlock(() => { if (wall) wall.remove(); wall = null; ask(input.value); }, "Чат с тренером — по пакету или подписке.");
+        wall = paywallBlock(() => { if (wall) wall.remove(); wall = null; ask(input.value); }, "Чат с тренером — по пакету или подписке.", true, a.facts.match_id);
         note.after(wall);
       } else note.textContent = coachError(e);
     } finally {
@@ -2662,7 +2682,11 @@ function trackProgress(a) {
   const top = ((a.summary || {}).problems || [])[0];
   const list = localJson(progKey(acc), []).filter((x) => x.match !== a.facts.match_id);
   list.push({ match: a.facts.match_id, t, hero_id: a.facts.hero_id, hero: a.facts.hero, won: a.facts.won, score: a.overall,
-    kda: a.facts.kda, m: a.progress, problem: top && !top.minor ? top.title : null, next_rank: a.next_rank });
+    kda: a.facts.kda, m: a.progress, problem: top && !top.minor ? top.title : null, next_rank: a.next_rank,
+    // все заметные ошибки катки — для «Твоих привычек»: что повторяется из катки в катку
+    // группа ошибки стабильна между катками (заголовок меняется: предмет, герой), killer_<герой> — одна привычка
+    problems: ((a.summary || {}).problems || []).filter((p) => p && p.title && !p.minor).slice(0, 6)
+      .map((p) => ({ g: String(p.group || p.title).replace(/^killer_.*/, "killer").slice(0, 40), t: String(p.title).slice(0, 80) })) });
   list.sort((x, y) => x.t - y.t);
   safeLocal.set(progKey(acc), JSON.stringify(list.slice(-PROGRESS_KEEP)));
 
@@ -2738,10 +2762,40 @@ function progressBlocks(account) {
     h("em", {}, x.done ? "Открыто" : `${x.have} из ${x.need}`)))));
   if (!list.length) blocks.push(h("p", { class: "small muted" }, "Ачивки считаются по разобранным каткам: открывай свои игры."));
 
+  const habits = habitsBlock(list);
+  if (habits) blocks.push(habits);
   const rank = rankGoalBlock(list);
   if (rank) blocks.push(rank);
   blocks.push(weekBlock(account, list));
   return blocks;
+}
+
+// Твои привычки: ошибки, которые повторяются в последних разобранных катках, и исправляешь ли их.
+// Последние 10 каток делим пополам: в свежей половине реже — исправляешь
+const HABITS_MIN = 5;
+function habitsBlock(list) {
+  const titles = new Map();
+  const last = list.slice(-10).map((x) => (x.problems || (x.problem ? [{ g: x.problem, t: x.problem }] : [])).map((p) => { titles.set(p.g, p.t); return p.g; }));
+  if (last.length < HABITS_MIN) {
+    return list.length ? h("div", {}, h("h2", {}, "Твои привычки"), h("div", { class: "card small muted" },
+      `Разбери ещё ${HABITS_MIN - last.length} ${plural(HABITS_MIN - last.length, "катку", "катки", "каток")} — покажу, какие ошибки у тебя повторяются из игры в игру и исправляешь ли ты их.`)) : null;
+  }
+  const counts = new Map();
+  last.forEach((ps) => new Set(ps).forEach((t) => counts.set(t, (counts.get(t) || 0) + 1)));
+  const top = [...counts].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const half = Math.floor(last.length / 2), old = last.slice(0, last.length - half), fresh = last.slice(last.length - half);
+  const share = (part, t) => part.filter((ps) => ps.includes(t)).length / Math.max(1, part.length);
+  const rows = top.map(([t, n]) => {
+    const was = share(old, t), now = share(fresh, t);
+    const trend = now < was - 0.15 ? "up" : now > was + 0.15 ? "down" : "same";
+    return h("div", { class: "score-row trend habit" },
+      h("span", {}, titles.get(t) || t),
+      h("span", { class: "muted" }, `${n} из ${last.length}`),
+      h("b", { class: trend === "up" ? "win-text" : trend === "down" ? "loss-text" : "muted" }, trend === "up" ? "лучше" : trend === "down" ? "чаще" : "так же"));
+  });
+  return h("div", {}, h("h2", {}, "Твои привычки"), h("div", { class: "card" },
+    rows.length ? rows : h("p", { class: "muted" }, "Одна и та же ошибка дважды не повторялась. Так держать."),
+    h("p", { class: "small muted" }, `По ${last.length} последним разобранным каткам. «Лучше» — в свежих катках ошибка встречается реже, чем раньше. Как от неё избавиться — спроси тренера в разборе.`)));
 }
 
 // До следующего ранга: средние последних разобранных каток на той же позиции против медианы ранга выше
@@ -2867,6 +2921,7 @@ function friendsBlock(account) {
   const input = h("input", { inputmode: "numeric", placeholder: "Friend ID друга", "aria-label": "Friend ID друга" });
   const status = h("p", { class: "small muted", role: "status" });
   const board = h("div", { class: "leaderboard" }, h("div", { class: "center" }, h("div", { class: "spinner" })));
+  const duel = h("div", { class: "duel-box" });
   const seq = navSeq;
   const add = async () => {
     const id = toAccountId(input.value);
@@ -2899,7 +2954,7 @@ function friendsBlock(account) {
       const games = leaderCache.get(f.account_id).filter((m) => m.game_mode !== TURBO_MODE);
       if (!games.length) continue;
       const won = games.filter((m) => (m.player_slot < 128) === m.radiant_win).length;
-      rows.push({ ...f, games: games.length, wr: won / games.length,
+      rows.push({ ...f, list: games, games: games.length, wr: won / games.length,
         kda: games.reduce((s, m) => s + (m.kills + m.assists) / Math.max(1, m.deaths), 0) / games.length,
         gpm: games.reduce((s, m) => s + (m.gold_per_min || 0), 0) / games.length });
     }
@@ -2909,13 +2964,52 @@ function friendsBlock(account) {
       h("span", { class: "plan-num" }, String(i + 1)),
       h("div", { class: "grow" }, h("b", {}, r.name), h("span", { class: "small muted" }, `KDA ${r.kda.toFixed(1)} · GPM ${Math.round(r.gpm)} · ${r.games} ${plural(r.games, "игра", "игры", "игр")}`)),
       h("b", { class: r.wr >= 0.5 ? "win-text" : "loss-text" }, `${Math.round(r.wr * 100)}%`),
+      !r.me && h("button", { class: "leader-duel ghost", type: "button", onclick: () => { haptic(); step("duel"); duel.replaceChildren(duelCard(rows.find((x) => x.me), r)); duel.scrollIntoView({ behavior: "smooth", block: "nearest" }); } }, "Дуэль"),
       !r.me && h("button", { class: "leader-remove", type: "button", "aria-label": `Убрать ${r.name}`, onclick: () => remove(r.account_id) }, "×"))));
     if (rows.length < 2) board.append(h("p", { class: "small muted" }, "Добавь друзей по Friend ID — посмотрим, кто из вас сейчас в форме."));
   })().catch(() => { if (!stale(seq)) board.replaceChildren(h("p", { class: "muted small" }, "OpenDota не отдала игры друзей.")); });
-  return h("div", {}, h("h2", {}, "Друзья"), h("div", { class: "card" }, board,
+  return h("div", {}, h("h2", {}, "Друзья"), h("div", { class: "card" }, board, duel,
     h("div", { class: "row friend-add" }, h("div", { class: "grow" }, input), h("button", { type: "button", onclick: add }, "Добавить")),
     status,
     h("p", { class: "small muted" }, "Рейтинг по последним 20 играм без Турбо: винрейт, потом KDA.")));
+}
+
+// Дуэль с другом: ты против него по последним 20 играм, по каждой строке кто лучше, итоговый счёт и кнопка
+// «Кинуть в чат» — текст с итогом и твоей ссылкой-приглашением (друг друга по ней — бонус как по рефералке)
+const DUEL_ROWS = [
+  ["Винрейт", (r) => r.wr * 100, (v) => `${Math.round(v)}%`],
+  ["KDA", (r) => r.kda, (v) => v.toFixed(1)],
+  ["Смертей за игру", (r) => avgOf(r.list, (m) => m.deaths), (v) => v.toFixed(1), true],
+  ["GPM", (r) => r.gpm, (v) => String(Math.round(v))],
+  ["XPM", (r) => avgOf(r.list, (m) => m.xp_per_min), (v) => String(Math.round(v))],
+  ["Урон по героям в минуту", (r) => avgOf(r.list, (m) => (m.hero_damage || 0) / Math.max(1, m.duration / 60)), (v) => String(Math.round(v))],
+  ["Добитые крипы в минуту", (r) => avgOf(r.list, (m) => (m.last_hits || 0) / Math.max(1, m.duration / 60)), (v) => v.toFixed(1)],
+];
+const avgOf = (xs, f) => { const v = (xs || []).map(f).filter(Number.isFinite); return v.length ? v.reduce((s, x) => s + x, 0) / v.length : NaN; };
+function duelCard(me, fr) {
+  if (!me || !fr) return h("p", { class: "small muted" }, "Для дуэли нужны твои игры: OpenDota их не отдала.");
+  let mine = 0, his = 0;
+  const rows = DUEL_ROWS.map(([label, f, fmt, lower]) => {
+    const a = f(me), b = f(fr);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+    const win = a === b ? 0 : (lower ? a < b : a > b) ? 1 : -1;
+    if (win > 0) mine++; else if (win < 0) his++;
+    return h("div", { class: "duel-row" },
+      h("b", { class: win > 0 ? "win-text" : "" }, fmt(a)), h("span", { class: "muted small" }, label), h("b", { class: win < 0 ? "win-text" : "" }, fmt(b)));
+  }).filter(Boolean);
+  const verdict = mine > his ? `Ты тащишь ${mine}:${his}` : his > mine ? `${fr.name} тащит ${his}:${mine}` : `Ничья ${mine}:${his}`;
+  const share = () => {
+    haptic(); step("duel_share");
+    const text = `Дуэль в Доте за последние ${Math.min(me.games, fr.games)} игр: я против ${fr.name}. ${mine > his ? `Я тащу ${mine}:${his}` : his > mine ? `${fr.name} тащит ${his}:${mine}` : `Ничья ${mine}:${his}`}. Проверь, кто из вас сливает:`;
+    const url = `https://t.me/share/url?url=${encodeURIComponent(refLink())}&text=${encodeURIComponent(text)}`;
+    if (tg && tg.openTelegramLink) tg.openTelegramLink(url); else window.open(url, "_blank");
+  };
+  return h("div", { class: "duel" },
+    h("div", { class: "duel-head" }, h("b", {}, "Ты"), h("span", { class: "muted small" }, "дуэль"), h("b", {}, fr.name)),
+    ...rows,
+    h("p", { class: "duel-verdict" }, verdict),
+    h("button", { type: "button", onclick: share }, "Кинуть дуэль в чат"),
+    h("p", { class: "small muted" }, `Твои ${me.games} и его ${fr.games} последних игр без Турбо.`));
 }
 
 // ---------- сравнение двух каток ----------
@@ -4076,7 +4170,8 @@ new MutationObserver(() => applyDynamicStyles(app)).observe(app, { childList: tr
 function startParams() {
   const q = new URLSearchParams(location.search);
   const start = (tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) || "";
-  const sm = /^m(\d{7,11})(?:_s(\d{1,3}))?$/.exec(start);
+  // m<матч>[_s<слот>][_r<кто позвал>] — _r приходит из инлайн-карточки (бот в любом чате)
+  const sm = /^m(\d{7,11})(?:_s(\d{1,3}))?(?:_r\d{1,20})?$/.exec(start);
   const matchId = q.get("match") || (sm && sm[1]);
   const slot = q.get("slot") || (sm && sm[2]);
   const account = q.get("account");

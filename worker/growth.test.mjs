@@ -2,8 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { withStore } from "./store.js";
-import { matchFromText, accountFromText, refOf, noteReferral, rewardReferral, referralFromStart, noteStartSource, startPayload, bumpStreak, streakPrize, growthView, weekSummary, digestText, weeklyDigest } from "./growth.js";
-import { getWallet } from "./pay.js";
+import { matchFromText, accountFromText, refOf, noteReferral, rewardReferral, referralFromStart, noteStartSource, startPayload, bumpStreak, streakPrize, growthView, weekSummary, digestText, weeklyDigest, inlineAnswer, noteRefMatch, topText, postWeeklyTop } from "./growth.js";
+import { getWallet, isOpen, PACKS, thanksText, walletView } from "./pay.js";
 import { trackUser, onRealAnalysis } from "./coach.js";
 
 // D1 в памяти на node:sqlite с тем же интерфейсом prepare/bind/first/all/run/batch
@@ -245,4 +245,57 @@ test("источник через /start: метка партнёра или bot
   assert.equal((await env.COACH_KV.getWithMetadata("seen:92")).metadata.src, "yt");
   await env.COACH_KV.put("seen:95", "1");
   assert.equal(await noteStartSource(env, { id: 95 }, "/start x"), null);
+});
+
+test("позови друга с закрытой катки: бонус сразу открывает её", async () => {
+  const env = env0(), { sent, tg } = tgLog();
+  // пробный уже потрачен
+  await env.COACH_KV.put("wallet:42", JSON.stringify({ c: 0, until: 0, free: 1 }));
+  await noteRefMatch(env, 42, 8012800381);
+  await noteReferral(env, 77, "r42");
+  const got = await rewardReferral(env, tg, 77, Date.now(), "Пудж");
+  assert.equal(got.opened, 8012800381);
+  assert.ok(await isOpen(env, "42", "m8012800381"));
+  assert.equal((await getWallet(env, 42)).c, 0);
+  assert.equal(await env.COACH_KV.get("refm:42"), null);
+  assert.match(sent.find((x) => x.chat_id === 42).text, /катка 8012800381 открыта целиком/);
+});
+
+test("инлайн: ID катки — карточка с кнопкой и меткой пригласившего, пусто — приглашение", () => {
+  const a = inlineAnswer({ id: "q1", from: { id: 42 }, query: "8012800381" });
+  assert.equal(a.inline_query_id, "q1");
+  assert.equal(a.results[0].id, "m8012800381");
+  assert.equal(a.results[0].reply_markup.inline_keyboard[0][0].url, "https://t.me/DotaRazbor_bot?startapp=m8012800381_r42");
+  assert.equal(inlineAnswer({ id: "q2", from: { id: 42 }, query: "https://www.dotabuff.com/matches/7999999999" }).results[0].id, "m7999999999");
+  const b = inlineAnswer({ id: "q3", from: { id: 42 }, query: "" });
+  assert.equal(b.results[0].id, "invite");
+  assert.equal(b.results[0].reply_markup.inline_keyboard[0][0].url, "https://t.me/DotaRazbor_bot?startapp=r42");
+});
+
+test("одна катка: пакет на один разбор, в рублях и звёздах", () => {
+  assert.deepEqual([PACKS.p1.credits, PACKS.p1.stars, PACKS.p1.rub], [1, 10, 19]);
+  const v = walletView({ c: 0, until: 0, free: 1, d: "", n: 0 });
+  assert.equal(v.packs[0].id, "p1");
+  assert.equal(v.packs[0].one, true);
+  assert.match(thanksText("p1", v), /откроется сама/);
+});
+
+test("топ недели: после сводки один пост в чат, без отписавшихся, раз в неделю", async () => {
+  const env = env0(), { sent, tg } = tgLog();
+  const now = Date.parse("2026-11-09T09:00:00Z"); // понедельник, 12:00 МСК
+  const week = "2026-11-09";
+  const kv = env.COACH_KV;
+  await kv.put(`top:${week}:1`, JSON.stringify({ n: "Аня", g: 10, w: 7, d: 3.1 }));
+  await kv.put(`top:${week}:2`, JSON.stringify({ n: "Боря", g: 6, w: 2, d: 8 }));
+  await kv.put(`top:${week}:3`, JSON.stringify({ n: "Вова", g: 9, w: 9, d: 1 }));
+  await kv.put("notop:3", "1");
+  // сводка ещё идёт — ждём
+  assert.equal(await postWeeklyTop(env, tg, now), 0);
+  await kv.put(`digest:${week}:end`, "1");
+  assert.equal(await postWeeklyTop(env, tg, now), 1);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].text, /1\. Аня — 7 побед из 10/);
+  assert.doesNotMatch(sent[0].text, /Вова/);
+  assert.equal(await postWeeklyTop(env, tg, now), 0);
+  assert.equal(topText([]), null);
 });

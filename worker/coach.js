@@ -11,7 +11,7 @@ import { kickShorts } from "./kick.js";
 import { handlePartyMessage } from "./party.js";
 import { broadcastStep } from "./broadcast.js";
 import { relayTasks, relayRun, kickRelay, ODREQ_PREFIX } from "./relay.js";
-import { matchFromText, matchButton, MATCH_TEXT, accountFromText, linkButton, LINK_TEXT, OD_HEADERS, noteReferral, rewardReferral, referralFromStart, noteStartSource, bumpStreak, growthView, streakReminders } from "./growth.js";
+import { matchFromText, matchButton, MATCH_TEXT, accountFromText, linkButton, LINK_TEXT, OD_HEADERS, noteReferral, rewardReferral, referralFromStart, noteStartSource, bumpStreak, growthView, streakReminders, inlineAnswer, noteRefMatch } from "./growth.js";
 import { CHAT_ID, handleChatUpdate, chatChores, chatStatus, releaseIfPending } from "./chatguard.js";
 import { spendUnit, openMatch, spendChat, isOpen, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT, loginUser, roboLink, roboResult, robokassaOn, payUrl, tokenUser } from "./pay.js";
 
@@ -1396,21 +1396,22 @@ export async function dailyReport(env, now = Date.now()) {
 // Апдейты бота приходят вебхуком на /tg (крон сам ставит его один раз). Отчёт — только владельцу в личке,
 // остальным приветствие с кнопкой приложения. «отчёт» — за сегодня до текущей минуты, «отчёт вчера», «отчёт 26.10»
 const WORKER_URL = "https://dotacoach.2007rggg.workers.dev";
-const WEBHOOK_VERSION = "3"; // меняется вместе с allowed_updates: крон переставит вебхук
+const WEBHOOK_VERSION = "4"; // меняется вместе с allowed_updates: крон переставит вебхук
 async function webhookSecret(token) {
   const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`tg-hook:${token}`)));
   return [...hash.slice(0, 20)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-const COMMANDS_VERSION = "1";
+const COMMANDS_VERSION = "2";
 // Профиль бота для поиска Телеги: имя и описания с русскими словами «дота», «разбор катки» (решение Ярика 08.11).
 // Меняешь текст — подними PROFILE_VERSION, крон поставит заново. setMyName Телега часто режет лимитом — тогда повтор на следующем заходе
-export const PROFILE_VERSION = "1";
+export const PROFILE_VERSION = "2";
 export const BOT_PROFILE = {
   name: "Дота Разбор — разбор катки Dota 2",
   short_description: "Разбор твоей катки Dota 2: кто слил, ошибки по минутам, что собирать. Кидай ID матча",
   description: "Разберу любую твою катку Dota 2 за секунды: кто тащил и кто слил, где ты ошибался по минутам, что собрать и как играют про на твоём герое. "
-    + "Бесплатно, прямо в Телеграме. Жми «Старт» и кидай ID матча или привяжи аккаунт",
+    + "Первый матч целиком бесплатно. В любом чате напиши @DotaRazbor_bot и ID катки — пришлю карточку «Кто слил». Дуэль с другом и твои привычки — в профиле. "
+    + "Жми «Старт» и кидай ID матча или привяжи аккаунт",
 };
 export async function ensureProfile(env, send = (m, b) => sendTelegram(env, m, b)) {
   if (!env.COACH_KV || !env.BOT_TOKEN || (await env.COACH_KV.get("tg_profile")) === PROFILE_VERSION) return false;
@@ -1426,7 +1427,7 @@ export async function ensureWebhook(env) {
   await ensureProfile(env).catch((e) => console.log(`профиль бота: ${e && e.message || e}`));
   if ((await env.COACH_KV.get("tg_webhook")) === WEBHOOK_VERSION) return true;
   const ok = await sendTelegram(env, "setWebhook", {
-    url: `${env.WORKER_URL || WORKER_URL}/tg`, secret_token: await webhookSecret(env.BOT_TOKEN), allowed_updates: ["message", "edited_message", "callback_query", "chat_member", "pre_checkout_query"],
+    url: `${env.WORKER_URL || WORKER_URL}/tg`, secret_token: await webhookSecret(env.BOT_TOKEN), allowed_updates: ["message", "edited_message", "callback_query", "chat_member", "pre_checkout_query", "inline_query"],
     // висящие апдейты не выбрасываем: среди них может быть оплата звёздами, которую иначе не зачислим
     drop_pending_updates: false,
   }).catch(() => false);
@@ -1462,8 +1463,9 @@ const welcomeButtons = { inline_keyboard: [[{ text: "Открыть разбор
 const HELP_TEXT = "Что умеет бот:\n"
   + "• Кинь ID матча или ссылку с OpenDota/Dotabuff/Stratz — открою разбор: кто слил, ошибки по таймкодам, повтор на карте.\n"
   + "• Кинь Friend ID — привяжу аккаунт, и после каждой катки напишу, можно ли разобрать.\n"
-  + "• Добавь меня в чат с пати — там тоже разбираю катки.\n\n"
-  + "Команды:\n/pay — тренер и оплата\n/nopush — не писать после каток и про серию (/push — вернуть)\n/nodigest — без сводки недели (/digest — вернуть)\n/paysupport — вопрос по оплате\n/terms — условия";
+  + "• Добавь меня в чат с пати — там тоже разбираю катки.\n"
+  + "• В любом чате напиши @DotaRazbor_bot и ID катки — выпадет карточка с разбором, добавлять меня туда не нужно.\n\n"
+  + "Команды:\n/pay — тренер и оплата\n/nopush — не писать после каток и про серию (/push — вернуть)\n/nodigest — без сводки недели (/digest — вернуть)\n/notop — не показывать меня в топе недели в чате (/top — вернуть)\n/paysupport — вопрос по оплате\n/terms — условия";
 // Меню команд у поля ввода: без него /pay, /nopush и прочие никто не находил
 export const BOT_COMMANDS = [
   { command: "start", description: "Открыть разбор каток" },
@@ -1471,6 +1473,7 @@ export const BOT_COMMANDS = [
   { command: "pay", description: "Тренер и оплата" },
   { command: "nopush", description: "Не писать после каток" },
   { command: "nodigest", description: "Без сводки недели" },
+  { command: "notop", description: "Не показывать меня в топе недели" },
   { command: "paysupport", description: "Вопрос по оплате" },
 ];
 
@@ -1531,6 +1534,11 @@ export async function moneyText(env, now = Date.now()) {
 }
 
 export async function handleBotUpdate(env, update, now = Date.now()) {
+  // инлайн-режим: «@DotaRazbor_bot <ID катки>» в любом чате — карточка с кнопкой на разбор (growth.js, inlineAnswer)
+  if (update && update.inline_query) {
+    const ok = await sendTelegram(env, "answerInlineQuery", inlineAnswer(update.inline_query)).catch(() => false);
+    return { inline: ok ? 1 : 0 };
+  }
   // оплата звёздами: подтвердить счёт (Телеграм ждёт до 10 с), потом зачислить
   if (update && update.pre_checkout_query) {
     const ok = await sendTelegram(env, "answerPreCheckoutQuery", checkout(update.pre_checkout_query)).catch(() => false);
@@ -1563,7 +1571,7 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
   }
   if (/^\/pay(?:@\w+)?$/i.test(cmd)) {
     const card = robokassaOn(env) && { text: "Картой или СБП", url: await payUrl(env.BOT_TOKEN, msg.from, now) };
-    const text = `Тренер: ${PACKS.p10.credits} разборов — ${PACKS.p10.stars} звёзд или ${PACKS.p10.rub} ₽, месяц — ${PACKS.month.stars} звёзд или ${PACKS.month.rub} ₽. Звёздами — в приложении, на экране тренера`
+    const text = `Одна катка целиком — ${PACKS.p1.stars} звёзд или ${PACKS.p1.rub} ₽. Тренер: ${PACKS.p10.credits} разборов — ${PACKS.p10.stars} звёзд или ${PACKS.p10.rub} ₽, месяц — ${PACKS.month.stars} звёзд или ${PACKS.month.rub} ₽. Звёздами — в приложении, на экране тренера`
       + (card ? ", картой или через СБП — по кнопке ниже (ссылка на сутки)." : ".");
     await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text, reply_markup: { inline_keyboard: [...(card ? [[card]] : []), ...appButton.inline_keyboard] } }).catch(() => false);
     return { pay: 1 };
@@ -1604,6 +1612,14 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
     const text = off ? "Сводку недели больше не шлю. Передумаешь — напиши /digest." : "Включил: по понедельникам пришлю итоги недели и худшую катку на разбор.";
     await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text }).catch(() => false);
     return { digest: off ? "off" : "on" };
+  }
+  // топ недели в чате канала: отписка и подписка обратно
+  if (/^\/(?:notop|top)(?:@\w+)?$/i.test(cmd)) {
+    const off = /^\/notop/i.test(cmd);
+    if (off) await env.COACH_KV.put(`notop:${msg.from.id}`, "1"); else await env.COACH_KV.delete(`notop:${msg.from.id}`);
+    const text = off ? "Больше не покажу тебя в топе недели. Передумаешь — напиши /top." : "Включил: если неделя удалась, попадёшь в топ недели в чате https://t.me/dotarazbor_chat.";
+    await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text }).catch(() => false);
+    return { top: off ? "off" : "on" };
   }
   // кинул ID матча или ссылку на него — кнопка сразу на разбор этой катки, без привязки аккаунта
   const matchId = !msg.reply_to_message && matchFromText(msg.text);
@@ -1810,7 +1826,7 @@ async function handlePost(request, env, ctx, origin) {
   }
 
   // Кошелёк тренера и покупка: счёт на звёзды, приложение открывает его через Telegram.WebApp.openInvoice
-  if (mode === "wallet" || mode === "buy" || mode === "pay_link" || mode === "open") {
+  if (mode === "wallet" || mode === "buy" || mode === "pay_link" || mode === "open" || mode === "ref_match") {
     if (!paywallOn(env)) return reply(200, { off: true, full: true }, origin);
     const user = await telegramUser(raw.initData, env.BOT_TOKEN);
     if (!user || !user.id) return reply(403, { error: noTg(raw) }, origin);
@@ -1822,6 +1838,13 @@ async function handlePost(request, env, ctx, origin) {
       if (!Number.isInteger(m) || m <= 1e6) return reply(400, { error: "Нет номера матча." }, origin);
       if (isOwner(env, user.id)) return reply(200, { full: true, owner: true }, origin);
       return reply(200, await openMatch(env, user.id, `m${m}`, raw.auto === true), origin);
+    }
+    // «позови друга — эта катка откроется»: запоминаем катку, бонус за пришедшего друга сразу уйдёт на неё (growth.js)
+    if (mode === "ref_match") {
+      const m = Number(raw.match_id);
+      if (!Number.isInteger(m) || m <= 1e6) return reply(400, { error: "Нет номера матча." }, origin);
+      await noteRefMatch(env, user.id, m);
+      return reply(200, { ok: true }, origin);
     }
     if (mode === "wallet") {
       const grow = await growthView(env, user.id).catch(() => ({}));

@@ -4,9 +4,12 @@
 // refdone:<tg id> — бонус за этого друга уже выдан; refn:<tg id> — скольких привёл; streak:<tg id> — серия
 // { d: последний день МСК с разбором, n: дней подряд, best }; streakprize:<tg id>:<день> — приз за день выдан;
 // digest:<понедельник>:<tg id> — сводка недели отправлена; digest:<понедельник>:end — все обойдены; nodigest:<tg id> — отписался.
+// refm:<tg id> — катка, которую откроет бонус за следующего пришедшего друга; top:<понедельник>:<tg id> — итоги недели
+// для топа в чате; topdone:<понедельник> — топ запощен; notop:<tg id> — не показывать в топе.
 // tg(method, body) — вызов Bot API: результат или null.
 
-import { giftCredits } from "./pay.js";
+import { giftCredits, openMatch } from "./pay.js";
+import { CHAT_ID } from "./chatguard.js";
 
 export const APP_URL = "https://bezzz22.github.io/KORPl/";
 // Запросы воркера к OpenDota — с User-Agent: fetch из Cloudflare Workers сам его не ставит, а OpenDota стоит за защитой
@@ -86,15 +89,57 @@ export async function rewardReferral(env, tg, userId, now = Date.now(), name = "
   await giftCredits(env, userId, REF_BONUS, now);
   const inviter = n <= REF_MAX;
   if (inviter) await giftCredits(env, by, REF_BONUS, now);
+  // звал друга с закрытой катки — бонус сразу открывает её (openMatch тратит только что выданный разбор)
+  let opened = 0;
+  const want = inviter && Number(await kv.get(`refm:${by}`));
+  if (want) {
+    await kv.delete(`refm:${by}`);
+    const r = await openMatch(env, by, `m${want}`, false, now).catch(() => null);
+    if (r && r.full) opened = want;
+  }
   await tg("sendMessage", { chat_id: Number(userId), text: "Ты пришёл по приглашению друга — держи бесплатный полный разбор матча с ИИ-тренером. Он уже на счету.",
     reply_markup: { inline_keyboard: [[{ text: "Открыть разбор", web_app: { url: APP_URL } }]] } });
-  if (inviter) {
+  if (inviter && opened) {
+    const who = String(name || "").trim().slice(0, 40);
+    await tg("sendMessage", { chat_id: Number(by), text: `${who ? `${who} запустил` : "Друг запустил"} бота по твоей ссылке. Как обещал, катка ${opened} открыта целиком: фазы, смерти, карта, сборка и тренер. `
+      + `Всего привёл: ${n}.`, reply_markup: matchButton(opened, "Открыть катку") });
+  } else if (inviter) {
     const who = String(name || "").trim().slice(0, 40);
     await tg("sendMessage", { chat_id: Number(by), text: `${who ? `${who} запустил` : "Друг запустил"} бота по твоей ссылке. Тебе +${REF_BONUS} разбор ИИ-тренера, уже на счету. `
       + `Всего привёл: ${n}. Зови ещё — ссылка во вкладке «Бонусы».`,
       reply_markup: { inline_keyboard: [[{ text: "Бонусы", web_app: { url: `${APP_URL}?tab=bonus` } }]] } });
   }
-  return { by, n, inviter };
+  return { by, n, inviter, opened };
+}
+
+// Позвал друга с экрана закрытой катки: её и откроем, когда друг придёт. Неделю, потом обычный бонус на счёт
+export async function noteRefMatch(env, userId, match) {
+  await env.COACH_KV.put(`refm:${userId}`, String(match), { expirationTtl: 7 * 86400 });
+}
+
+// ---------- инлайн-режим: «@DotaRazbor_bot <ID катки>» в любом чате ----------
+// Бота не надо добавлять в чат: человек выбирает карточку, в чат уходит сообщение с кнопкой на разбор. В ссылке
+// метка пригласившего (_r<id>): кто пришёл по карточке впервые — это его друг, бонус как по рефералке
+export function inlineAnswer(q) {
+  const from = q && q.from && /^\d{1,20}$/.test(String(q.from.id)) ? String(q.from.id) : "";
+  const text = String((q && q.query) || "").trim();
+  const id = matchFromText(text) || (/^\d{7,11}$/.test(text) ? Number(text) : null);
+  const tag = from ? `_r${from}` : "";
+  const results = [];
+  if (id) {
+    results.push({
+      type: "article", id: `m${id}`, title: `Разбор катки ${id}`, description: "Кто тащил, кто слил, ошибки по минутам, повтор на карте",
+      input_message_content: { message_text: `Катка ${id}: кто тащил, а кто слил? Разбор по минутам у @${BOT}, жми кнопку.` },
+      reply_markup: { inline_keyboard: [[{ text: "Кто слил", url: `https://t.me/${BOT}?startapp=m${id}${tag}` }]] },
+    });
+  } else {
+    results.push({
+      type: "article", id: "invite", title: "Позвать в Дота Разбор", description: "Впиши ID катки после имени бота — пришлю карточку разбора. Или отправь приглашение",
+      input_message_content: { message_text: "Разбирает катки в Доте: кто слил, ошибки по таймкодам, повтор на карте. Заходи — первый матч целиком бесплатно." },
+      reply_markup: { inline_keyboard: [[{ text: "Разобрать свою катку", url: from ? refLink(from) : `https://t.me/${BOT}?startapp` }]] },
+    });
+  }
+  return { inline_query_id: q && q.id, results, cache_time: id ? 300 : 30, is_personal: true };
 }
 
 // /start r<id> в личке бота — тот же реферал, что и открытие приложения по ссылке. Только для тех, кто бота ещё не видел
@@ -209,6 +254,7 @@ export async function weeklyDigest(env, tg, now = Date.now(), fetcher = fetch, b
       const matches = res.ok ? await res.json().catch(() => null) : null;
       const s = weekSummary(matches, now);
       if (!s) continue;
+      await noteTop(env, week, id, s).catch(() => {});
       if (await tg("sendMessage", { chat_id: Number(id), text: digestText(s), reply_markup: matchButton(s.worst.match_id, "Разобрать эту катку") })) sent++;
     }
     if (got.list_complete || !got.cursor) break;
@@ -217,6 +263,60 @@ export async function weeklyDigest(env, tg, now = Date.now(), fetcher = fetch, b
   if (missed) return sent;
   await kv.put(`digest:${week}:end`, "1", { expirationTtl: 9 * 86400 });
   return sent;
+}
+
+// ---------- топ недели в чате канала ----------
+// Итоги недели каждого приходят вместе со сводкой (weeklyDigest). Когда обошли всех — один пост в @dotarazbor_chat:
+// больше всех побед, лучший винрейт и меньше всех смертей. Только имя из Телеги (первое слово), без ников и аккаунтов
+export const TOP_MIN = 5;          // игр за неделю, чтобы попасть в винрейт и смерти
+async function noteTop(env, week, id, s) {
+  const kv = env.COACH_KV;
+  if (await kv.get(`notop:${id}`)) return;
+  const seen = await kv.getWithMetadata(`seen:${id}`).catch(() => null);
+  const name = String((seen && seen.metadata && seen.metadata.n) || "").trim().split(/\s+/)[0].replace(/[<>@]/g, "").slice(0, 20);
+  if (!name) return;
+  await kv.put(`top:${week}:${id}`, JSON.stringify({ n: name, g: s.games, w: s.wins, d: s.deaths }), { expirationTtl: 9 * 86400 });
+}
+
+export function topText(rows) {
+  const lines = [];
+  const pick = (list, key, dir) => [...list].sort((a, b) => dir * (b[key] - a[key]) || b.g - a.g).slice(0, 3);
+  const most = pick(rows.filter((r) => r.w > 0), "w", 1);
+  const enough = rows.filter((r) => r.g >= TOP_MIN).map((r) => ({ ...r, wr: r.w / r.g }));
+  const wr = pick(enough, "wr", 1), alive = pick(enough, "d", -1);
+  const place = (i) => `${i + 1}.`;
+  if (most.length) lines.push("Больше всех побед:", ...most.map((r, i) => `${place(i)} ${r.n} — ${r.w} ${plural(r.w, "победа", "победы", "побед")} из ${r.g}`), "");
+  if (wr.length) lines.push(`Лучший винрейт (от ${TOP_MIN} игр):`, ...wr.map((r, i) => `${place(i)} ${r.n} — ${Math.round(r.wr * 100)}%`), "");
+  if (alive.length) lines.push(`Меньше всех умирает (от ${TOP_MIN} игр):`, ...alive.map((r, i) => `${place(i)} ${r.n} — ${String(r.d).replace(".", ",")} за катку`), "");
+  if (!lines.length) return null;
+  return ["Топ недели среди тех, кто разбирает катки у бота:", "", ...lines,
+    "Хочешь сюда — разбирай свои катки и не сливай. Не хочешь в топе — напиши боту /notop."].join("\n");
+}
+
+// После сводки: все обойдены (digest:<понедельник>:end) или последний час окна. Раз в неделю, минимум два человека
+export async function postWeeklyTop(env, tg, now = Date.now()) {
+  const kv = env.COACH_KV;
+  if (!kv || !digestWindow(now)) return 0;
+  const week = mskDay(now);
+  if (await kv.get(`topdone:${week}`)) return 0;
+  if (!(await kv.get(`digest:${week}:end`)) && new Date(now).getUTCHours() < 10) return 0;
+  const rows = [];
+  let cursor;
+  for (let page = 0; page < 20; page++) {
+    const got = await kv.list({ prefix: `top:${week}:`, cursor });
+    for (const k of got.keys) {
+      const r = await kv.get(k.name, "json").catch(() => null);
+      if (r && r.n && r.g > 0 && !(await kv.get(`notop:${k.name.split(":")[2]}`))) rows.push(r);
+    }
+    if (got.list_complete || !got.cursor) break;
+    cursor = got.cursor;
+  }
+  await kv.put(`topdone:${week}`, "1", { expirationTtl: 9 * 86400 });
+  const text = rows.length >= 2 && topText(rows);
+  if (!text) return 0;
+  const ok = await tg("sendMessage", { chat_id: CHAT_ID, text, disable_notification: true, link_preview_options: { is_disabled: true },
+    reply_markup: { inline_keyboard: [[{ text: "Разобрать свою катку", url: `https://t.me/${BOT}?start=top` }]] } });
+  return ok ? 1 : 0;
 }
 
 // ---------- напоминание «серия сгорит» ----------
