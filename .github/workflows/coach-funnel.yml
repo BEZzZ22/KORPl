@@ -29,5 +29,6 @@ jobs:
           d1 "SELECT k, meta FROM kv WHERE k LIKE 'paid:%'" > paid.json
           d1 "SELECT k, v FROM kv WHERE k LIKE 'refn:%'" > refn.json
           d1 "SELECT k FROM kv WHERE k LIKE 'streakprize:%'" > prize.json
+          d1 "SELECT k FROM kv WHERE k LIKE 'party:%'" > party.json
           owners=$(grep -oP 'OWNER_TG_IDS\s*=\s*"\K[^"]+' worker/wrangler.toml)
-          python3 tools/coach_funnel.py seen.json act.json wallet.json paid.json refn.json prize.json "$owners"
+          python3 tools/coach_funnel.py seen.json act.json wallet.json paid.json refn.json prize.json "$owners" party.json
