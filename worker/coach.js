@@ -1553,9 +1553,11 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
   if (guarded) return { chat: guarded };
   // кнопка «Видеоразбор» под карточкой матча (worker/video.js)
   const press = update && update.callback_query;
-  if (press && press.from && /^vid:\d{7,11}$/.test(String(press.data || ""))) {
+  // «vid:<матч>:<место>» — выбор игрока владельцем (место у остальных воркер не берёт)
+  const vid = press && press.from && /^vid:(\d{7,11})(?::(10|[1-9]))?$/.exec(String(press.data || ""));
+  if (vid) {
     await sendTelegram(env, "answerCallbackQuery", { callback_query_id: press.id }).catch(() => false);
-    return requestVideo(env, (m, b) => tgCall(env, m, b), { user: press.from.id, match: Number(press.data.slice(4)), owner: isOwner(env, press.from.id) }, now);
+    return requestVideo(env, (m, b) => tgCall(env, m, b), { user: press.from.id, match: Number(vid[1]), pick: vid[2] ? Number(vid[2]) : null, owner: isOwner(env, press.from.id) }, now);
   }
   const msg = update && update.message;
   // пати-чаты: ID катки в группе — карточка «Кто слил» на всех (worker/party.js)

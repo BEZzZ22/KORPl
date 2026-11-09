@@ -13,6 +13,12 @@ const VIDEO_REF = "claude/opus-55-capabilities-limits-ekkxhj";
 const mskDay = (now) => new Date(now + 3 * 3600_000).toISOString().slice(0, 10);
 
 export const VIDEO_BUTTON = (id) => ({ text: "Видеоразбор", callback_data: `vid:${id}` });
+// Владельцу: выбрать игрока в чужой катке. Места 1–5 — Свет, 6–10 — Тьма
+export const slotKeyboard = (match) => ({ inline_keyboard: [0, 1].map((r) => Array.from({ length: 5 }, (_, i) => {
+  const n = r * 5 + i + 1;
+  return { text: `${r ? "Тьма" : "Свет"} ${i + 1}`, callback_data: `vid:${match}:${n}` };
+})) });
+const isOwnerId = (env, id) => String(env.OWNER_TG_IDS || "").split(",").map((x) => x.trim()).includes(String(id));
 export const VIDEO_HELP = "Видеоразбор: напиши /video и номер матча — пришлю ролик на минуту с главными моментами катки на карте, с озвучкой.";
 
 // «/video 9079943457», «/video <ссылка>», владелец может добавить место игрока 1–10: «/video 9079943457 6»
@@ -65,6 +71,11 @@ export async function requestVideo(env, tg, { user, match, pick = null, owner = 
   const profile = await env.COACH_KV.get(`user:${user}`, "json").catch(() => null);
   const account = Number(profile && profile.account_id) || null;
   const slot = owner && pick ? pick - 1 : null;
+  // владелец без привязанного аккаунта и без места: сразу спрашиваем, чей ролик
+  if (owner && !account && slot === null) {
+    await say(`Чей ролик по матчу ${match}? Выбери место игрока.`, { reply_markup: slotKeyboard(match) });
+    return { video: "pick" };
+  }
   if (!account && slot === null) {
     await say("Чтобы я знал, кто ты в этой катке, сначала привяжи аккаунт: кинь сюда свой Friend ID (цифры из профиля Доты). Потом повтори /video.");
     return { video: "no_account" };
@@ -110,7 +121,10 @@ export async function videoDone(env, tg, body, now = Date.now()) {
     const dayKey = `vday:${user}:${mskDay(now)}`;
     const used = Number(await env.COACH_KV.get(dayKey)) || 0;
     if (used > 0) await env.COACH_KV.put(dayKey, String(used - 1), { expirationTtl: 2 * 86400 });
-    await tg("sendMessage", { chat_id: user, text: `Видеоразбор матча ${match} не получился: ${WHY[body.why] || "что-то сломалось на сборке, уже смотрим"}. Обычный разбор в приложении работает.` });
+    // владельца в чужой катке нет: не отказ, а выбор игрока кнопками
+    if (body.why === "not_in_match" && isOwnerId(env, user)) {
+      await tg("sendMessage", { chat_id: user, text: `Тебя нет в матче ${match}. Чей ролик сделать? Выбери место игрока.`, reply_markup: slotKeyboard(match) });
+    } else await tg("sendMessage", { chat_id: user, text: `Видеоразбор матча ${match} не получился: ${WHY[body.why] || "что-то сломалось на сборке, уже смотрим"}. Обычный разбор в приложении работает.` });
   }
   return { ok: true, had: Boolean(had) };
 }

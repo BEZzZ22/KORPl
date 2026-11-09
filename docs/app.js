@@ -1494,7 +1494,7 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false, 
   const lite = !isParsed(match);
   // Сначала выясняем, чей это матч, и только потом ждём реплей: иначе скрытый профиль и «не твоя игра»
   // узнавали об этом через 30 с крутилки (живая проверка 03.11)
-  let player = null, saved = 0;
+  let player = null, saved = 0, foreign = false;
   if (!player && accountId) player = match.players.find((p) => p.account_id === accountId);
   if (!player) {
     saved = Number(await storage.get("account_id"));
@@ -1504,18 +1504,25 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false, 
   // Профиль скрыт («Expose Public Match Data» выключен): в матче человек анонимный, а таких почти половина
   // (живая проверка 02.11). Решение Ярика 03.11: даём выбрать своего героя, но только среди скрытых игроков —
   // открытые чужие профили так не разобрать. Выбор помним на устройстве
-  if (!player && saved && !demo) {
-    const hidden = match.players.filter(isHidden);
+  // Владелец (решение Ярика 10.11) разбирает любые катки: выбирает любого из десяти. Признак владельца — от воркера
+  // по подписи Телеграма (кошелёк, owner), не по привязанному аккаунту
+  const owner = !player && !demo && Boolean((await getWallet()) || {}).owner;
+  if (stale(seq)) return;
+  if (!player && (saved || owner) && !demo) {
+    const hidden = owner ? match.players : match.players.filter(isHidden);
     const chosen = slot != null ? slot : safeLocal.get(`pick:${matchId}`);
     const mine = chosen != null && chosen !== "" ? hidden.find((p) => p.player_slot === Number(chosen)) : null;
     if (mine) {
       // дальше разбор, «Кто слил», карта и история ищут игрока по аккаунту: в копии матча пишем ему привязанный
-      match = { ...match, players: match.players.map((p) => (p === mine ? { ...p, account_id: saved } : p)) };
+      // у владельца в чужой катке аккаунта может не быть: тогда метка, которой нет ни у кого в матче
+      const acc = saved || OWNER_PICK;
+      match = { ...match, players: match.players.map((p) => (p === mine ? { ...p, account_id: acc } : p)) };
       player = match.players.find((p) => p.player_slot === mine.player_slot);
       safeLocal.set(`pick:${matchId}`, String(mine.player_slot));
+      if (owner) foreign = true;
     } else if (hidden.length) {
-      step("pick_hidden");
-      pickHidden(matchId, match, hidden, accountId, demo);
+      step(owner ? "pick_any" : "pick_hidden");
+      pickHidden(matchId, match, hidden, accountId, demo, owner);
       return;
     }
   }
@@ -1564,6 +1571,8 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false, 
   // для блока «Обычно у тебя»: сырые цифры этой игры и чей аккаунт
   rawOf.set(a, { match, replay });
   a.demo = demo;
+  // чужая катка владельца: в историю, задачи, сравнение и серию дней не пишем
+  a.foreign = foreign;
   if (a.lite) a.reopen = () => go(matchScreen, matchId, slot, accountId, 0, demo);
   a.hist_self = { account: player.account_id, duration: match.duration, kills: player.kills, deaths: player.deaths,
     assists: player.assists, gold_per_min: player.gold_per_min, xp_per_min: player.xp_per_min, last_hits: player.last_hits };
@@ -1620,9 +1629,10 @@ function canMessage() {
 }
 
 const isHidden = (p) => !p.account_id || p.account_id === 4294967295;
+const OWNER_PICK = 4294967294; // аккаунт выбранного игрока в чужой катке владельца, если свой не привязан
 
 // Привязанного аккаунта в матче нет, но есть игроки со скрытым профилем: человек выбирает своего героя
-function pickHidden(matchId, match, hidden, accountId, demo) {
+function pickHidden(matchId, match, hidden, accountId, demo, any = false) {
   const seq = navSeq;
   const row = (p) => {
     const won = (p.player_slot < 128) === match.radiant_win;
@@ -1637,6 +1647,14 @@ function pickHidden(matchId, match, hidden, accountId, demo) {
         h("div", {}, dictionary.heroName(p.hero_id)),
         h("div", { class: "small muted" }, `${p.player_slot < 128 ? "Свет" : "Тьма"} · ${won ? "победа" : "поражение"} · ${p.kills}/${p.deaths}/${p.assists}`))));
   };
+  if (any) {
+    render(
+      h("h1", {}, "Чью игру разбираем?"),
+      h("p", { class: "muted" }, "Тебя в этом матче нет. Выбери любого игрока — разберу катку за него, целиком."),
+      ...hidden.map(row),
+      h("button", { type: "button", class: "ghost", onclick: () => navRoot("home", homeScreen) }, "На главную"));
+    return;
+  }
   render(
     h("h1", {}, "Каким героем ты играл?"),
     h("p", { class: "muted" }, "В этом матче твой профиль скрыт, поэтому сам я тебя не нашёл. Выбери своего героя — разберу катку."),
@@ -1755,7 +1773,7 @@ function lockedTab(a, onOpen) {
 
 function analysisScreen(a) {
   step("analysis");
-  if (!a.demo) step("match_real"); // серия дней и бонус по приглашению (воркер, worker/growth.js)
+  if (!a.demo && !a.foreign) step("match_real"); // серия дней и бонус по приглашению (воркер, worker/growth.js)
   section = "match";
   lastAnalysis = a;
   const f = a.facts;
@@ -1828,8 +1846,8 @@ function analysisScreen(a) {
   } : null;
   // пример — чужая катка: в задачи, сравнение и облако её не пишем
   // быстрый разбор (без реплея) в историю, задачи и сравнение не пишем: там нет половины цифр
-  if (COACH_URL && !a.demo && !a.lite) rememberForCompare(a);
-  if (a._goalResult === undefined && !a.demo && !a.lite) { a._goalResult = trackProgress(a); if (a.hist_self) syncSoon(a.hist_self.account); }
+  if (COACH_URL && !a.demo && !a.lite && !a.foreign) rememberForCompare(a);
+  if (a._goalResult === undefined && !a.demo && !a.lite && !a.foreign) { a._goalResult = trackProgress(a); if (a.hist_self) syncSoon(a.hist_self.account); }
   TABS.forEach(([name]) => tabs.append(h("button", { class: "tab", role: "tab" }, name)));
   lens = glassBar(tabs, ".tab", { live: true, onPick: select, scroll: true });
   // Свайп по содержимому листает вкладки; графики со своим жестом не трогаем
