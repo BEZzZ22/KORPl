@@ -1,0 +1,84 @@
+# Видеоразбор катки: ролик 60–90 секунд с главными моментами на карте, с озвучкой. Без нейросетей: tools/video/.
+# Человек пишет боту «/video <матч>» — воркер ставит заявку (worker/video.js) и запускает этот workflow.
+# Здесь: реплей у Valve → парсер OpenDota (docker) → моменты, текст, голос (Vosk TTS), рендер в Chrome → sendVideo.
+# Ручной запуск с номером матча — проверочный: ролик ложится в артефакты прогона и никому не отправляется.
+# Секреты: BOT_TOKEN (отправка ролика), CLOUDFLARE_API_TOKEN (из него ключ очереди воркера, как у выгрузки OpenDota).
+name: Видеоразбор
+
+on:
+  workflow_dispatch:
+    inputs:
+      match_id:
+        description: "Проверка: номер матча (пусто — разобрать очередь)"
+        required: false
+      slot:
+        description: "Проверка: место игрока 1–10 (1–5 Свет, 6–10 Тьма)"
+        required: false
+        default: "1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: video
+  cancel-in-progress: false
+
+jobs:
+  video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      # клон без роликов промо: нужны только инструменты, картинки карты и героев, шрифты
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            tools
+            docs/img
+            promo/motion/common/fonts
+          sparse-checkout-cone-mode: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Голос диктора (кэш модели)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/vosk
+            ~/.cache/huggingface
+          key: vosk-tts-ru-0.9-multi
+
+      - name: Зависимости
+        run: |
+          npm ci --no-audit --no-fund
+          pip install -q vosk-tts soundfile numpy huggingface_hub
+          command -v ffmpeg >/dev/null || (sudo apt-get update -q && sudo apt-get install -y -q ffmpeg)
+          if command -v google-chrome >/dev/null; then echo "PW_EXEC=$(command -v google-chrome)" >> "$GITHUB_ENV"; else npx playwright install --with-deps chromium; fi
+
+      - name: Парсер OpenDota
+        run: |
+          docker run -d --name parser -p 5600:5600 odota/parser
+          for i in $(seq 1 60); do curl -s -o /dev/null http://localhost:5600/healthz && break; sleep 2; done
+
+      - name: Ролики
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TEST_MATCH: ${{ inputs.match_id }}
+          TEST_SLOT: ${{ inputs.slot }}
+        run: node tools/video/job.mjs
+
+      - name: Проверочный ролик в артефакты
+        if: ${{ inputs.match_id != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: video
+          path: |
+            out/*/*.mp4
+            out/*/work/script.json
+          retention-days: 3

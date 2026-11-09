@@ -46,6 +46,7 @@ GitHub Actions ─> tools/*.py|mjs ─> YouTube / TikTok / VK / Instagram / TG-�
 | Рефералку, серию дней, сводку недели, «серия сгорит» | `worker/growth.js` |
 | Пуш после катки, выгрузку OpenDota через Actions | `worker/relay.js` + `tools/od-relay.mjs` |
 | Вход через Steam | кнопка `steamButton` в `docs/app.js`, возврат — `docs/steam.html` (ссылка `startapp=l<steamID64>`) |
+| Видеоразбор катки (ролик 60–90 с, без нейросетей) | `tools/video/` (`make.mjs` — весь конвейер: `extract` → `moments` → `script` + `texts.json` → `tts.py` → `timeline` → `film/` → `audio.py`), заявки и очередь — `worker/video.js`, сборка — workflow «Видеоразбор» |
 | Защиту чата @dotarazbor_chat | `worker/chatguard.js` |
 | Ежедневный отчёт по юзерам | `worker/coach.js` → `buildReport` / `dailyReport` |
 | Справочники OpenDota (`items.json`, `abilities.json`, `builds.json`, `counterpick.json`) | генераторы `tools/fetch-*.mjs`, обновляет workflow «Сборки героев» |
@@ -53,7 +54,7 @@ GitHub Actions ─> tools/*.py|mjs ─> YouTube / TikTok / VK / Instagram / TG-�
 | Загрузку на площадки | `tools/promo_yt.py`, `promo_tt.py`, `promo_vk.py`, `promo_ig.py`, `promo-post.mjs` / `promo_userbot.py` (TG-канал) |
 | Посмотреть чужой ролик по ссылке (кадры + речь) | скилл `.claude/skills/watch/` (`watch.py`: yt-dlp, ffmpeg, faster-whisper) |
 
-Маршруты воркера (`worker/coach.js`, `fetch`): `POST /` с `mode` = `card`, `sync`, `track`, `gate`, `vanity`, `feedback`, `replay`, `watch`, `wallet`, `buy`, `pay_link`, `open`, `ref_match`, `web_wallet`, `web_buy`, `chat`, `compare` (без `mode` — разбор тренером); `POST /tg` — вебхук бота; `GET`/`POST /relay` — выгрузка OpenDota (ключ — RELAY_KEY из токена Cloudflare); `POST /robokassa` — оплата картой; `GET /od/*` — запасной путь к OpenDota; `GET /stats`, `/replay-queue`, `/card/<id>.png`; `POST /report`.
+Маршруты воркера (`worker/coach.js`, `fetch`): `POST /` с `mode` = `card`, `sync`, `track`, `gate`, `vanity`, `feedback`, `replay`, `watch`, `wallet`, `buy`, `pay_link`, `open`, `ref_match`, `web_wallet`, `web_buy`, `chat`, `compare` (без `mode` — разбор тренером); `POST /tg` — вебхук бота; `GET`/`POST /relay` — выгрузка OpenDota (ключ — RELAY_KEY из токена Cloudflare); `POST /robokassa` — оплата картой; `GET`/`POST /video-queue` — очередь видеоразборов для Actions (тот же ключ); `GET /od/*` — запасной путь к OpenDota; `GET /stats`, `/replay-queue`, `/card/<id>.png`; `POST /report`.
 
 Ключи хранилища (префиксы): `user:` профиль, `seen:` первый заход и источник, `wallet:` `pay:` `paid:` `robo:` `unl:` деньги (только D1, без запасного KV — `MONEY` в `store.js`), `ask:` лимиты вопросов, `watch:` подписки «разбор готов», `rq:` очередь реплеев, `streak:` серия, `refm:` катка, которую откроет бонус за друга, `top:` `topdone:` `notop:` топ недели в чате, `digest:` сводка недели, `pq:` `odreq:` `relay_*` выгрузка OpenDota, `lastm:` `pushlast:` `nopush:` пуш после катки (не чаще раза в 60 ч), `cg*:` защита чата.
 
@@ -105,6 +106,7 @@ Python-скрипты в `tools/` ставят свои зависимости �
 | Инстаграм рилсы | `ig.yml` | вручную | рилсы из `ig_queue.json` |
 | Выгрузка OpenDota | `od-relay.yml` | дежурит постоянно (воркер сам запускает) | приносит воркеру данные OpenDota: пати-чаты, «разобран», пуши, сводка |
 | Разбор реплеев | `replays.yml` | каждые 10 мин | парсит реплеи из очереди воркера, итог в ветку `replays` |
+| Видеоразбор | `video.yml` | по заявке из бота (воркер сам запускает); вручную с номером матча — проверка, ролик в артефактах | качает реплей, собирает ролик и шлёт человеку |
 | Статистика Shorts | `yt-stats.yml` | 09:20 МСК | просмотры и досмотр владельцу в Телеграм |
 | Сборки героев | `builds.yml` | по понедельникам | обновляет справочники в `docs/` |
 | Воркер тренера | `worker.yml` | при пуше в `worker/` | деплой воркера и его секретов |
