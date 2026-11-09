@@ -32,6 +32,7 @@ jobs:
       - name: Дежурство
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          GH_TOKEN: ${{ github.token }}   # запуск workflow «Видеоразбор», когда в очереди воркера ждут ролики
         run: node tools/od-relay.mjs
       - name: Следующее дежурство
         if: success()

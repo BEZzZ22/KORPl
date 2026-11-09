@@ -11,7 +11,7 @@ import { kickShorts } from "./kick.js";
 import { handlePartyMessage } from "./party.js";
 import { broadcastStep, replyStep } from "./broadcast.js";
 import { relayTasks, relayRun, kickRelay, ODREQ_PREFIX } from "./relay.js";
-import { requestVideo, resumeVideo, parseVideoCommand, videoQueue, videoDone, checkVideo, VIDEO_BUTTON, VIDEO_HELP } from "./video.js";
+import { requestVideo, resumeVideo, parseVideoCommand, videoPending, videoQueue, videoDone, checkVideo, VIDEO_BUTTON, VIDEO_HELP } from "./video.js";
 import { matchFromText, matchButton, MATCH_TEXT, accountFromText, linkButton, LINK_TEXT, OD_HEADERS, noteReferral, rewardReferral, referralFromStart, noteStartSource, bumpStreak, growthView, streakReminders, inlineAnswer, noteRefMatch } from "./growth.js";
 import { CHAT_ID, handleChatUpdate, chatChores, chatStatus, releaseIfPending } from "./chatguard.js";
 import { spendUnit, openMatch, spendChat, isOpen, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT, loginUser, roboLink, roboResult, robokassaOn, payUrl, tokenUser } from "./pay.js";
@@ -2120,7 +2120,7 @@ export default {
       const okKey = (k) => Boolean(k) && auth === `Bearer ${k}`;
       if (!env.BOT_TOKEN || !env.COACH_KV || !(okKey(env.RELAY_KEY) || okKey(env.BOT_TOKEN))) return new Response("Нельзя.", { status: 403 });
       const json = (x) => new Response(JSON.stringify(x), { headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } });
-      if (request.method === "GET") return json(await relayTasks(env));
+      if (request.method === "GET") return json({ ...(await relayTasks(env)), video: await videoPending(env).catch(() => 0) });
       let body;
       try { body = JSON.parse(await request.text()); } catch { return new Response("Не JSON.", { status: 400 }); }
       return json(await relayRun(env, (m, b) => tgCall(env, m, b), body, Date.now(), { checkWatches }));

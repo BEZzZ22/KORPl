@@ -175,3 +175,21 @@ test("видео: игрок находится по слоту, player_slot, а
   const p = plan(data, ME), film = buildTimeline(data, p.found, p.script);
   assert.match(caption(film, 123), /матча 123: Снайпер, 19\/10\/17/);
 });
+
+test("дежурный запускает сборку видеоразбора, только когда ждут ролики и сборка не идёт", async () => {
+  const { kickVideo } = await import("../tools/od-relay.mjs");
+  const calls = [];
+  const gh = (busy) => async (url, init = {}) => {
+    calls.push(`${init.method || "GET"} ${url.split("/video.yml")[1]}`);
+    return { ok: true, status: 200, json: async () => ({ total_count: busy && url.includes("in_progress") ? 1 : 0 }) };
+  };
+  const opts = { token: "t", repo: "o/r", ref: "main" };
+  assert.equal(await kickVideo(0, { ...opts, now: 1e9, fetcher: gh(false) }), false);
+  assert.equal(calls.length, 0);
+  assert.equal(await kickVideo(2, { ...opts, now: 1e9, fetcher: gh(true) }), false);
+  assert.ok(!calls.some((c) => c.startsWith("POST")));
+  // следующая проверка не раньше чем через минуту
+  assert.equal(await kickVideo(2, { ...opts, now: 1e9 + 5000, fetcher: gh(false) }), false);
+  assert.equal(await kickVideo(2, { ...opts, now: 1e9 + 61000, fetcher: gh(false) }), true);
+  assert.ok(calls.includes("POST /dispatches"));
+});
