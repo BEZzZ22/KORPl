@@ -2136,6 +2136,25 @@ export default {
       try { body = JSON.parse(await request.text()); } catch { return new Response("Не JSON.", { status: 400 }); }
       return json(await videoDone(env, (m, b) => tgCall(env, m, b), body));
     }
+    // Готовый ролик от Actions: токен бота есть только здесь, поэтому форму sendVideo пересылаем в Телеграм как есть, потоком
+    if (new URL(request.url).pathname === "/video-send" && request.method === "POST") {
+      const auth = request.headers.get("Authorization") || "";
+      if (!env.BOT_TOKEN || !env.RELAY_KEY || auth !== `Bearer ${env.RELAY_KEY}`) return new Response("Нельзя.", { status: 403 });
+      let res;
+      if (new URL(request.url).searchParams.get("owner")) {
+        // проверочный прогон: ролик владельцу, его id знает только воркер
+        const form = await request.formData().catch(() => null);
+        const owner = String(env.OWNER_TG_IDS || "").split(",").map((x) => x.trim()).filter(Boolean)[0];
+        if (!form || !owner) return new Response("Некому.", { status: 400 });
+        form.set("chat_id", owner);
+        res = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendVideo`, { method: "POST", body: form }).catch(() => null);
+      } else {
+        res = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendVideo`, {
+          method: "POST", headers: { "Content-Type": request.headers.get("Content-Type") || "" }, body: request.body, duplex: "half",
+        }).catch(() => null);
+      }
+      return new Response(res && res.ok ? "ok" : "Телеграм не принял.", { status: res && res.ok ? 200 : 502 });
+    }
     // картинки Dota через воркер: до антиддоса, на экране их десятки
     if (request.method === "GET" && new URL(request.url).pathname.startsWith("/img/")) return proxySteamImage(new URL(request.url));
     // запасной путь к OpenDota: свой лимит без банов, чтобы сбой OpenDota не забанил человека и у тренера

@@ -33,7 +33,11 @@ async function sendVideo(chat, file, film, match) {
   form.set("width", String(film.W)); form.set("height", String(film.H)); form.set("duration", String(Math.round(film.duration)));
   form.set("supports_streaming", "true");
   form.set("reply_markup", JSON.stringify({ inline_keyboard: [[{ text: "Открыть разбор катки", url: `https://t.me/DotaRazbor_bot?startapp=m${match}` }]] }));
-  const res = await fetch(`https://api.telegram.org/bot${BOT}/sendVideo`, { method: "POST", body: form, signal: AbortSignal.timeout(180000) });
+  // токена бота в секретах Actions может не быть (он живёт в воркере): тогда ролик уходит через воркер, тем же ключом, что очередь
+  const res = BOT && chat !== "owner"
+    ? await fetch(`https://api.telegram.org/bot${BOT}/sendVideo`, { method: "POST", body: form, signal: AbortSignal.timeout(180000) })
+    : await fetch(`${WORKER}/video-send${chat === "owner" ? "?owner=1" : ""}`, { method: "POST", headers: { Authorization: `Bearer ${KEY}` }, body: form, signal: AbortSignal.timeout(180000) });
+  if (!res.ok) log(`отправка: ответ ${res.status}`);
   return res.ok;
 }
 
@@ -59,11 +63,13 @@ export async function runJob(job, { send = true } = {}) {
 async function main() {
   if (process.env.TEST_MATCH) {
     const slot = Number(process.env.TEST_SLOT || 1) - 1;
-    const r = await runJob({ match: Number(process.env.TEST_MATCH), slot }, { send: false });
+    // «владельцу»: ролик уходит через воркер тому, кто записан владельцем бота, — проверка доставки целиком
+    const toOwner = process.env.TEST_TO_OWNER === "да";
+    const r = await runJob({ match: Number(process.env.TEST_MATCH), slot, user: "owner" }, { send: toOwner });
     log(r.ok ? "проверочный ролик готов" : `не вышло: ${r.why}`);
     process.exit(r.ok ? 0 : 1);
   }
-  if (!KEY || !BOT) { log("нет ключа воркера или токена бота"); process.exit(1); }
+  if (!KEY) { log("нет ключа воркера"); process.exit(1); }
   const tried = new Set();
   // после последней заявки ещё пару минут слушаем очередь: вторая просьба не ждёт нового запуска
   let idleUntil = Date.now() + 2 * 60 * 1000;

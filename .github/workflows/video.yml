@@ -2,7 +2,7 @@
 # Человек пишет боту «/video <матч>» — воркер ставит заявку (worker/video.js) и запускает этот workflow.
 # Здесь: реплей у Valve → парсер OpenDota (docker) → моменты, текст, голос (Vosk TTS), рендер в Chrome → sendVideo.
 # Ручной запуск с номером матча — проверочный: ролик ложится в артефакты прогона и никому не отправляется.
-# Секреты: BOT_TOKEN (отправка ролика), CLOUDFLARE_API_TOKEN (из него ключ очереди воркера, как у выгрузки OpenDota).
+# Секреты: CLOUDFLARE_API_TOKEN (из него ключ воркера: очередь и отправка ролика через воркер). BOT_TOKEN не обязателен.
 name: Видеоразбор
 
 on:
@@ -15,6 +15,9 @@ on:
         description: "Проверка: место игрока 1–10 (1–5 Свет, 6–10 Тьма)"
         required: false
         default: "1"
+      to_owner:
+        description: "Проверка: да — прислать ролик владельцу бота через воркер"
+        required: false
 
 permissions:
   contents: read
@@ -71,6 +74,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           TEST_MATCH: ${{ inputs.match_id }}
           TEST_SLOT: ${{ inputs.slot }}
+          TEST_TO_OWNER: ${{ inputs.to_owner }}
         run: node tools/video/job.mjs
 
       - name: Проверочный ролик в артефакты
