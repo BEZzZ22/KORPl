@@ -105,3 +105,42 @@ test("видео: бот — команда /video и кнопка под кар
     assert.ok(await env.COACH_KV.get("vq:8123456790:5"));
   } finally { globalThis.fetch = realFetch; }
 });
+
+test("видео: владелец в чужой катке выбирает игрока кнопками", async () => {
+  const { env, sent, tg } = setup();
+  // без аккаунта и без места — сразу кнопки, заявки нет
+  assert.deepEqual(await requestVideo(env, tg, { user: 9, match: 8123456789, owner: true }, NOW), { video: "pick" });
+  const kb = sent[0].reply_markup.inline_keyboard;
+  assert.equal(kb.flat().length, 10);
+  assert.equal(kb[1][0].callback_data, "vid:8123456789:6");
+  assert.deepEqual((await videoQueue(env, NOW)).jobs, []);
+  // с аккаунтом, а его в матче нет — вместо отказа кнопки
+  await env.COACH_KV.put("user:9", JSON.stringify({ account_id: 777 }));
+  assert.equal((await requestVideo(env, tg, { user: 9, match: 8123456789, owner: true }, NOW)).video, "queued");
+  sent.length = 0;
+  await videoDone(env, tg, { match: 8123456789, user: 9, status: "error", why: "not_in_match" }, NOW);
+  assert.match(sent[0].text, /Чей ролик/);
+  assert.equal(sent[0].reply_markup.inline_keyboard.flat().length, 10);
+  // обычному человеку — прежний отказ без кнопок
+  await env.COACH_KV.put("user:5", JSON.stringify({ account_id: 778 }));
+  await requestVideo(env, tg, { user: 5, match: 8123456789 }, NOW);
+  sent.length = 0;
+  await videoDone(env, tg, { match: 8123456789, user: 5, status: "error", why: "not_in_match" }, NOW);
+  assert.match(sent[0].text, /не получился/);
+  assert.equal(sent[0].reply_markup, undefined);
+});
+
+test("видео: кнопка с местом игрока — место берётся только у владельца", async () => {
+  const { env } = setup();
+  await env.COACH_KV.put("user:5", JSON.stringify({ account_id: 778 }));
+  const press = (from, data) => ({ update_id: 1, callback_query: { id: "q", from: { id: from }, data, message: { chat: { id: from } } } });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ ok: true, result: {} }), { headers: { "Content-Type": "application/json" } });
+  try {
+    await handleBotUpdate(env, press(9, "vid:8123456789:6"), NOW);
+    await handleBotUpdate(env, press(5, "vid:8123456780:6"), NOW);
+  } finally { globalThis.fetch = realFetch; }
+  const jobs = (await videoQueue(env, NOW)).jobs;
+  assert.deepEqual(jobs.find((j) => j.user === 9), { match: 8123456789, user: 9, account: null, slot: 5 });
+  assert.deepEqual(jobs.find((j) => j.user === 5), { match: 8123456780, user: 5, account: 778, slot: null });
+});
