@@ -376,5 +376,18 @@
   "to": "ryabchickk",
   "reply": true,
   "text": "Разбор готовим, пришлю сегодня."
+ },
+ {
+  "id": "r20-ryabchickk-razbor",
+  "from": "main",
+  "to": "ryabchickk",
+  "reply": true,
+  "files": [
+   "promo/review/9079943457/review.jpg",
+   "promo/review/9079943457/phases.jpg",
+   "promo/review/9079943457/killers.jpg",
+   "promo/review/9079943457/order.jpg"
+  ],
+  "text": "Держи разбор твоей катки на снайпере. Глянь, что скажешь. Свой в приложении можно открыть, кинув ID боту @DotaRazbor_bot."
  }
 ]
