@@ -47,10 +47,16 @@ jobs:
             acc=$(python3 -c "import json;m=json.load(open('m.json'));print(next((p.get('account_id') for p in m['players'] if p['hero_id']==$HERO and p.get('account_id')),''))")
           fi
           echo "account=$acc"
-          ACCOUNT="$acc" node tools/ui-live.mjs "$MATCH" overview,phases,deaths,build
-          python tools/promo_images.py "$MATCH" review,phases,killers,order
+          ACCOUNT="$acc" node tools/ui-live.mjs "$MATCH" overview,phases,deaths,build || true
+          # без парса реплея вкладок «Фазы» и «Смерти» нет: берём карточки только с тех экранов, что сняты
+          shots=$(ls tests/ui/live/$MATCH/*.png | xargs -n1 basename | sed 's/.png//')
+          only=""
+          for s in $shots; do
+            case $s in overview) only="$only,review";; build) only="$only,order,early";; phases) only="$only,phases,lane";; deaths) only="$only,killers,deathmap";; esac
+          done
+          python tools/promo_images.py "$MATCH" "${only#,}"
           mkdir -p "out/review/$MATCH"
-          cp promo/img/review.jpg promo/img/phases.jpg promo/img/killers.jpg promo/img/order.jpg "out/review/$MATCH/"
+          for n in ${only//,/ }; do cp promo/img/$n.jpg "out/review/$MATCH/"; done
       - name: В ветку очереди
         env:
           MATCH: ${{ inputs.match }}
