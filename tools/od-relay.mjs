@@ -65,8 +65,27 @@ async function worker(method, body) {
   return res.json();
 }
 
+// Ждут видеоразборы (worker/video.js), а сборка не идёт — запускаем workflow «Видеоразбор». Проверка не чаще раза в минуту
+let videoCheck = 0;
+export async function kickVideo(pending, { now = Date.now(), fetcher = fetch, token = process.env.GH_TOKEN, repo = process.env.GITHUB_REPOSITORY, ref = process.env.GITHUB_REF_NAME } = {}) {
+  if (!pending || !token || !repo || now - videoCheck < 60_000) return false;
+  videoCheck = now;
+  const headers = { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "User-Agent": "dotarazbor-relay", "X-GitHub-Api-Version": "2022-11-28" };
+  const base = `https://api.github.com/repos/${repo}/actions/workflows/video.yml`;
+  for (const status of ["in_progress", "queued", "pending", "waiting", "requested"]) {
+    const res = await fetcher(`${base}/runs?status=${status}&per_page=1`, { headers, signal: AbortSignal.timeout(20000) }).catch(() => null);
+    const body = res && res.ok ? await res.json().catch(() => null) : null;
+    if (!body) return false;          // GitHub не ответил: не плодим запуски вслепую
+    if (body.total_count > 0) return false;
+  }
+  const res = await fetcher(`${base}/dispatches`, { method: "POST", headers, body: JSON.stringify({ ref: ref || "claude/opus-55-capabilities-limits-ekkxhj" }), signal: AbortSignal.timeout(20000) }).catch(() => null);
+  console.log(`видеоразбор: ждут ${pending}, запуск сборки ${res && res.ok ? "прошёл" : `не прошёл (${res ? res.status : "сеть"})`}`);
+  return Boolean(res && res.ok);
+}
+
 async function round() {
   const task = await worker("GET");
+  await kickVideo(Number(task.video) || 0).catch(() => false);
   const data = {}, requested = [];
   let got = 0, miss = 0;
   for (const id of task.requests || []) {

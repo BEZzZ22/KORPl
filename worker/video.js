@@ -118,6 +118,17 @@ export async function videoQueue(env, now = Date.now()) {
   return { jobs: (await entries(env)).filter((x) => now - x.t < VIDEO_TTL).slice(0, 5).map(({ match, user, account, slot }) => ({ match, user, account, slot })) };
 }
 
+// Сколько заявок ждёт сборки: дежурный выгрузки (tools/od-relay.mjs) по этому числу запускает workflow «Видеоразбор».
+// Запуск от самого воркера (GH_TOKEN) — запасной: токен бывает просрочен, и заявка висела бы до ручного запуска
+export async function videoPending(env, now = Date.now()) {
+  if (!env.COACH_KV) return 0;
+  const last = Number(await env.COACH_KV.get("video_last")) || 0;
+  if (!last || now - last > VIDEO_TTL + 3600_000) return 0;
+  const n = (await videoQueue(env, now)).jobs.length;
+  if (!n) await env.COACH_KV.delete("video_last"); // очередь пуста: до новой заявки list не тратим
+  return n;
+}
+
 const WHY = {
   no_replay: "реплея нет. Valve хранит реплеи около двух недель, а свежему матчу нужно минут 10–15 после конца игры",
   not_in_match: "тебя нет среди игроков этого матча. Проверь номер матча и привязанный аккаунт",
