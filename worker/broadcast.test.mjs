@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { broadcastStep, BCAST_BATCH } from "./broadcast.js";
+import { broadcastStep, replyStep, BCAST_BATCH } from "./broadcast.js";
 
 function kv() {
   const m = new Map();
@@ -24,4 +24,18 @@ test("рассылка: каждому один раз, без владельц�
   assert.equal(new Set(sent).size, sent.length);
   assert.deepEqual([b.ok, b.fail, b.skip], [BCAST_BATCH + 3 - 2, 1, 1]);
   assert.equal(await broadcastStep(env, tg), null);
+});
+
+test("ответ от бота: одному, один раз, итог в reply_stat", async () => {
+  const store = kv(), env = { COACH_KV: store }, sent = [];
+  const tg = async (m, b) => { sent.push([m, b.chat_id, b.text]); return {}; };
+  assert.equal(await replyStep(env, tg), null);
+  await store.put("reply_job", JSON.stringify({ to: "42", text: "Привет" }));
+  assert.deepEqual(await replyStep(env, tg), { ok: true });
+  assert.deepEqual(sent, [["sendMessage", 42, "Привет"]]);
+  assert.equal(await store.get("reply_job"), null);
+  assert.equal((await store.get("reply_stat", "json")).ok, true);
+  await store.put("reply_job", JSON.stringify({ to: "abc", text: "x" }));
+  assert.deepEqual(await replyStep(env, tg), { ok: false });
+  assert.equal(sent.length, 1);
 });

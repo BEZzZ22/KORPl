@@ -9,7 +9,7 @@ import LORE from "./lore.json" with { type: "json" };
 import { withStore, migrateStep, purgeExpired } from "./store.js";
 import { kickShorts } from "./kick.js";
 import { handlePartyMessage } from "./party.js";
-import { broadcastStep } from "./broadcast.js";
+import { broadcastStep, replyStep } from "./broadcast.js";
 import { relayTasks, relayRun, kickRelay, ODREQ_PREFIX } from "./relay.js";
 import { matchFromText, matchButton, MATCH_TEXT, accountFromText, linkButton, LINK_TEXT, OD_HEADERS, noteReferral, rewardReferral, referralFromStart, noteStartSource, bumpStreak, growthView, streakReminders, inlineAnswer, noteRefMatch } from "./growth.js";
 import { CHAT_ID, handleChatUpdate, chatChores, chatStatus, releaseIfPending } from "./chatguard.js";
@@ -2171,6 +2171,7 @@ export default {
     chores.push(kickRelay(env, now).catch((e) => console.log(`выгрузка OpenDota: ${e && e.message || e}`)));
     chores.push(chatChores(env, (m, b) => tgCall(env, m, b), now).catch((e) => console.log(`чат: ${e && e.message || e}`)));
     chores.push(broadcastStep(env, (m, b) => tgCall(env, m, b), now).catch((e) => console.log(`рассылка: ${e && e.message || e}`)));
+    chores.push(replyStep(env, (m, b) => tgCall(env, m, b), now).catch((e) => console.log(`ответ от бота: ${e && e.message || e}`)));
     ctx.waitUntil(Promise.all([checkWatches(env), checkReplays(env), reportOnRequest(env), ensureWebhook(env), ...chores]));
   },
 };
