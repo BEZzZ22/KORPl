@@ -76,7 +76,7 @@ jobs:
           git config user.name "promo-bot"
           git config user.email "promo-bot@users.noreply.github.com"
           git fetch -q origin claude/project-thread-d0uspr
-          git checkout -q -B queue origin/claude/project-thread-d0uspr
+          git checkout -q -f -B queue origin/claude/project-thread-d0uspr
           mkdir -p "promo/review/$MATCH"
           cp out/review/$MATCH/*.jpg "promo/review/$MATCH/"
           git add promo/review
