@@ -4,13 +4,16 @@
 // Заявка — ключ vq:<матч>:<tg id> со значением { t, account, slot }. Очередь отдаётся только по ключу выгрузки:
 // в ней Telegram id.
 import { matchFromText } from "./growth.js";
+import { PACKS, spendVideo, giveVideo, invoiceLink, payUrl, robokassaOn } from "./pay.js";
 
 export const VIDEO_PREFIX = "vq:";
-export const VIDEO_PER_DAY = 2;            // роликов в сутки на человека (владельцу — без счёта)
+export const VIDEO_FREE_DAYS = 7;          // один бесплатный ролик раз в столько дней, дальше — платный (PACKS.video); владельцу — без счёта
+const WANT_TTL = 3600;                     // сколько помним, какой ролик человек хотел, пока он платит
+const weekKey = (user) => `vweek:${user}`;
+const wantKey = (user) => `vwant:${user}`;
 export const VIDEO_TTL = 3 * 3600 * 1000;  // заявка старше — Actions так и не справился, снимаем
 const VIDEO_WORKFLOW = "https://api.github.com/repos/BEZzZ22/KORPl/actions/workflows/video.yml/dispatches";
 const VIDEO_REF = "claude/opus-55-capabilities-limits-ekkxhj";
-const mskDay = (now) => new Date(now + 3 * 3600_000).toISOString().slice(0, 10);
 
 export const VIDEO_BUTTON = (id) => ({ text: "Видеоразбор", callback_data: `vid:${id}` });
 // Владельцу: выбрать игрока в чужой катке. Места 1–5 — Свет, 6–10 — Тьма
@@ -19,7 +22,7 @@ export const slotKeyboard = (match) => ({ inline_keyboard: [0, 1].map((r) => Arr
   return { text: `${r ? "Тьма" : "Свет"} ${i + 1}`, callback_data: `vid:${match}:${n}` };
 })) });
 const isOwnerId = (env, id) => String(env.OWNER_TG_IDS || "").split(",").map((x) => x.trim()).includes(String(id));
-export const VIDEO_HELP = "Видеоразбор: напиши /video и номер матча — пришлю ролик на минуту с главными моментами катки на карте, с озвучкой.";
+export const VIDEO_HELP = `Видеоразбор: напиши /video и номер матча — пришлю ролик на минуту с главными моментами катки на карте, с озвучкой. Один в неделю бесплатно, дальше ${PACKS.video.stars} звёзд или ${PACKS.video.rub} ₽ за ролик.`;
 
 // «/video 9079943457», «/video <ссылка>», владелец может добавить место игрока 1–10: «/video 9079943457 6»
 export function parseVideoCommand(text) {
@@ -83,14 +86,27 @@ export async function requestVideo(env, tg, { user, match, pick = null, owner = 
   }
   const key = `${VIDEO_PREFIX}${match}:${user}`;
   if (await env.COACH_KV.get(key)) { await say(`Ролик по матчу ${match} уже делается, пришлю сюда.`); return { video: "busy" }; }
-  const dayKey = `vday:${user}:${mskDay(now)}`;
-  const used = Number(await env.COACH_KV.get(dayKey)) || 0;
-  if (!owner && used >= VIDEO_PER_DAY) {
-    await say(`На сегодня видеоразборы закончились: ${VIDEO_PER_DAY} в сутки. Завтра сделаю ещё, а обычный разбор в приложении без лимита.`);
-    return { video: "limit" };
+  // чем платим за ролик: бесплатный раз в неделю, потом купленный со счёта; нет ни того, ни другого — счёт на оплату
+  let paid = "owner";
+  if (!owner) {
+    if (!(await env.COACH_KV.get(weekKey(user)))) paid = "free";
+    else if (await spendVideo(env, user)) paid = "credit";
+    else {
+      await env.COACH_KV.put(wantKey(user), JSON.stringify({ match, seat: slot }), { expirationTtl: WANT_TTL });
+      const p = PACKS.video;
+      const stars = await Promise.resolve(invoiceLink(tg, "video", String(user))).catch(() => null);
+      const card = robokassaOn(env) && env.BOT_TOKEN ? await payUrl(env.BOT_TOKEN, { id: user }, now).catch(() => null) : null;
+      const rows = [];
+      if (typeof stars === "string") rows.push([{ text: `Оплатить ${p.stars} звёзд`, url: stars }]);
+      if (card) rows.push([{ text: `Картой или СБП, ${p.rub} ₽`, url: card }]);
+      await say(`Бесплатный видеоразбор на этой неделе ты уже взял: он один раз в ${VIDEO_FREE_DAYS} дней. Ещё один ролик — ${p.stars} звёзд или ${p.rub} ₽. `
+        + `Оплатишь — сразу начну делать ролик по матчу ${match}.`, rows.length ? { reply_markup: { inline_keyboard: rows } } : {});
+      return { video: "pay" };
+    }
   }
-  await env.COACH_KV.put(key, JSON.stringify({ t: now, account, slot }), { expirationTtl: Math.ceil(VIDEO_TTL / 1000) + 3600 });
-  await env.COACH_KV.put(dayKey, String(used + 1), { expirationTtl: 2 * 86400 });
+  await env.COACH_KV.put(key, JSON.stringify({ t: now, account, slot, paid }), { expirationTtl: Math.ceil(VIDEO_TTL / 1000) + 3600 });
+  if (paid === "free") await env.COACH_KV.put(weekKey(user), String(now), { expirationTtl: VIDEO_FREE_DAYS * 86400 });
+  await env.COACH_KV.delete(wantKey(user));
   await env.COACH_KV.put("video_last", String(now), { expirationTtl: 86400 });
   const kicked = await kickVideo(env, now, 0);
   await say(`Делаю видеоразбор матча ${match}: качаю реплей, ищу ключевые моменты, рисую их на карте и озвучиваю. Ролик пришлю сюда минут через 5–10.`);
@@ -110,6 +126,20 @@ const WHY = {
   send: "ролик собрался, но Телеграм его не принял",
 };
 
+async function giveBack(env, user, raw) {
+  let paid = null;
+  try { paid = JSON.parse(raw).paid; } catch { /* старая заявка без отметки */ }
+  if (paid === "free") await env.COACH_KV.delete(weekKey(user));
+  if (paid === "credit") await giveVideo(env, user, 1);
+}
+
+// После оплаты: человек хотел ролик и упёрся в счёт — начинаем его делать сразу
+export async function resumeVideo(env, tg, user, now = Date.now()) {
+  const want = await env.COACH_KV.get(wantKey(user), "json").catch(() => null);
+  if (!want || !want.match) return null;
+  return requestVideo(env, tg, { user: Number(user), match: Number(want.match), seat: Number.isInteger(want.seat) ? want.seat : null }, now);
+}
+
 // Отметка от Actions (POST /video-queue): { match, user, status: "done" | "error", why }
 export async function videoDone(env, tg, body, now = Date.now()) {
   const match = Number(body && body.match), user = Number(body && body.user);
@@ -118,10 +148,8 @@ export async function videoDone(env, tg, body, now = Date.now()) {
   const had = await env.COACH_KV.get(key);
   await env.COACH_KV.delete(key);
   if (body.status !== "done" && had) {
-    // неудача не тратит дневной лимит
-    const dayKey = `vday:${user}:${mskDay(now)}`;
-    const used = Number(await env.COACH_KV.get(dayKey)) || 0;
-    if (used > 0) await env.COACH_KV.put(dayKey, String(used - 1), { expirationTtl: 2 * 86400 });
+    // неудача ничего не тратит: бесплатный ролик и купленный возвращаются
+    await giveBack(env, user, had);
     // владельца в чужой катке нет: не отказ, а выбор игрока кнопками
     if (body.why === "not_in_match" && isOwnerId(env, user)) {
       await tg("sendMessage", { chat_id: user, text: `Тебя нет в матче ${match}. Чей ролик сделать? Выбери место игрока.`, reply_markup: slotKeyboard(match) });
@@ -140,6 +168,7 @@ export async function checkVideo(env, tg, now = Date.now()) {
   let dropped = 0;
   for (const x of list) {
     if (now - x.t < VIDEO_TTL) continue;
+    await giveBack(env, x.user, await env.COACH_KV.get(x.key));
     await env.COACH_KV.delete(x.key);
     await tg("sendMessage", { chat_id: x.user, text: `Видеоразбор матча ${x.match} не успел собраться. Попробуй ещё раз: /video ${x.match}` });
     dropped++;

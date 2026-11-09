@@ -79,9 +79,9 @@
       b.type = "button";
       b.className = `pack${p.days ? " best" : ""}`;
       const title = document.createElement("span");
-      title.textContent = p.one ? "Один матч целиком" : p.days ? "Месяц тренера" : `${p.credits} ${plural(p.credits, "разбор", "разбора", "разборов")}`;
+      title.textContent = p.video ? "Видеоразбор катки" : p.one ? "Один матч целиком" : p.days ? "Месяц тренера" : `${p.credits} ${plural(p.credits, "разбор", "разбора", "разборов")}`;
       const sub = document.createElement("small");
-      sub.textContent = p.one ? "откроется катка, с которой пришёл" : p.days ? "до 10 разборов в сутки" : "не сгорают";
+      sub.textContent = p.video ? "ролик придёт в чат с ботом" : p.one ? "откроется катка, с которой пришёл" : p.days ? "до 10 разборов в сутки" : "не сгорают";
       const price = document.createElement("b");
       price.textContent = `${p.rub} ₽`;
       b.append(title, sub, price);

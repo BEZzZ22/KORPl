@@ -16,6 +16,9 @@ export const PACKS = {
   p1: { stars: 10, rub: 19, credits: 1, one: true, title: "Этот матч целиком", text: "Один матч целиком: фазы, смерти, карта, сборка, графики и ИИ-тренер с чатом по этой катке." },
   p10: { stars: 49, rub: 79, credits: 10, title: "10 полных разборов", text: "Десять матчей целиком: фазы, смерти, карта, сборка, графики и ИИ-тренер с чатом. Не сгорают." },
   month: { stars: 129, rub: 199, days: 30, title: "Полный разбор на месяц", text: "30 дней полного разбора и ИИ-тренера: до 10 матчей в сутки, чат по каждой катке и сравнения." },
+  // видеоразбор (10.11, решение Ярика): один в неделю бесплатно, дальше поштучно. Ролик кладётся на счёт (w.v),
+  // списывает его worker/video.js
+  video: { stars: 59, rub: 100, video: 1, title: "Видеоразбор катки", text: "Ролик на минуту по одной катке: главные моменты на карте, с озвучкой и советами. Придёт в чат с ботом." },
 };
 export const FREE_COACH = 1;
 export const SUB_PER_DAY = 10;
@@ -54,13 +57,24 @@ export async function giftCredits(env, id, n, now = Date.now()) {
   return walletView(await updateWallet(env, String(id), (w) => { w.c += n; }), now);
 }
 
+// Видеоразборы на счету: списать один (false — на счету пусто) и вернуть, если ролик не собрался
+export async function spendVideo(env, id) {
+  let ok = false;
+  await updateWallet(env, String(id), (w) => { if (!(w.v > 0)) return false; w.v -= 1; ok = true; });
+  return ok;
+}
+export async function giveVideo(env, id, n = 1) {
+  await updateWallet(env, String(id), (w) => { w.v = (w.v || 0) + n; });
+}
+
 // Что показать в приложении
 export function walletView(w, now = Date.now()) {
   const sub = w.until > now;
   return {
     credits: w.c, free_left: Math.max(0, FREE_COACH - w.free), until: sub ? w.until : 0,
     sub_left: sub ? Math.max(0, SUB_PER_DAY - (w.d === mskDay(now) ? w.n : 0)) : 0,
-    packs: Object.entries(PACKS).map(([id, p]) => ({ id, stars: p.stars, rub: p.rub, title: p.title, credits: p.credits || 0, days: p.days || 0, one: Boolean(p.one) })),
+    videos: w.v || 0,
+    packs: Object.entries(PACKS).map(([id, p]) => ({ id, stars: p.stars, rub: p.rub, title: p.title, credits: p.credits || 0, days: p.days || 0, one: Boolean(p.one), video: Boolean(p.video) })),
   };
 }
 
@@ -198,6 +212,7 @@ async function credit(env, id, pack, charge, rec, now) {
   try {
     w = await updateWallet(env, id, (w) => {
       if (p.credits) w.c += p.credits;
+      if (p.video) w.v = (w.v || 0) + p.video;
       if (p.days) w.until = Math.max(w.until, now) + p.days * DAY_MS;
     });
   } catch (e) {
@@ -302,6 +317,7 @@ export async function roboResult(env, form, now = Date.now()) {
 
 export function thanksText(pack, view) {
   const p = PACKS[pack];
+  if (p.video) return "Оплата прошла, спасибо! Видеоразбор на счету: напиши /video и номер матча или жми «Видеоразбор» под каткой.";
   if (p.days) return `Оплата прошла, спасибо! Тренер открыт до ${new Date(view.until + 3 * 3600_000).toISOString().slice(0, 10).split("-").reverse().join(".")}. Возвращайся в приложение и разбирай катки.`;
   if (p.one) return "Оплата прошла, спасибо! Вернись в приложение: катка, с которой ты пришёл, откроется сама. Если закрыл её — открой любую, разбор уже на счету.";
   return `Оплата прошла, спасибо! Разборов тренера на счету: ${view.credits}. Возвращайся в приложение и разбирай катки.`;
@@ -318,6 +334,7 @@ export async function refund(env, tg, charge, now = Date.now()) {
   const pack = PACKS[rec.p];
   await updateWallet(env, rec.u, (w) => {
     if (pack.credits) w.c = Math.max(0, w.c - pack.credits);
+    if (pack.video) w.v = Math.max(0, (w.v || 0) - pack.video);
     if (pack.days) w.until -= pack.days * DAY_MS;
   });
   await env.COACH_KV.put(`pay:${charge}`, JSON.stringify({ ...rec, refunded: now }));

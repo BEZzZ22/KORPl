@@ -806,7 +806,7 @@ test("платный тренер: 1 пробный разбор, дальше 4
   assert.equal(wall.status, 402);
   const body = await wall.json();
   assert.equal(body.paywall, true);
-  assert.deepEqual(body.wallet.packs.map((p) => p.id), ["p1", "p10", "month"]);
+  assert.deepEqual(body.wallet.packs.map((p) => p.id), ["p1", "p10", "month", "video"]);
   // чат по открытой катке — бесплатно, по закрытой — 402
   mockFetch({ claude: [sse("Ответ.")] });
   const chatOk = await worker.fetch(req({ mode: "chat", summary: { ...raw, match_id: 9000000001 }, question: "что делать на линии?", initData: user }), e);

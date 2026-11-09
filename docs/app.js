@@ -1620,9 +1620,10 @@ function videoButton(f) {
       const data = await postCoach({ mode: "video", match_id: f.match_id, seat, initData: tg.initData });
       status.textContent = data.video === "queued" ? "Делаю ролик. Придёт в чат с ботом минут через 5–10."
         : data.video === "busy" ? "Ролик по этой катке уже делается, придёт в чат с ботом."
-        : data.video === "limit" ? "На сегодня видеоразборы закончились, завтра сделаю ещё."
+        : data.video === "pay" ? "Бесплатный ролик на этой неделе уже был. Счёт на следующий — в чате с ботом."
         : "Загляни в чат с ботом: там ответ.";
       if (data.video !== "queued" && data.video !== "busy") btn.disabled = false;
+      if (data.video === "pay" && tg.close) setTimeout(() => tg.close(), 1800);
     } catch (e) { btn.disabled = false; status.textContent = coachError(e); }
   } },
     svg("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, svg("path", { d: "M5 4l14 8-14 8z" })),
@@ -2283,7 +2284,7 @@ const flameIcon = () => svg("svg", { class: "ic-flame", viewBox: "0 0 24 24", "a
 // matchId — катка, с которой пришли на замок: для «позови друга, и она откроется» (воркер запомнит её, mode ref_match)
 function paywallBlock(onPaid, text = "Бесплатный разбор уже был.", about = true, matchId = 0) {
   const status = h("p", { class: "small muted", role: "status" });
-  const packs = (walletState && walletState.packs) || [];
+  const packs = ((walletState && walletState.packs) || []).filter((p) => !p.video); // видеоразбор продаётся в боте, не в пейволе тренера
   const buy = async (pack, btn) => {
     // старый клиент: openInvoice в скрипте Телеграма есть, но бросает WebAppMethodUnsupported — выходило «нет связи»
     if (!tg || !tg.openInvoice || !(tg.isVersionAtLeast && tg.isVersionAtLeast("6.1"))) { status.textContent = "Оплата работает в приложении Телеграма. Обнови Телеграм."; return; }
@@ -2324,7 +2325,7 @@ function paywallBlock(onPaid, text = "Бесплатный разбор уже �
   };
   const packBox = h("div", { class: "paywall-packs" }, ...packs.map(packBtn));
   // кошелёк не успел прийти (сеть моргнула) — без пакетов купить было нечего: дотягиваем
-  if (!packs.length) getWallet(true).then((w) => { if (w && w.packs && !packBox.children.length) packBox.append(...w.packs.map(packBtn)); });
+  if (!packs.length) getWallet(true).then((w) => { if (w && w.packs && !packBox.children.length) packBox.append(...w.packs.filter((p) => !p.video).map(packBtn)); });
   // картой или СБП: страница оплаты на сайте во внешнем браузере, вход уже выполнен (ссылка с токеном на сутки)
   const card = walletState && walletState.cards && h("button", { class: "paywall-card", type: "button" }, "Картой или СБП (₽)");
   // Вернулся из браузера после оплаты картой: раньше экран оставался с замком и пакетами, пока не откроешь катку
