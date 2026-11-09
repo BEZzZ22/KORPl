@@ -1607,6 +1607,29 @@ function watchParse(matchId) {
   });
 }
 
+// «Видеоразбор»: ролик на минуту с главными моментами катки, собирается на сервере и приходит в чат с ботом
+function videoButton(f) {
+  const status = h("div", { class: "small muted", style: "margin-top:8px;text-align:center" });
+  const btn = h("button", { class: "share", type: "button", onclick: async () => {
+    haptic(); step("video_ask");
+    btn.disabled = true; status.textContent = "Отправляю заявку…";
+    try {
+      const can = await canMessage();
+      if (!can) { btn.disabled = false; status.textContent = "Разреши боту писать тебе: ролик придёт в чат с ним."; return; }
+      const seat = Number.isInteger(f.slot) ? (f.slot < 128 ? f.slot : f.slot - 128 + 5) : null;
+      const data = await postCoach({ mode: "video", match_id: f.match_id, seat, initData: tg.initData });
+      status.textContent = data.video === "queued" ? "Делаю ролик. Придёт в чат с ботом минут через 5–10."
+        : data.video === "busy" ? "Ролик по этой катке уже делается, придёт в чат с ботом."
+        : data.video === "limit" ? "На сегодня видеоразборы закончились, завтра сделаю ещё."
+        : "Загляни в чат с ботом: там ответ.";
+      if (data.video !== "queued" && data.video !== "busy") btn.disabled = false;
+    } catch (e) { btn.disabled = false; status.textContent = coachError(e); }
+  } },
+    svg("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, svg("path", { d: "M5 4l14 8-14 8z" })),
+    "Видеоразбор катки");
+  return h("div", {}, btn, status);
+}
+
 // Бот пишет в личку, только если человек ему это разрешил. Кто открыл приложение по ссылке (?startapp из «Поделиться»)
 // и ни разу не жал «Старт» у бота, не получил бы ни «разбор готов», ни «карта готова»: Телеграм молча не пропустит.
 // Спрашиваем один раз за запуск, в момент, когда сообщение понадобилось
@@ -1901,6 +1924,7 @@ function analysisScreen(a) {
           svg("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" },
             svg("path", { d: "M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v14" })),
           "Поделиться разбором"),
+        COACH_URL && tg && tg.initData && !a.demo && videoButton(f),
       ),
     ),
     h("div", { class: "tabs-wrap" }, tabs),

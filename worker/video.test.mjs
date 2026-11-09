@@ -144,3 +144,19 @@ test("видео: кнопка с местом игрока — место бе�
   assert.deepEqual(jobs.find((j) => j.user === 9), { match: 8123456789, user: 9, account: null, slot: 5 });
   assert.deepEqual(jobs.find((j) => j.user === 5), { match: 8123456780, user: 5, account: 778, slot: null });
 });
+
+test("заявка из приложения: место игрока без привязанного аккаунта", async () => {
+  const store = new Map();
+  const env = { COACH_KV: {
+    get: async (k, type) => { const v = store.get(k); return v == null ? null : type === "json" ? JSON.parse(v) : v; },
+    put: async (k, v) => { store.set(k, v); },
+    delete: async (k) => { store.delete(k); },
+    list: async () => ({ keys: [...store.keys()].filter((k) => k.startsWith("vq:")).map((name) => ({ name })), list_complete: true }),
+  } };
+  const sent = [];
+  const res = await requestVideo(env, async (m, b) => { sent.push(b); return true; }, { user: 42, match: 8123456789, seat: 7 }, 1e12);
+  assert.equal(res.video, "queued");
+  assert.equal(JSON.parse(store.get("vq:8123456789:42")).slot, 7);
+  const bad = await requestVideo(env, async () => true, { user: 43, match: 8123456789, seat: 12 }, 1e12);
+  assert.equal(bad.video, "no_account");
+});

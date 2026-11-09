@@ -255,7 +255,7 @@ export async function weeklyDigest(env, tg, now = Date.now(), fetcher = fetch, b
       const s = weekSummary(matches, now);
       if (!s) continue;
       await noteTop(env, week, id, s).catch(() => {});
-      if (await tg("sendMessage", { chat_id: Number(id), text: digestText(s), reply_markup: matchButton(s.worst.match_id, "Разобрать эту катку") })) sent++;
+      if (await tg("sendMessage", { chat_id: Number(id), text: digestText(s), reply_markup: { inline_keyboard: [...matchButton(s.worst.match_id, "Разобрать эту катку").inline_keyboard, [{ text: "Видеоразбор", callback_data: `vid:${s.worst.match_id}` }]] } })) sent++;
     }
     if (got.list_complete || !got.cursor) break;
     cursor = got.cursor;

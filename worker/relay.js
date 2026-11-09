@@ -103,7 +103,7 @@ export async function pushNewMatches(env, tg, users, data, heroes, now = Date.no
     const gapKey = `pushlast:${id}`;
     if (now - (Number(await kv.get(gapKey)) || 0) < PUSH_GAP) continue;
     await kv.put(gapKey, String(now), { expirationTtl: PUSH_GAP / 1000 });
-    if (await tg("sendMessage", { chat_id: Number(id), text: pushText(m, heroes), reply_markup: matchButton(m.match_id, "Разобрать катку") })) sent++;
+    if (await tg("sendMessage", { chat_id: Number(id), text: pushText(m, heroes), reply_markup: { inline_keyboard: [...matchButton(m.match_id, "Разобрать катку").inline_keyboard, [{ text: "Видеоразбор", callback_data: `vid:${m.match_id}` }]] } })) sent++;
   }
   return sent;
 }
