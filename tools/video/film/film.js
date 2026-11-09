@@ -50,12 +50,21 @@ const ground = document.createElement("canvas"); ground.width = ground.height = 
 const dec = ground.getContext("2d", { willReadFrequently: true });
 function bake(w, h, draw) { const c = document.createElement("canvas"); c.width = w; c.height = h; draw(c.getContext("2d"), w, h); return c; }
 // карта: приглушённая, чтобы фишки и линии читались. Фильтр дорогой, поэтому один раз
-const mapBaked = bake(1536, 1536, (c, w) => {
+const mapBaked = bake(2048, 2048, (c, w) => {
   c.fillStyle = "#101114"; c.fillRect(0, 0, w, w);
   if (mapImg) { c.filter = "saturate(0.85) brightness(0.92) contrast(1.1)"; c.imageSmoothingQuality = "high"; c.drawImage(mapImg, 0, 0, w, w); c.filter = "none"; }
   const g = c.createRadialGradient(w / 2, w / 2, w * 0.34, w / 2, w / 2, w * 0.74);
   g.addColorStop(0, "rgba(9,9,11,0)"); g.addColorStop(1, "rgba(9,9,11,0.5)");
   c.fillStyle = g; c.fillRect(0, 0, w, w);
+  // зерно: карта в исходнике 900 точек, на крупном плане без него она мыльная
+  const id = c.getImageData(0, 0, w, w), px = id.data;
+  let seed = 12345;
+  for (let i = 0; i < px.length; i += 4) {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    const n = ((seed >>> 24) - 128) * 0.085;
+    px[i] += n; px[i + 1] += n; px[i + 2] += n;
+  }
+  c.putImageData(id, 0, 0);
 });
 // фишки героев: круглый портрет на ножке
 function tokenTex(i, dead) {
@@ -198,9 +207,8 @@ function ring(x, y, r, color, width, alpha = 1) {
   dec.globalAlpha = alpha; dec.strokeStyle = color; dec.lineWidth = width;
   dec.beginPath(); dec.arc(x, y, r, 0, 7); dec.stroke(); dec.globalAlpha = 1;
 }
-function drawBuildings(seg, g) {
-  const dead = new Map();
-  const seen = {};
+function buildingList(seg, g) {
+  const dead = new Map(), seen = {}, out = [];
   for (const b of seg ? seg.buildings : []) { seen[b.n] = (seen[b.n] || 0) + 1; dead.set(`${b.n}#${seen[b.n]}`, b.t); }
   for (const side of ["goodguys", "badguys"]) {
     const col = TEAM[rel(side === "goodguys" ? 0 : 1)];
@@ -208,18 +216,59 @@ function drawBuildings(seg, g) {
       const list = Array.isArray(at[0]) ? at : [at];
       list.forEach((p, j) => {
         const t = dead.get(`${side}_${name}#${j + 1}`);
-        const gone = t !== undefined && t <= g, flash = gone ? clamp(1 - (g - t) / 2.5) : 0;
-        const size = name === "fort" ? 2.3 : /rax/.test(name) ? 1.1 : 1.45;
-        dec.save(); dec.translate(p[0], p[1]); if (!/rax/.test(name)) dec.rotate(Math.PI / 4);
-        dec.globalAlpha = gone ? 0.28 + flash * 0.7 : 0.95;
-        dec.fillStyle = gone ? (flash > 0 ? "#ffffff" : "#3a3a41") : col; dec.strokeStyle = "rgba(9,9,11,0.9)"; dec.lineWidth = 0.35;
-        dec.fillRect(-size / 2, -size / 2, size, size); dec.strokeRect(-size / 2, -size / 2, size, size);
-        dec.restore();
-        if (flash > 0) ring(p[0], p[1], 1.5 + (1 - flash) * 6, "#ffffff", 0.4, flash);
+        const gone = t !== undefined && t <= g;
+        out.push({ p, name, col, gone, flash: gone ? clamp(1 - (g - t) / 2.5) : 0 });
       });
     }
   }
+  return out;
+}
+function drawBuildings(seg, g) {
+  for (const { p, name, col, gone, flash } of buildingList(seg, g)) {
+    const size = name === "fort" ? 2.3 : /rax/.test(name) ? 1.1 : 1.45;
+    dec.save(); dec.translate(p[0], p[1]); if (!/rax/.test(name)) dec.rotate(Math.PI / 4);
+    dec.globalAlpha = gone ? 0.28 + flash * 0.7 : 0.95;
+    dec.fillStyle = gone ? (flash > 0 ? "#ffffff" : "#3a3a41") : col; dec.strokeStyle = "rgba(9,9,11,0.9)"; dec.lineWidth = 0.35;
+    dec.fillRect(-size / 2, -size / 2, size, size); dec.strokeRect(-size / 2, -size / 2, size, size);
+    dec.restore();
+    if (flash > 0) ring(p[0], p[1], 1.5 + (1 - flash) * 6, "#ffffff", 0.4, flash);
+  }
   dec.globalAlpha = 1;
+}
+// здания стоят: светящийся столбик над ромбом на земле
+function drawPillars(seg, g) {
+  const unit = FOCAL / CAM.d;
+  hud.globalCompositeOperation = "lighter";
+  for (const { p, name, col, gone } of buildingList(seg, g)) {
+    if (gone || /rax/.test(name)) continue;
+    const h = name === "fort" ? 6.5 : 4.2, [x, y, z] = project(p[0], p[1]);
+    if (z <= 1 || x < -40 || x > W + 40 || y < 0 || y > H + 200) continue;
+    const top = project(p[0], p[1], h)[1], half = unit * (name === "fort" ? 1.0 : 0.6) * (CAM.d / z);
+    const gy = hud.createLinearGradient(0, y, 0, top); gy.addColorStop(0, rgba(col, 0.75)); gy.addColorStop(1, rgba(col, 0.04));
+    hud.fillStyle = gy; hud.fillRect(x - half, top, half * 2, y - top);
+    hud.fillStyle = rgba(col, 0.55); hud.fillRect(x - half * 0.3, top, half * 0.6, y - top);
+  }
+  hud.globalCompositeOperation = "source-over";
+}
+// искры от убийства: разлетаются и падают, всё по номеру частицы, без случайности
+function drawSparks(seg, s) {
+  hud.globalCompositeOperation = "lighter";
+  for (let ki = 0; ki < seg.kills.length; ki++) {
+    const kill = seg.kills[ki], u = s - kill.s;
+    if (u < 0 || u > 1.0) continue;
+    const col = rel(film.players[kill.v].team) === 0 ? C.red : C.green, mine = kill.v === film.me || kill.k === film.me;
+    const n = mine ? 26 : 16;
+    for (let j = 0; j < n; j++) {
+      const a = hash(ki * 97 + j) * 6.283, sp = 5 + hash(ki * 31 + j * 7 + 1) * 9, up0 = 9 + hash(ki * 13 + j * 3 + 2) * 12;
+      const life = 0.55 + hash(j * 5 + ki) * 0.45;
+      if (u > life) continue;
+      const at = (uu) => project(kill.x + Math.cos(a) * sp * uu, kill.y + Math.sin(a) * sp * uu, Math.max(0, 1.2 + up0 * uu - 26 * uu * uu));
+      const p1 = at(u), p0 = at(Math.max(0, u - 0.045)), k = 1 - u / life;
+      hud.globalAlpha = k; hud.strokeStyle = j % 3 ? col : "#ffffff"; hud.lineWidth = 2 + 4 * k; hud.lineCap = "round";
+      hud.beginPath(); hud.moveTo(p0[0], p0[1]); hud.lineTo(p1[0], p1[1]); hud.stroke();
+    }
+  }
+  hud.globalAlpha = 1; hud.globalCompositeOperation = "source-over";
 }
 function drawGround(seg, s, g) {
   drawBuildings(seg, g);
@@ -282,6 +331,7 @@ function drawGround(seg, s, g) {
     if (!p) continue;
     const actor = seg.actors.includes(slot), me = slot === film.me, col = colorOf(slot);
     if (!p.alive) { dec.strokeStyle = rgba(C.red, 0.85); dec.lineWidth = 0.42; dec.beginPath(); dec.moveTo(p.x - 1.2, p.y - 1.2); dec.lineTo(p.x + 1.2, p.y + 1.2); dec.moveTo(p.x + 1.2, p.y - 1.2); dec.lineTo(p.x - 1.2, p.y + 1.2); dec.stroke(); continue; }
+    dec.fillStyle = "rgba(0,0,0,0.38)"; dec.beginPath(); dec.arc(p.x, p.y, me ? 2.9 : actor ? 2.4 : 1.6, 0, 7); dec.fill();
     dec.fillStyle = rgba(col, actor ? 0.22 : 0.1); dec.beginPath(); dec.arc(p.x, p.y, me ? 2.1 : 1.7, 0, 7); dec.fill();
     ring(p.x, p.y, me ? 2.1 : 1.7, col, me ? 0.5 : 0.32, actor ? 1 : 0.45);
     if (me) { const pulse = (s * 1.1) % 1; ring(p.x, p.y, 2.1 + pulse * 3.2, C.gold, 0.26, (1 - pulse) * 0.8); }
@@ -292,7 +342,10 @@ function drawGround(seg, s, g) {
     const u = s - kill.s;
     if (u < 0) continue;
     const col = rel(film.players[kill.v].team) === 0 ? C.red : C.green;
-    if (u < 1.1) { const k = outExpo(u / 1.1); ring(kill.x, kill.y, 1 + k * 9, col, 0.7 * (1 - k) + 0.1, 1 - k); ring(kill.x, kill.y, 0.5 + k * 5, "#ffffff", 0.35 * (1 - k), 1 - k); }
+    if (u < 1.1) { const k = outExpo(u / 1.1); ring(kill.x, kill.y, 1 + k * 9, col, 0.7 * (1 - k) + 0.1, 1 - k); ring(kill.x, kill.y, 0.5 + k * 5, "#ffffff", 0.35 * (1 - k), 1 - k); ring(kill.x, kill.y, 2 + k * 16, col, 0.2, (1 - k) * 0.6); }
+    const sc = dec.createRadialGradient(kill.x, kill.y, 0, kill.x, kill.y, 4.2);
+    sc.addColorStop(0, rgba(col, 0.34 * clamp(u * 4))); sc.addColorStop(1, rgba(col, 0));
+    dec.fillStyle = sc; dec.beginPath(); dec.arc(kill.x, kill.y, 4.2, 0, 7); dec.fill();
   }
   // «до своих далеко»: пунктир до ближайшего союзника
   if (M.ally) {
@@ -406,45 +459,90 @@ function topBar(t, seg, s) {
   if (emblem) hud.drawImage(emblem, 48, 58, 76, 76);
   text("ДОТА РАЗБОР", 140, 96, F(34, "Display"), C.text);
   text("видеоразбор катки", 140, 130, F(26, "UI"), C.muted);
-  // точки моментов
-  const n = film.moments, x0 = W - 56 - (n - 1) * 44;
-  for (let i = 0; i < n; i++) {
-    const done = seg.kind === "outro" || (seg.kind === "moment" && i < seg.index), cur = seg.kind === "moment" && i === seg.index;
-    hud.fillStyle = cur ? C.gold : done ? "rgba(230,184,88,0.55)" : "rgba(255,255,255,0.2)";
-    hud.beginPath(); hud.arc(x0 + i * 44, 98, cur ? 13 + Math.sin(s * 5) * 1.5 : 9, 0, 7); hud.fill();
+  // график золота за катку с метками моментов: видно, где мы сейчас и что было с перевесом
+  if (seg.kind !== "intro") goldChart(W - 400, 60, 352, 78, 1, seg.kind === "moment" ? seg.index : film.moments, s, false);
+}
+const ADV_MAX = Math.max(3, ...film.adv.map((a) => Math.abs(a[1])));
+// перевес по золоту: зелёное над нулём — впереди мы, красное под нулём — враг. upTo — доля нарисованного
+function goldChart(x, y, w, h, upTo, cur, s, big) {
+  const mid = y + h / 2, px = (f) => x + f * w, py = (v) => mid - (v / ADV_MAX) * (h / 2);
+  hud.save();
+  if (!big) { hud.globalAlpha = 0.72; hud.fillStyle = "#0b0b0e"; rrect(x - 14, y - 10, w + 28, h + 20, 16); hud.fill(); hud.globalAlpha = 1; }
+  hud.beginPath(); hud.rect(x, y - 4, w * upTo, h + 8); hud.clip();
+  for (const sign of [1, -1]) {
+    hud.beginPath(); hud.moveTo(px(0), mid);
+    for (const [f, v] of film.adv) hud.lineTo(px(f), py(sign > 0 ? Math.max(0, v) : Math.min(0, v)));
+    hud.lineTo(px(1), mid); hud.closePath();
+    const col = sign > 0 ? C.green : C.red;
+    const gr = hud.createLinearGradient(0, mid, 0, mid - sign * h / 2); gr.addColorStop(0, rgba(col, 0.12)); gr.addColorStop(1, rgba(col, 0.75));
+    hud.fillStyle = gr; hud.fill();
   }
+  hud.strokeStyle = C.text; hud.lineWidth = big ? 4 : 2; hud.lineJoin = "round"; hud.beginPath();
+  film.adv.forEach(([f, v], i) => (i ? hud.lineTo(px(f), py(v)) : hud.moveTo(px(f), py(v))));
+  hud.stroke();
+  hud.restore();
+  hud.fillStyle = "rgba(255,255,255,0.25)"; hud.fillRect(x, mid - 1, w, 2);
+  const advAt = (f) => { let v = film.adv[0][1]; for (const a of film.adv) { if (a[0] > f) break; v = a[1]; } return v; };
+  film.pins.forEach(([f, good], i) => {
+    if (f > upTo) return;
+    const here = i === cur, done = i < cur, col = good ? C.gold : C.red, r = (big ? 13 : 7) * (here ? 1.35 + Math.sin(s * 6) * 0.15 : 1);
+    const cx = px(f), cy = py(advAt(f));
+    hud.globalAlpha = here || big ? 1 : done ? 0.55 : 0.9;
+    hud.fillStyle = "#0b0b0e"; hud.beginPath(); hud.arc(cx, cy, r + (big ? 5 : 3), 0, 7); hud.fill();
+    hud.fillStyle = here || big || !done ? col : C.muted; hud.beginPath(); hud.arc(cx, cy, r, 0, 7); hud.fill();
+    if (big) text(String(i + 1), cx, cy + 8, F(22), C.ink, "center");
+    if (here && !big) { hud.strokeStyle = col; hud.lineWidth = 2; hud.beginPath(); hud.moveTo(cx, y - 4); hud.lineTo(cx, y + h + 4); hud.stroke(); }
+  });
+  hud.globalAlpha = 1;
 }
 
 // ---------- сегменты: плоский слой ----------
 function hudIntro(seg, s) {
   const dur = seg.t1 - seg.t0, out = inCubic(prog(s, dur - 0.32, dur));
   hud.save(); hud.globalAlpha = 1 - out; hud.translate(0, -out * 60);
+  // крючок: вопрос, на который отвечает ролик, с первого кадра
+  const hook = seg.won ? "ЧТО МОЖНО БЫЛО ЛУЧШЕ?" : "ПОЧЕМУ СЛИТА КАТКА?";
+  let hs = 92; hud.font = F(hs); while (hud.measureText(hook).width > 960 && hs > 50) { hs -= 4; hud.font = F(hs); }
+  const hk = outExpo(prog(s, 0, 0.32));
+  hud.save(); hud.translate(W / 2 + (s < 0.5 ? Math.sin(s * 70) * 7 * (1 - s / 0.5) : 0), 318); hud.scale(lerp(2.3, 1, hk), lerp(2.3, 1, hk));
+  hud.fillStyle = seg.won ? C.gold : C.red; hud.globalAlpha = clamp(hk * 1.5); const hw = hud.measureText(hook).width;
+  rrect(-hw / 2 - 30, -hs * 0.92, hw + 60, hs * 1.28, 18); hud.fill();
+  text(hook, 0, 0, F(hs), C.ink, "center", clamp(hk * 1.5));
+  hud.restore();
   const me = film.me, k0 = spring(s - 0.1);
-  hud.save(); hud.translate(W / 2, 560); hud.scale(k0, k0);
+  hud.save(); hud.translate(W / 2, 580); hud.scale(k0, k0);
   hud.shadowColor = rgba(C.gold, 0.55); hud.shadowBlur = 70;
   portrait(me, 0, 0, 150, C.gold, 10); hud.shadowBlur = 0;
   hud.restore();
   const name = seg.hero.toUpperCase();
   let size = 132; hud.font = F(size); while (hud.measureText(name).width > 960 && size > 60) { size -= 6; hud.font = F(size); }
   const k1 = outExpo(prog(s, 0.28, 0.85));
-  text(name, W / 2, 850 + (1 - k1) * 50, F(size), C.text, "center", k1);
+  text(name, W / 2, 862 + (1 - k1) * 50, F(size), C.text, "center", k1);
   const k2 = outExpo(prog(s, 0.5, 1.05));
   const parts = seg.kda.split("/"), cols = [C.green, C.red, C.text];
   hud.font = F(92); const wSlash = hud.measureText(" / ").width, ws = parts.map((p) => hud.measureText(p).width);
   let x = W / 2 - (ws.reduce((a, b) => a + b, 0) + wSlash * 2) / 2;
-  parts.forEach((p, i) => { text(p, x, 968 + (1 - k2) * 40, F(92), cols[i], "left", k2); x += ws[i]; if (i < 2) { text(" / ", x, 968 + (1 - k2) * 40, F(92), C.muted, "left", k2 * 0.7); x += wSlash; } });
+  parts.forEach((p, i) => { text(p, x, 976 + (1 - k2) * 40, F(92), cols[i], "left", k2); x += ws[i]; if (i < 2) { text(" / ", x, 976 + (1 - k2) * 40, F(92), C.muted, "left", k2 * 0.7); x += wSlash; } });
   const k3 = prog(s, 0.8, 1.15);
-  chip(seg.won ? "ПОБЕДА" : "ПОРАЖЕНИЕ", W / 2 - 150, 1070, seg.won ? C.green : C.red, k3);
+  chip(seg.won ? "ПОБЕДА" : "ПОРАЖЕНИЕ", W / 2 - 150, 1072, seg.won ? C.green : C.red, k3);
   chip(`${film.match.minutes} МИН`, W / 2 + 170, 1070, C.muted, prog(s, 0.92, 1.27));
   // «5 моментов»: счётчик
   const k4 = prog(s, dur * 0.52, dur * 0.52 + 0.5);
   if (k4 > 0) {
     const n = Math.max(1, Math.round(seg.n * outCubic(k4)));
     const word = seg.n === 1 ? "МОМЕНТ" : seg.n < 5 ? "МОМЕНТА" : "МОМЕНТОВ";
-    hud.save(); hud.translate(W / 2, 1255); const sc = outBack(k4, 2.4); hud.scale(sc, sc);
-    text(`${n} ${word}`, 0, 0, F(104), C.gold, "center", clamp(k4 * 2));
+    hud.save(); hud.translate(W / 2, 1168); const sc = outBack(k4, 2.4); hud.scale(sc, sc);
+    text(`${n} ${word}`, 0, 0, F(40), C.gold, "center", clamp(k4 * 2));
     hud.restore();
-    text("которые решили катку", W / 2, 1312, F(40, "UI"), C.text, "center", prog(s, dur * 0.52 + 0.3, dur * 0.52 + 0.6));
+  }
+  // график золота рисуется слева направо, метки моментов встают по ходу
+  const gk = prog(s, 1.0, Math.max(2.2, dur * 0.52 + 0.4));
+  if (gk > 0) {
+    hud.globalAlpha = clamp(gk * 4) * 0.86; hud.fillStyle = "#0b0b0e"; rrect(60, 1120, 960, 250, 28); hud.fill(); hud.globalAlpha = 1;
+    text("ЗОЛОТО", 96, 1168, F(26), C.muted, "left", clamp(gk * 4));
+    const last = film.adv[film.adv.length - 1][1], lab = `${last > 0 ? "+" : "−"}${Math.abs(Math.round(last))}к в конце`;
+    text(lab, W - 96, 1168, F(26), last >= 0 ? C.green : C.red, "right", prog(gk, 0.85, 1));
+    goldChart(100, 1196, 880, 150, smooth(gk), -1, s, true);
   }
   hud.restore();
 }
@@ -482,6 +580,32 @@ function hudMoment(seg, s, g) {
   }
   if (seg.marks.enemy_obs) { const k = prog(s, tipT - 1.6, tipT - 1.2); if (k > 0) { const [x, y] = project(seg.marks.enemy_obs[0], seg.marks.enemy_obs[1]); chip("вражеский вард", x, y - 46, C.red, k); } }
   if (seg.marks.pit) { const [x, y] = project(seg.marks.pit[0], seg.marks.pit[1]); chip("Рошан", x, y - 60, C.gold, prog(s, 0.9, 1.3)); }
+  // нажатые предметы: подпись всплывает над фишкой
+  for (const c of seg.casts) {
+    const u = s - c.s;
+    if (u < 0 || u > 1.25) continue;
+    const p = posAt(seg, c.slot, g);
+    if (!p) continue;
+    const [x, y] = project(p.x, p.y), k = outBack(prog(u, 0, 0.22), 2) * (1 - prog(u, 0.95, 1.25));
+    const lift = (c.slot === film.me ? 176 : 138) + 64 + u * 34;
+    hud.font = F(30); const w = hud.measureText(c.label).width + 30, cx = clamp(x, w / 2 + 10, W - w / 2 - 10);
+    hud.globalAlpha = clamp(k) * 0.92; hud.fillStyle = colorOf(c.slot); rrect(cx - w / 2, y - lift - 34, w, 46, 12); hud.fill();
+    text(c.label, cx, y - lift, F(30), C.ink, "center", clamp(k));
+  }
+  // урон по мне: цифры
+  const mePos = posAt(seg, film.me, g);
+  if (mePos) {
+    const [x, y] = project(mePos.x, mePos.y);
+    seg.hits.forEach(([hg, v], hi) => {
+      const age = g - hg;
+      if (age < 0 || age > 1.1) return;
+      const k = age / 1.1, dx = (hash(hi * 3.7) - 0.5) * 150, size = clamp(34 + v / 14, 36, 78);
+      hud.lineWidth = 8; hud.strokeStyle = "rgba(9,9,11,0.9)"; hud.font = F(size); hud.textAlign = "center"; hud.globalAlpha = 1 - k * k;
+      hud.strokeText(`−${v}`, x + dx, y - 250 - outCubic(k) * 110); 
+      text(`−${v}`, x + dx, y - 250 - outCubic(k) * 110, F(size), C.red, "center", 1 - k * k);
+    });
+    hud.globalAlpha = 1;
+  }
   // лента убийств: кто кого
   let row = 0;
   for (const kill of seg.kills) {
@@ -512,6 +636,10 @@ function hudMoment(seg, s, g) {
     hud.globalAlpha = ck * 0.9; hud.fillStyle = "#0b0b0e"; rrect(W - 250, 290, 200, 76, 38); hud.fill(); hud.globalAlpha = 1;
     hud.fillStyle = accent; hud.beginPath(); hud.arc(W - 220, 328, 8, 0, 7); hud.fill();
     text(mmss(g), W - 72, 344, F(44), C.text, "right", ck);
+    // как идёт время: замедление у убийств, стоп-кадр на совете
+    const rate = (warpAt(seg.warp, s + 0.05) - warpAt(seg.warp, s - 0.05)) / 0.1;
+    const lab = rate < 0.05 ? "СТОП-КАДР" : rate < 0.75 ? "ЗАМЕДЛЕНИЕ" : rate > 1.7 ? `×${Math.round(rate)}` : "";
+    if (lab) text(lab, W - 150, 404, F(24), rate < 0.75 ? accent : C.muted, "center", ck * 0.95);
   }
   // плашки последствий: появляются перед советом
   const base = Math.max(1.8, tipT - 2.4);
@@ -533,11 +661,21 @@ function hudOutro(seg, s) {
   hud.fillStyle = "rgba(9,9,11,0.5)"; hud.fillRect(0, 0, W, H);
   if (s < split + 0.3) {
     const a = 1 - prog(s, split, split + 0.3), k = spring(s - 0.05);
-    hud.save(); hud.translate(W / 2, 640); hud.scale(k, k);
+    hud.save(); hud.translate(W / 2, 520); hud.scale(k, k);
     text("ГЛАВНОЕ", 0, 0, F(150), C.gold, "center", a);
     hud.restore();
     const body = seg.lines[0].text.replace(/^[^:]+:\s*/, ""), rows = wrap(body.charAt(0).toUpperCase() + body.slice(1), F(64), 900);
-    rows.forEach((row, i) => { const kk = outExpo(prog(s, 0.5 + i * 0.12, 1.0 + i * 0.12)); text(row.join(" "), W / 2, 800 + i * 84 + (1 - kk) * 40, F(64), C.text, "center", kk * a); });
+    rows.forEach((row, i) => { const kk = outExpo(prog(s, 0.5 + i * 0.12, 1.0 + i * 0.12)); text(row.join(" "), W / 2, 670 + i * 84 + (1 - kk) * 40, F(64), C.text, "center", kk * a); });
+    // все моменты ролика списком
+    const y0 = 700 + rows.length * 84 + 40;
+    (seg.recap || []).forEach((r, i) => {
+      const kk = outExpo(prog(s, 1.0 + i * 0.14, 1.4 + i * 0.14)), y = y0 + i * 62, col = r.good ? C.gold : C.red, x = 150 - (1 - kk) * 60;
+      hud.globalAlpha = kk * a; hud.fillStyle = col; hud.beginPath(); hud.arc(x + 20, y - 13, 20, 0, 7); hud.fill();
+      text(String(i + 1), x + 20, y - 3, F(26), C.ink, "center", kk * a);
+      text(r.title, x + 62, y, F(38, "UI"), C.text, "left", kk * a);
+      text(r.clock, W - 150, y, F(38), C.muted, "right", kk * a);
+    });
+    hud.globalAlpha = 1;
   } else {
     const u = s - split - 0.2, k = spring(u);
     if (emblem) { hud.save(); hud.translate(W / 2, 600); hud.scale(k, k); hud.shadowColor = rgba(C.gold, 0.5); hud.shadowBlur = 80; hud.drawImage(emblem, -130, -130, 260, 260); hud.restore(); }
@@ -564,15 +702,28 @@ function frame(t) {
   t = clamp(t, 0, film.duration - 1e-4);
   const seg = segAt(t), s = t - seg.t0, i = film.segs.indexOf(seg), dur = seg.t1 - seg.t0;
   const cs = camAt(t);
-  applyCam(cs);
   const isMoment = seg.kind === "moment";
   const g = isMoment ? warpAt(seg.warp, s) : 0;
+  let myDeath = 0;
+  if (isMoment) {
+    // на убийстве камера вздрагивает и чуть наезжает; на моей смерти — сильнее
+    for (let ki = 0; ki < seg.kills.length; ki++) {
+      const kill = seg.kills[ki], u = s - kill.s;
+      if (u < 0 || u > 0.55) continue;
+      const mine = kill.v === film.me, amp = (mine ? 0.9 : 0.42) * Math.exp(-u * 7) * (cs.r / 18);
+      cs.c = [cs.c[0] + Math.sin(u * 61 + ki) * amp, cs.c[1] + Math.cos(u * 53 + ki * 2) * amp];
+      cs.r *= 1 - (mine ? 0.06 : 0.03) * Math.exp(-u * 6);
+      if (mine) myDeath = Math.max(myDeath, Math.exp(-u * 5));
+    }
+  }
+  applyCam(cs);
   const spotK = isMoment ? smooth(prog(s, 0.1, 1.0)) * (1 - prog(s, dur - 0.3, dur)) : 0;
   beginGround(cs, spotK);
   if (isMoment) drawGround(seg, s, g);
   else drawOverview(t, seg.kind === "intro" ? prog(s, 0.2, dur * 0.8) : 1, seg.kind === "intro" ? 1 : 0.7);
   blitGround();
 
+  drawPillars(isMoment ? seg : null, g);
   if (isMoment) {
     // столбы света на местах убийств
     hud.globalCompositeOperation = "lighter";
@@ -599,10 +750,24 @@ function frame(t) {
     }
     list.sort((a, b) => b.z - a.z);
     for (const it of list) sprite(it.img, it.x, it.y, it.px, it.alpha);
+    drawSparks(seg, s);
+    // по мне попали: фишка вспыхивает красным
+    const mine = posAt(seg, film.me, g);
+    if (mine && mine.alive) {
+      let hit = 0;
+      for (const [hg, v] of seg.hits) { const age = g - hg; if (age >= 0 && age < 0.3) hit = Math.max(hit, (1 - age / 0.3) * clamp(v / 400, 0.35, 1)); }
+      if (hit > 0) { const [x, y] = project(mine.x, mine.y); hud.globalCompositeOperation = "lighter"; hud.globalAlpha = hit * 0.6; hud.fillStyle = C.red; hud.beginPath(); hud.arc(x, y - 176 * 0.6, 176 * 0.4, 0, 7); hud.fill(); hud.globalAlpha = 1; hud.globalCompositeOperation = "source-over"; }
+    }
   }
 
   hud.globalAlpha = 1; hud.textBaseline = "alphabetic";
   vignette();
+  if (myDeath > 0.02) {
+    // моя смерть: края кадра заливает красным
+    const rg = hud.createRadialGradient(W / 2, H * 0.45, H * 0.28, W / 2, H * 0.45, H * 0.7);
+    rg.addColorStop(0, rgba(C.red, 0)); rg.addColorStop(1, rgba(C.red, 0.3 * myDeath));
+    hud.fillStyle = rg; hud.fillRect(0, 0, W, H);
+  }
   if (seg.kind === "intro") hudIntro(seg, s);
   else if (isMoment) hudMoment(seg, s, g);
   else hudOutro(seg, s);

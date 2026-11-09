@@ -8,6 +8,12 @@ const CHAR_RATE = 15.5;          // знаков в секунду у дикто
 const TRAIL = 8;                 // сколько секунд игры хвост героя до начала окна
 const round = (x, k = 1000) => Math.round(x * k) / k;
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+// предметы, нажатие которых подписываем в драке
+const CALLOUT = { black_king_bar: "БКБ", refresher: "Рефрешер", satanic: "Сатаник", manta: "Манта", glimmer_cape: "Глиммер", invis_sword: "Инвиз",
+  silver_edge: "Сильвер", abyssal_blade: "Абиссал", sheepstick: "Хекс", cyclone: "Еул", wind_waker: "Винд вейкер", force_staff: "Форс",
+  hurricane_pike: "Пика", ghost: "Гост", lotus_orb: "Лотус", shivas_guard: "Шива", bloodthorn: "Блудторн", orchid: "Орчид", nullifier: "Нуллифаер",
+  blade_mail: "Блейдмейл", ethereal_blade: "Эзериал", blink: "Блинк", overwhelming_blink: "Блинк", swift_blink: "Блинк", arcane_blink: "Блинк",
+  sphere: "Линка", guardian_greaves: "Гривы", mekansm: "Мека", pipe: "Пайп", crimson_guard: "Кримсон", heavens_halberd: "Алебарда", rod_of_atos: "Атос", gungir: "Глейпнир" };
 export const estimate = (say) => Math.max(0.9, say.length / CHAR_RATE);
 
 // скорость игры по экрану: 1 вдали от ключевых секунд, проседает до slow рядом с ними
@@ -59,6 +65,10 @@ export function buildTimeline(data, found, script, durations = null) {
     // все убийства катки для заставки: [доля времени матча, x, y, команда жертвы, это я]
     all_kills: data.kills.filter((k) => k.x !== null).map((k) => [round(clamp(k.t / data.end, 0, 1)), round(k.x / 10 - 64, 10), round(192 - k.y / 10, 10), k.v < 5 ? 0 : 1, k.v === me ? 1 : 0]),
     segs: [], vo: [] };
+  // перевес по золоту глазами игрока, шаг 30 с: [доля времени матча, тысячи золота]
+  film.adv = [];
+  for (let g = 0; g <= data.end; g += 30) film.adv.push([round(g / data.end), round((view.teamNw(T, g) - view.teamNw(1 - T, g)) / 1000, 10)]);
+  film.pins = found.moments.map((m) => [round(clamp(m.t / data.end, 0, 1)), m.type === "highlight" ? 1 : 0]);
   let t = 0;
   const place = (seg, si, lead, gap, tail, minDur) => {
     let s = lead;
@@ -83,7 +93,8 @@ export function buildTimeline(data, found, script, durations = null) {
     }
     if (seg.kind === "outro") {
       const { lines, dur } = place(seg, si, 0.5, 0.3, 1.7, 5);
-      film.segs.push({ kind: "outro", t0: round(t), t1: round(t + dur), lines });
+      film.segs.push({ kind: "outro", t0: round(t), t1: round(t + dur), lines,
+        recap: script.segments.filter((x) => x.kind === "moment").map((x) => ({ title: x.title, clock: x.clock, good: x.good })) });
       t += dur;
       return;
     }
@@ -132,6 +143,15 @@ export function buildTimeline(data, found, script, durations = null) {
     const wards = data.wards.filter((w) => w.kind === "obs" && w.t <= g1 && (w.t1 ?? w.t + 360) >= g0)
       .map((w) => { const p = view.wardXY(w); return { team: view.teamOf(w.slot), x: round(p[0], 10), y: round(p[1], 10), t: w.t, t1: w.t1 ?? w.t + 360 }; });
     const buildings = data.buildings.filter((b) => b.t <= g1 + 1).map((b) => ({ n: b.n, t: b.t }));
+    // громкие предметы участников: подпись над фишкой в момент нажатия
+    const seenCast = new Set();
+    const casts = data.items.filter((c) => c[0] >= g0 && c[0] <= g1 && actors.includes(c[1]) && CALLOUT[c[2]])
+      .filter((c) => { const k = `${c[1]}:${CALLOUT[c[2]]}`; if (seenCast.has(k)) return false; seenCast.add(k); return true; })
+      .map((c) => ({ s: round(warpInv(warp, c[0])), slot: c[1], label: CALLOUT[c[2]] }));
+    // урон по игроку: по игровой секунде, для всплывающих цифр
+    const hitMap = new Map();
+    for (const d of data.dmg) if (d[2] === me && d[1] !== me && d[0] >= g0 && d[0] <= g1) hitMap.set(d[0], (hitMap.get(d[0]) || 0) + d[3]);
+    const hits = [...hitMap].filter(([, v]) => v >= 60).map(([g, v]) => [g, Math.round(v)]);
     const f = m.facts, marks = {};
     if (m.type === "death") {
       marks.victim = me; marks.attackers = f.attackers;
@@ -144,7 +164,7 @@ export function buildTimeline(data, found, script, durations = null) {
     if (m.type === "rosh_lost" || (m.type === "no_objective" && f.rosh_up)) marks.pit = f.pit || roshanPit(m.t);
     if (m.type === "fight_lost" || m.type === "highlight" || m.type === "no_objective") marks.score = [f.dead_them, f.dead_us];
     film.segs.push({ kind: "moment", t0: round(t), t1: round(t + dur), index: seg.index, type: seg.type, sub: seg.sub, good: seg.good, title: seg.title, clock: seg.clock,
-      lines, chips: seg.chips, g0, g1, key: m.t, warp, cam, actors, track: { t0: tr0, pos: track }, kills, dmg, wards, buildings, marks });
+      lines, chips: seg.chips, g0, g1, key: m.t, warp, cam, actors, track: { t0: tr0, pos: track }, kills, dmg, wards, buildings, marks, casts, hits });
     t += dur;
   });
   film.duration = round(t);

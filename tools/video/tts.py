@@ -88,7 +88,9 @@ def main():
             # диффузия иногда даёт брак (слишком коротко или пусто): до трёх попыток
             best = None
             for _ in range(3):
-                x = polish(synth.synth_audio(spoken(line["say"]), speaker_id=a.speaker), a.tempo)
+                # совет читается спокойнее и весомее, описание — бодрее
+                tempo = a.tempo * (0.965 if line.get("role") == "tip" else 1.02 if line.get("role") == "what" else 1.0)
+                x = polish(synth.synth_audio(spoken(line["say"]), speaker_id=a.speaker), tempo)
                 rate = len(line["say"]) / max(0.1, len(x) / SR)
                 if best is None or abs(rate - 15) < abs(best[1] - 15):
                     best = (x, rate)

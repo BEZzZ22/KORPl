@@ -15,10 +15,6 @@ on:
         description: "Проверка: место игрока 1–10 (1–5 Свет, 6–10 Тьма)"
         required: false
         default: "1"
-  # временно, на время разработки: первый прогон регистрирует workflow у GitHub (убрать перед слиянием)
-  push:
-    branches: [claude/project-thread-1w91tq]
-    paths: [".github/workflows/video.yml"]
 
 permissions:
   contents: read
@@ -70,7 +66,6 @@ jobs:
           for i in $(seq 1 60); do curl -s -o /dev/null http://localhost:5600/healthz && break; sleep 2; done
 
       - name: Ролики
-        if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

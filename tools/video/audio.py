@@ -4,6 +4,7 @@
 Музыка: тёмная пульсирующая подложка 100 уд/мин в ре миноре, приглушается под голос.
 Эффекты: свист и удар на смене момента, глухой удар на убийстве, звоночек на совете."""
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -150,6 +151,50 @@ def music(dur, segs):
     return (drums + low + pads)[:int(dur * SR)]
 
 
+VOICE_CHAIN = ",".join([
+    "highpass=f=85",                               # гул
+    "equalizer=f=240:t=q:w=1.1:g=-3",              # бубнение
+    "equalizer=f=140:t=q:w=1.0:g=2",               # грудь, плотность
+    "equalizer=f=3400:t=q:w=1.3:g=3.5",            # разборчивость
+    "aexciter=amount=1.6:drive=5:blend=0:freq=6000",  # воздух: у синтеза нет верха выше 11 кГц
+    "deesser=i=0.3",
+    "acompressor=threshold=-22dB:ratio=3.5:attack=5:release=110:makeup=5",
+    "aecho=1.0:0.5:17|29:0.06|0.04",               # чуть комнаты: голос не «в вакууме»
+    "alimiter=limit=0.94",
+])
+
+
+def voice_polish(x):
+    """Дикторская обработка одним проходом ffmpeg. Не вышло (старый ffmpeg) — голос остаётся как есть."""
+    try:
+        raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "f32le", "-ar", str(SR), "-ac", "1", "-i", "-",
+                              "-af", VOICE_CHAIN, "-ac", "1", "-ar", str(SR), "-f", "f32le", "-"],
+                             input=x.astype(np.float32).tobytes(), capture_output=True, check=True).stdout
+        y = np.frombuffer(raw, np.float32).astype(np.float64)
+        if len(y) < len(x) * 0.98:
+            return x
+        y = y[:len(x)]
+        return y / (np.abs(y).max() + 1e-9) * 0.95
+    except Exception as e:  # noqa: BLE001
+        print(f"обработка голоса пропущена: {type(e).__name__}", file=sys.stderr)
+        return x
+
+
+def riser(length=0.9):
+    n = int(length * SR)
+    t = tv(n)
+    f = 220 * 2 ** (t / length * 1.6)
+    x = np.sin(2 * np.pi * np.cumsum(f) / SR) * 0.5 + highpass_fast(rng.standard_normal(n), 3000) * 0.25
+    return x * (t / length) ** 2.5
+
+
+def blip():
+    n = int(0.09 * SR)
+    t = tv(n)
+    f = 900 + 700 * t / 0.09
+    return np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t / 0.03)
+
+
 def main():
     film = json.loads(Path(sys.argv[1]).read_text())
     src = Path(sys.argv[2])
@@ -162,8 +207,11 @@ def main():
             x, sr = sf.read(p, dtype="float32")
             if sr == SR:
                 add(vo, x, v["t"])
+    if np.abs(vo).max() > 0:
+        vo = voice_polish(vo)
     fx = np.zeros(n)
     w, imp, th, dg, tk = whoosh(), impact(), thump(), ding(), tick()
+    rs, bl = riser(), blip()
     for i, seg in enumerate(film["segs"]):
         t0 = seg["t0"]
         if i > 0:
@@ -171,7 +219,16 @@ def main():
         add(fx, imp, t0 + (0.1 if i else 0.05), 0.5 if seg["kind"] == "moment" else 0.4)
         if seg["kind"] == "moment":
             for kill in seg["kills"]:
-                add(fx, th, t0 + kill["s"], 0.42)
+                mine = kill["v"] == film["me"]
+                add(fx, th, t0 + kill["s"], 0.6 if mine else 0.42)
+                if mine:
+                    add(fx, imp, t0 + kill["s"], 0.34)
+            if seg["kills"]:
+                first = min(k["s"] for k in seg["kills"])
+                if first > 1.6:
+                    add(fx, rs, t0 + first - 0.9, 0.13)
+            for c in seg.get("casts", []):
+                add(fx, bl, t0 + c["s"], 0.07)
             tip = seg["lines"][-1]["t0"]
             add(fx, dg, t0 + tip - 0.12, 0.16)
             base = max(1.8, tip - 2.4)
@@ -182,7 +239,7 @@ def main():
     env = lowpass_fast(np.abs(vo), 4)
     env = np.clip(env / (np.percentile(env[env > 1e-4], 70) + 1e-9), 0, 1) if (env > 1e-4).any() else env
     has_vo = np.abs(vo).max() > 0
-    duck = 1 - 0.62 * env
+    duck = 1 - 0.68 * env
     mix = vo * 1.0 + fx + mus * (0.2 if has_vo else 0.34) * duck
     fade = int(0.9 * SR)
     mix[-fade:] *= np.linspace(1, 0, fade) ** 1.5
