@@ -25,7 +25,7 @@ concurrency:
 jobs:
   cards:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -35,6 +35,18 @@ jobs:
         with:
           python-version: "3.12"
       - run: npm ci && npx playwright install --with-deps chromium && pip install -q pillow
+      - name: Заказать парс реплея и подождать до 20 минут
+        env:
+          MATCH: ${{ inputs.match }}
+        run: |
+          curl -s -X POST "https://api.opendota.com/api/request/$MATCH" || true
+          echo
+          for i in $(seq 1 40); do
+            v=$(curl -s "https://api.opendota.com/api/matches/$MATCH" | python3 -c "import json,sys;print(json.load(sys.stdin).get('version') or '')" 2>/dev/null || true)
+            [ -n "$v" ] && { echo "парс есть, версия $v"; exit 0; }
+            sleep 30
+          done
+          echo "парса пока нет, идём без него"
       - name: Скриншоты и карточки
         env:
           MATCH: ${{ inputs.match }}
