@@ -76,13 +76,15 @@ def card(shot, top, title, sub):
     return bg
 
 
-def main(match):
+def main(match, only=None):
     OUT.mkdir(parents=True, exist_ok=True)
     for name, (screen, top, title, sub) in CARDS.items():
+        if only and name not in only:
+            continue
         src = LIVE / ("0" if screen == "home" else str(match)) / f"{screen}.png"
         card(Image.open(src), top, title, sub).save(OUT / f"{name}.jpg", quality=88, optimize=True)
         print("готово", name)
 
 
 if __name__ == "__main__":
-    main(int(sys.argv[1]))
+    main(int(sys.argv[1]), sys.argv[2].split(",") if len(sys.argv) > 2 else None)
