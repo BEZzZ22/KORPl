@@ -3089,7 +3089,8 @@ class MatchAnalyzer {
   finishedItems() {
     const log = this.coreItems();
     const items = this.od.items || {};
-    const done = log.filter((x, i) => !log.slice(i + 1).some((y) => ((items[y.key] || {}).components || []).includes(x.key)));
+    // Aghanim's Scepter, поглощённый Blessing, остаётся: это первый крупный предмет, а Blessing приходит часами позже
+    const done = log.filter((x, i) => !log.slice(i + 1).some((y) => CONSUMED[y.key] !== x.key && ((items[y.key] || {}).components || []).includes(x.key)));
     // уровни одного предмета (Dagon 1…5, Necronomicon): оставляем последний купленный, с номером уровня
     const lvl = (k) => leveledItem(k, items);
     const top = new Map();
