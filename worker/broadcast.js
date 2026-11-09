@@ -39,3 +39,16 @@ export async function broadcastStep(env, tg, now = Date.now()) {
   await kv.put(statKey, JSON.stringify(stat), { expirationTtl: TTL });
   return stat;
 }
+
+// Ответ одному юзеру от бота (workflow «Ответ от бота»): reply_job {to, text} в D1, крон шлёт и пишет итог в reply_stat.
+// Нужен, потому что токен бота живёт только в секретах воркера, а в Actions его нет
+export async function replyStep(env, tg, now = Date.now()) {
+  const kv = env.COACH_KV;
+  const job = kv && await kv.get("reply_job", "json").catch(() => null);
+  if (!job) return null;
+  await kv.delete("reply_job");
+  const to = String(job.to || ""), text = String(job.text || "").trim();
+  const ok = /^\d{1,20}$/.test(to) && !!text && !!(await tg("sendMessage", { chat_id: Number(to), text: text.slice(0, 4000), disable_web_page_preview: true }).catch(() => null));
+  await kv.put("reply_stat", JSON.stringify({ ok, t: now }), { expirationTtl: TTL });
+  return { ok };
+}

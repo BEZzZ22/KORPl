@@ -1,4 +1,5 @@
 # Ответ юзеру от имени бота по нику (по просьбе владельца). id ищется в базе воркера (D1) и в лог не печатается.
+# Токен бота есть только у воркера: кладём в D1 reply_job {to, text}, крон воркера (раз в 3 минуты) шлёт и пишет reply_stat (worker/broadcast.js).
 name: Ответ от бота
 
 on:
@@ -21,7 +22,6 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
       WHO: ${{ inputs.username }}
       TEXT: ${{ inputs.text }}
     steps:
@@ -34,15 +34,18 @@ jobs:
           id=$(python3 -c 'import json,os; w=os.environ["WHO"].lstrip("@").lower(); rows=json.load(open("seen.json"))[0]["results"]; print(next((r["name"][5:] for r in rows if (json.loads(r.get("meta") or "{}")).get("u","").lower()==w), ""))')
           [ -z "$id" ] && { echo "Ник не найден среди seen:"; exit 1; }
           case "$id" in *[!0-9]*) echo "Странный id"; exit 1 ;; esac
-          ID="$id" python3 - <<'PY'
-          import json, os, urllib.request
-          body = json.dumps({"chat_id": int(os.environ["ID"]), "text": os.environ["TEXT"]}).encode()
-          req = urllib.request.Request(f"https://api.telegram.org/bot{os.environ['BOT_TOKEN']}/sendMessage", body, {"Content-Type": "application/json"})
-          try:
-              ok = json.load(urllib.request.urlopen(req, timeout=20)).get("ok")
-          except Exception as e:
-              ok = False
-              print("Ошибка:", getattr(e, "code", type(e).__name__))
-          print("Отправлено" if ok else "Не ушло")
-          raise SystemExit(0 if ok else 1)
+          d1() { npx --yes wrangler@4 d1 execute dotacoach --remote --json "$@" 2>/dev/null; }
+          ID="$id" python3 - > job.sql <<'PY'
+          import json, os
+          v = json.dumps({"to": os.environ["ID"], "text": os.environ["TEXT"]}, ensure_ascii=False).replace("'", "''")
+          print("DELETE FROM kv WHERE k = 'reply_stat';")
+          print(f"INSERT OR REPLACE INTO kv (k, v, meta, exp) VALUES ('reply_job', '{v}', NULL, NULL);")
           PY
+          d1 --file job.sql > /dev/null
+          echo "Заявка лежит, ждём крон"
+          for i in $(seq 1 30); do
+            sleep 15
+            st=$(d1 --command "SELECT v FROM kv WHERE k = 'reply_stat'" | python3 -c 'import json,sys; r=json.load(sys.stdin)[0]["results"]; print(r[0]["v"] if r else "")' 2>/dev/null || true)
+            [ -n "$st" ] && { printf '%s' "$st" | python3 -c 'import json,sys; ok=json.load(sys.stdin).get("ok"); print("Отправлено" if ok else "Не ушло: человек, похоже, остановил бота"); sys.exit(0 if ok else 1)'; exit $?; }
+          done
+          echo "Не дождались крона"; exit 1
