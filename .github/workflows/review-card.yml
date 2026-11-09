@@ -34,7 +34,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: npm ci && npx playwright install --with-deps chromium && pip install -q pillow
+      - run: npm ci && npx playwright install --with-deps chromium && pip install -q pillow && sudo apt-get install -y -q fonts-inter
       - name: Заказать парс реплея и подождать до 20 минут
         env:
           MATCH: ${{ inputs.match }}
