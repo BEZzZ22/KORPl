@@ -11,7 +11,7 @@ import { kickShorts } from "./kick.js";
 import { handlePartyMessage } from "./party.js";
 import { broadcastStep, replyStep } from "./broadcast.js";
 import { relayTasks, relayRun, kickRelay, ODREQ_PREFIX } from "./relay.js";
-import { requestVideo, parseVideoCommand, videoQueue, videoDone, checkVideo, VIDEO_BUTTON, VIDEO_HELP } from "./video.js";
+import { requestVideo, resumeVideo, parseVideoCommand, videoQueue, videoDone, checkVideo, VIDEO_BUTTON, VIDEO_HELP } from "./video.js";
 import { matchFromText, matchButton, MATCH_TEXT, accountFromText, linkButton, LINK_TEXT, OD_HEADERS, noteReferral, rewardReferral, referralFromStart, noteStartSource, bumpStreak, growthView, streakReminders, inlineAnswer, noteRefMatch } from "./growth.js";
 import { CHAT_ID, handleChatUpdate, chatChores, chatStatus, releaseIfPending } from "./chatguard.js";
 import { spendUnit, openMatch, spendChat, isOpen, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT, loginUser, roboLink, roboResult, robokassaOn, payUrl, tokenUser } from "./pay.js";
@@ -1573,6 +1573,8 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
   }
   if (msg.successful_payment) {
     const got = await grant(env, msg, now);
+    // оплатил видеоразбор, в который упёрся: ролик стартует сам, отдельное «спасибо» не нужно
+    if (got && got.pack === "video" && await resumeVideo(env, (m, b) => tgCall(env, m, b), msg.from.id, now).catch(() => null)) return { paid: "video" };
     if (got && got.pack) await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: thanksText(got.pack, got.wallet), reply_markup: appButton }).catch(() => false);
     return got;
   }
@@ -2094,7 +2096,10 @@ export default {
         if (env.BOT_TOKEN) ctx.waitUntil(Promise.all(ids.map((id) => sendTelegram(env, "sendMessage", { chat_id: Number(id), text }).catch(() => false))));
         return new Response(got.ok);
       }
-      if (got.pack && env.BOT_TOKEN) ctx.waitUntil(sendTelegram(env, "sendMessage", { chat_id: Number(got.user), text: thanksText(got.pack, got.wallet), reply_markup: appButton }).catch(() => false));
+      if (got.pack && env.BOT_TOKEN) ctx.waitUntil((async () => {
+        if (got.pack === "video" && await resumeVideo(env, (m, b) => tgCall(env, m, b), got.user).catch(() => null)) return;
+        await sendTelegram(env, "sendMessage", { chat_id: Number(got.user), text: thanksText(got.pack, got.wallet), reply_markup: appButton }).catch(() => false);
+      })());
       return new Response(got.ok);
     }
     // заявка на разбор реплея через воркер: с телефона POST к OpenDota часто не доходит
