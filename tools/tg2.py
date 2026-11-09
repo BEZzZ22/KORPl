@@ -1016,7 +1016,16 @@ async def process_queue(c, state):
                 await c.send_message(ent, item["text"], reply_to=item.get("reply_to"), link_preview=False)
                 print("Отправлено в наш чат")
             elif isinstance(ent, User) and not ent.bot:
-                await c.send_message(ent, item["text"])
+                if item.get("files"):  # картинки из ветки очереди одним альбомом, текст подписью
+                    import io, subprocess
+                    blobs = []
+                    for i, f in enumerate(item["files"]):
+                        b = io.BytesIO(subprocess.run(["git", "show", f"origin/{QUEUE_BRANCH}:{f}"], capture_output=True).stdout)
+                        b.name = f"review{i + 1}.jpg"
+                        blobs.append(b)
+                    await c.send_file(ent, blobs, caption=item["text"])
+                else:
+                    await c.send_message(ent, item["text"])
                 sent[to] = datetime.datetime.utcnow().isoformat(timespec="minutes")
                 state["cold"] += cold
                 print("Отправлено")

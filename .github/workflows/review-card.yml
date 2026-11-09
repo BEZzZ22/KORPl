@@ -1,0 +1,67 @@
+# Разбор матча для админа/автора: открывает мини-апп на живых данных OpenDota, режет скриншоты в карточки и кладёт их в ветку очереди (promo/review/<match>/).
+# Отправляет их дежурный через элемент очереди с полем files. Игрок берётся по герою (hero_id), если не задан account.
+name: Карточки разбора
+
+on:
+  workflow_dispatch:
+    inputs:
+      match:
+        description: "Match ID"
+        required: true
+      hero_id:
+        description: "hero_id игрока (Снайпер = 35); пусто, если задан account"
+        default: ""
+      account:
+        description: "account_id игрока (необязательно)"
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: review-card
+  cancel-in-progress: false
+
+jobs:
+  cards:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: npm ci && npx playwright install --with-deps chromium && pip install -q pillow
+      - name: Скриншоты и карточки
+        env:
+          MATCH: ${{ inputs.match }}
+          HERO: ${{ inputs.hero_id }}
+          ACC: ${{ inputs.account }}
+        run: |
+          acc="$ACC"
+          if [ -z "$acc" ] && [ -n "$HERO" ]; then
+            curl -s "https://api.opendota.com/api/matches/$MATCH" -o m.json
+            acc=$(python3 -c "import json;m=json.load(open('m.json'));print(next((p.get('account_id') for p in m['players'] if p['hero_id']==$HERO and p.get('account_id')),''))")
+          fi
+          echo "account=$acc"
+          ACCOUNT="$acc" node tools/ui-live.mjs "$MATCH" overview,phases,deaths,build
+          python tools/promo_images.py "$MATCH" review,phases,killers,order
+          mkdir -p "out/review/$MATCH"
+          cp promo/img/review.jpg promo/img/phases.jpg promo/img/killers.jpg promo/img/order.jpg "out/review/$MATCH/"
+      - name: В ветку очереди
+        env:
+          MATCH: ${{ inputs.match }}
+        run: |
+          git config user.name "promo-bot"
+          git config user.email "promo-bot@users.noreply.github.com"
+          git fetch -q origin claude/project-thread-d0uspr
+          git checkout -q -B queue origin/claude/project-thread-d0uspr
+          mkdir -p "promo/review/$MATCH"
+          cp out/review/$MATCH/*.jpg "promo/review/$MATCH/"
+          git add promo/review
+          git commit -q -m "Карточки разбора $MATCH"
+          for i in 1 2 3 4; do git pull -q --rebase origin claude/project-thread-d0uspr && git push -q origin HEAD:claude/project-thread-d0uspr && exit 0; sleep $((i*5)); done
+          exit 1
