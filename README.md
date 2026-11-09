@@ -115,4 +115,4 @@ Python-скрипты в `tools/` ставят свои зависимости �
 | Уборка веток | `branches-cleanup.yml` | вручную | удаляет ветки, уже влитые через PR |
 | Проверка юзера, Воронка тренера, Проверка OpenDota, Проверка разбора реплеев, Генеральная проверка разбора | `user-check.yml`, `coach-funnel.yml`, `opendota-check.yml`, `parse-check.yml`, `general-check.yml` | вручную | диагностика |
 | Рассылка юзерам | `broadcast.yml` | вручную, только с «да» Ярика | разовое письмо всем юзерам бота, текст в `promo/broadcast/<job>.txt` |
-| Чат канала, Одно сообщение, Премиум-эмодзи, Разметка карты | `community.yml`, `send-one.yml`, `emoji.yml`, `mapdata.yml` | вручную | разовые задачи |
+| Чат канала, Одно сообщение, Ответ от бота, Премиум-эмодзи, Разметка карты | `community.yml`, `send-one.yml`, `bot-reply.yml`, `emoji.yml`, `mapdata.yml` | вручную | разовые задачи |
