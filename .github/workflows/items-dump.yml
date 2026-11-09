@@ -1,0 +1,41 @@
+# Разовая диагностика: покупки героя в матче и справочник предметов (почему в «Порядке» не видно Aghanim's Scepter, Disperser, Shard).
+name: Покупки матча
+
+on:
+  workflow_dispatch:
+    inputs:
+      match:
+        description: "Match ID"
+        required: true
+      hero_id:
+        description: "hero_id игрока"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  dump:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Печатаем
+        env:
+          MATCH: ${{ inputs.match }}
+          HERO: ${{ inputs.hero_id }}
+        run: |
+          curl -s "https://api.opendota.com/api/matches/$MATCH" -o m.json
+          curl -s "https://api.opendota.com/api/constants/items" -o items.json
+          python3 - <<'PY'
+          import json,os
+          m=json.load(open("m.json")); it=json.load(open("items.json"))
+          p=next(x for x in m["players"] if x["hero_id"]==int(os.environ["HERO"]))
+          print("duration",m.get("duration"),"version",m.get("version"))
+          for x in p.get("purchase_log") or []:
+              k=x["key"]; d=it.get(k,{})
+              print(x["time"],k,d.get("cost"),d.get("components"))
+          print("--")
+          for k in ("ultimate_scepter","ultimate_scepter_2","aghanims_shard","disperser"):
+              print(k,it.get(k,{}).get("cost"),it.get(k,{}).get("components"))
+          PY
