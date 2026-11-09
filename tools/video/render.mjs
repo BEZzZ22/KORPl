@@ -1,7 +1,7 @@
 // Видеоразбор, шаг 5: рендер кадров. Поднимает локальный сервер с репозиторием, открывает film/index.html в Chromium
 // и снимает кадры в несколько потоков (кадр — чистая функция времени, поэтому куски независимы).
-// Каждый поток гонит JPEG-кадры прямо в ffmpeg (сразу итоговое качество: до 3.5 Мбит/с, чтобы 90 с влезли
-// в 50 МБ Телеграма); куски потом склеиваются без перекодирования.
+// Каждый поток гонит JPEG-кадры прямо в ffmpeg (сразу итоговое качество: до 2.5 Мбит/с, ролик выходит 20–30 МБ при пределе
+// 50 МБ у Телеграма); куски потом склеиваются без перекодирования.
 // Запуск: node tools/video/render.mjs <film.json> <out.mp4> [--workers 4] [--frames a-b] [--still t out.png]
 import { createServer } from "node:http";
 import { readFile, writeFile, mkdir, rm } from "node:fs/promises";
@@ -85,7 +85,7 @@ export async function renderVideo(filmPath, outMp4, { workers = Math.max(1, Math
       const page = await openPage(browser, server.address().port, film);
       let stdin;
       const enc = run("ffmpeg", ["-y", "-loglevel", "error", "-f", "image2pipe", "-c:v", "mjpeg", "-framerate", String(film.fps), "-i", "-",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "21", "-maxrate", "3500k", "-bufsize", "7M", "-pix_fmt", "yuv420p", "-r", String(film.fps), "-g", String(film.fps), part], (s) => { stdin = s; });
+        "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-maxrate", "2500k", "-bufsize", "5M", "-pix_fmt", "yuv420p", "-r", String(film.fps), "-g", String(film.fps), part], (s) => { stdin = s; });
       for (let f = a; f < b; f++) {
         const url = await page.evaluate(`window.frameJpeg(${(f + 0.5) / film.fps})`);
         const buf = Buffer.from(url.slice(url.indexOf(",") + 1), "base64");

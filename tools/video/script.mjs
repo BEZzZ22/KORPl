@@ -147,7 +147,7 @@ export function buildScript(data, found, { cons = true } = {}) {
       else if (f.down >= 60) { v.down = seconds(f.down); lines.push(fill("death.cons.down", v, i)); }
       if (f.down >= 20) chips.unshift({ label: `${f.down} с без тебя`, tone: "bad" });
       if (f.buyback) chips.push({ label: "Выкуп потрачен", tone: "bad" });
-      lines.push(fill(`death.tip.${m.sub}`, v, i));
+      lines.push(fill(m.sub === "under_ward" ? `death.tip.under_ward.${isCore(m.t) ? "core" : "support"}` : `death.tip.${m.sub}`, v, i));
     } else if (m.type === "fight_lost") {
       title = pick("title.fight_lost");
       v.ours = TOGETHER[Math.min(5, Math.max(1, f.ours))]; v.theirs = AGAINST[Math.min(5, Math.max(1, f.theirs))];

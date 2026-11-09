@@ -11,6 +11,7 @@ import { kickShorts } from "./kick.js";
 import { handlePartyMessage } from "./party.js";
 import { broadcastStep, replyStep } from "./broadcast.js";
 import { relayTasks, relayRun, kickRelay, ODREQ_PREFIX } from "./relay.js";
+import { requestVideo, parseVideoCommand, videoQueue, videoDone, checkVideo, VIDEO_BUTTON, VIDEO_HELP } from "./video.js";
 import { matchFromText, matchButton, MATCH_TEXT, accountFromText, linkButton, LINK_TEXT, OD_HEADERS, noteReferral, rewardReferral, referralFromStart, noteStartSource, bumpStreak, growthView, streakReminders, inlineAnswer, noteRefMatch } from "./growth.js";
 import { CHAT_ID, handleChatUpdate, chatChores, chatStatus, releaseIfPending } from "./chatguard.js";
 import { spendUnit, openMatch, spendChat, isOpen, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT, loginUser, roboLink, roboResult, robokassaOn, payUrl, tokenUser } from "./pay.js";
@@ -1403,7 +1404,7 @@ async function webhookSecret(token) {
   return [...hash.slice(0, 20)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-const COMMANDS_VERSION = "2";
+const COMMANDS_VERSION = "3";
 // Профиль бота для поиска Телеги: имя и описания с русскими словами «дота», «разбор катки» (решение Ярика 08.11).
 // Меняешь текст — подними PROFILE_VERSION, крон поставит заново. setMyName Телега часто режет лимитом — тогда повтор на следующем заходе
 export const PROFILE_VERSION = "2";
@@ -1464,6 +1465,7 @@ const welcomeButtons = { inline_keyboard: [[{ text: "Открыть разбор
 const HELP_TEXT = "Что умеет бот:\n"
   + "• Кинь ID матча или ссылку с OpenDota/Dotabuff/Stratz — открою разбор: кто слил, ошибки по таймкодам, повтор на карте.\n"
   + "• Кинь Friend ID — привяжу аккаунт, и после каждой катки напишу, можно ли разобрать.\n"
+  + `• ${VIDEO_HELP}\n`
   + "• Добавь меня в чат с пати — там тоже разбираю катки.\n"
   + "• В любом чате напиши @DotaRazbor_bot и ID катки — выпадет карточка с разбором, добавлять меня туда не нужно.\n\n"
   + "Команды:\n/pay — тренер и оплата\n/nopush — не писать после каток и про серию (/push — вернуть)\n/nodigest — без сводки недели (/digest — вернуть)\n/notop — не показывать меня в топе недели в чате (/top — вернуть)\n/paysupport — вопрос по оплате\n/terms — условия";
@@ -1472,6 +1474,7 @@ export const BOT_COMMANDS = [
   { command: "start", description: "Открыть разбор каток" },
   { command: "help", description: "Что умеет бот" },
   { command: "pay", description: "Тренер и оплата" },
+  { command: "video", description: "Видеоразбор катки: /video и номер матча" },
   { command: "nopush", description: "Не писать после каток" },
   { command: "nodigest", description: "Без сводки недели" },
   { command: "notop", description: "Не показывать меня в топе недели" },
@@ -1548,6 +1551,12 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
   // чат канала: капча, приветствие, антиспам (worker/chatguard.js)
   const guarded = await handleChatUpdate(env, (m, b) => tgCall(env, m, b), update, now);
   if (guarded) return { chat: guarded };
+  // кнопка «Видеоразбор» под карточкой матча (worker/video.js)
+  const press = update && update.callback_query;
+  if (press && press.from && /^vid:\d{7,11}$/.test(String(press.data || ""))) {
+    await sendTelegram(env, "answerCallbackQuery", { callback_query_id: press.id }).catch(() => false);
+    return requestVideo(env, (m, b) => tgCall(env, m, b), { user: press.from.id, match: Number(press.data.slice(4)), owner: isOwner(env, press.from.id) }, now);
+  }
   const msg = update && update.message;
   // пати-чаты: ID катки в группе — карточка «Кто слил» на всех (worker/party.js)
   const party = await handlePartyMessage(env, (m, b) => tgCall(env, m, b), msg, now).catch((e) => { console.log(`пати: ${e && e.message || e}`); return null; });
@@ -1594,6 +1603,9 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
     await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text }).catch(() => false);
     return { refund: text };
   }
+  // видеоразбор: «/video <номер матча>» — ролик с главными моментами катки (worker/video.js)
+  const video = parseVideoCommand(cmd);
+  if (video) return requestVideo(env, (m, b) => tgCall(env, m, b), { user: msg.from.id, match: video.match, pick: video.pick, owner: isOwner(env, msg.from.id) }, now);
   if (/^\/help(?:@\w+)?$/i.test(cmd)) {
     await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: HELP_TEXT, reply_markup: appButton }).catch(() => false);
     return { help: 1 };
@@ -1625,7 +1637,7 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
   // кинул ID матча или ссылку на него — кнопка сразу на разбор этой катки, без привязки аккаунта
   const matchId = !msg.reply_to_message && matchFromText(msg.text);
   if (matchId) {
-    await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: MATCH_TEXT(matchId), reply_markup: matchButton(matchId) }).catch(() => false);
+    await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: MATCH_TEXT(matchId), reply_markup: { inline_keyboard: [...matchButton(matchId).inline_keyboard, [VIDEO_BUTTON(matchId)]] } }).catch(() => false);
     return { match: matchId };
   }
   const acc = !msg.reply_to_message && !isOwner(env, msg.from.id) && accountFromText(msg.text);
@@ -2094,6 +2106,17 @@ export default {
       try { body = JSON.parse(await request.text()); } catch { return new Response("Не JSON.", { status: 400 }); }
       return json(await relayRun(env, (m, b) => tgCall(env, m, b), body, Date.now(), { checkWatches }));
     }
+    // Очередь видеоразборов для Actions (video.js, .github/workflows/video.yml): тот же ключ, что у выгрузки
+    if (new URL(request.url).pathname === "/video-queue" && (request.method === "GET" || request.method === "POST")) {
+      const auth = request.headers.get("Authorization") || "";
+      const okKey = (k) => Boolean(k) && auth === `Bearer ${k}`;
+      if (!env.BOT_TOKEN || !env.COACH_KV || !(okKey(env.RELAY_KEY) || okKey(env.BOT_TOKEN))) return new Response("Нельзя.", { status: 403 });
+      const json = (x) => new Response(JSON.stringify(x), { headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } });
+      if (request.method === "GET") return json(await videoQueue(env));
+      let body;
+      try { body = JSON.parse(await request.text()); } catch { return new Response("Не JSON.", { status: 400 }); }
+      return json(await videoDone(env, (m, b) => tgCall(env, m, b), body));
+    }
     // картинки Dota через воркер: до антиддоса, на экране их десятки
     if (request.method === "GET" && new URL(request.url).pathname.startsWith("/img/")) return proxySteamImage(new URL(request.url));
     // запасной путь к OpenDota: свой лимит без банов, чтобы сбой OpenDota не забанил человека и у тренера
@@ -2171,6 +2194,7 @@ export default {
     chores.push(kickRelay(env, now).catch((e) => console.log(`выгрузка OpenDota: ${e && e.message || e}`)));
     chores.push(chatChores(env, (m, b) => tgCall(env, m, b), now).catch((e) => console.log(`чат: ${e && e.message || e}`)));
     chores.push(broadcastStep(env, (m, b) => tgCall(env, m, b), now).catch((e) => console.log(`рассылка: ${e && e.message || e}`)));
+    chores.push(checkVideo(env, (m, b) => tgCall(env, m, b), now).catch((e) => console.log(`видеоразбор: ${e && e.message || e}`)));
     chores.push(replyStep(env, (m, b) => tgCall(env, m, b), now).catch((e) => console.log(`ответ от бота: ${e && e.message || e}`)));
     ctx.waitUntil(Promise.all([checkWatches(env), checkReplays(env), reportOnRequest(env), ensureWebhook(env), ...chores]));
   },
