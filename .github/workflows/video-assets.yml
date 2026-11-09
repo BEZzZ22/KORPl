@@ -1,0 +1,47 @@
+# Временный: портреты героев для видеоразбора в ветку video-data (удалить перед слиянием).
+name: Видеоразбор, картинки
+on:
+  push:
+    branches: [claude/project-thread-1w91tq]
+    paths: [".github/workflows/video-assets.yml"]
+permissions:
+  contents: write
+jobs:
+  assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools/video
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pip install -q Pillow
+          python3 tools/video/fetch-assets.py
+          mkdir -p maps
+          i=0
+          for u in \
+            "https://www.opendota.com/assets/images/dota2/map/detailed_740.webp" \
+            "https://www.opendota.com/assets/images/dota2/map/detailed_739.webp" \
+            "https://www.opendota.com/assets/images/dota2/map/detailed.webp" \
+            "https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/minimap/minimap.png" \
+            "https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/map/map.jpg" \
+            "https://raw.githubusercontent.com/odota/web/master/public/assets/images/dota2/map/detailed_740.webp" \
+            "https://raw.githubusercontent.com/odota/web/master/public/assets/images/dota2/map/detailed_739.webp"; do
+            i=$((i+1)); code=$(curl -sL -o "maps/m$i.bin" -w "%{http_code} %{size_download} %{content_type}" --max-time 60 "$u" || true); echo "$i $code"
+            case "$code" in 200*image*) ;; *) rm -f "maps/m$i.bin" ;; esac
+          done
+          python3 -c "
+          import glob
+          from PIL import Image
+          for f in glob.glob('maps/*.bin'):
+              print(f, Image.open(f).size)
+          "
+          git init -q out && cd out
+          git remote add origin "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY"
+          git fetch -q --depth=1 origin video-data && git checkout -q -B video-data FETCH_HEAD
+          git config user.name "replay-bot"
+          git config user.email "replay-bot@users.noreply.github.com"
+          mkdir -p heroes && cp ../tools/video/assets/heroes/*.webp heroes/ && cp -r ../maps .
+          git add -A && git commit -q -m "Картинки для видеоразбора" && git push -q origin video-data
