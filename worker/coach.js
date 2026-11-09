@@ -1827,6 +1827,18 @@ async function handlePost(request, env, ctx, origin) {
     return reply(200, { status: await queueReplay(env, match, user && user.id ? user.id : null) }, origin);
   }
 
+  // видеоразбор из приложения: ролик по игроку, чей разбор открыт (worker/video.js)
+  if (mode === "video") {
+    if (!env.COACH_KV || !env.BOT_TOKEN) return reply(500, { error: "Видеоразбор не настроен." }, origin);
+    const user = await telegramUser(raw.initData, env.BOT_TOKEN);
+    const match = Number(raw.match_id), seat = Number(raw.seat);
+    if (!user || !user.id) return reply(403, { error: noTg(raw, "Открой приложение из Телеграма.") }, origin);
+    if (!Number.isInteger(match) || match < 1e6) return reply(400, { error: "Нет матча." }, origin);
+    const limited = throttle(String(user.id), Date.now(), 6, "video", 3000);
+    if (limited) return reply(429, { error: limited }, origin);
+    const res = await requestVideo(env, (m, b) => tgCall(env, m, b), { user: user.id, match, owner: isOwner(env, user.id), seat: Number.isInteger(seat) ? seat : null });
+    return reply(200, res, origin);
+  }
   if (mode === "watch") {
     if (!env.COACH_KV || !env.BOT_TOKEN) return reply(500, { error: "Уведомления не настроены." }, origin);
     const user = await telegramUser(raw.initData, env.BOT_TOKEN);

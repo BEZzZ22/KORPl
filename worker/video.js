@@ -65,12 +65,13 @@ async function entries(env) {
 }
 
 // Заявка от человека. tg(method, body) — вызов Bot API. Возвращает { video: статус }
-export async function requestVideo(env, tg, { user, match, pick = null, owner = false }, now = Date.now()) {
+// seat — место игрока 0–9 из приложения: там человек смотрит разбор конкретного игрока, аккаунт привязывать не нужно
+export async function requestVideo(env, tg, { user, match, pick = null, owner = false, seat = null }, now = Date.now()) {
   const say = (text, extra = {}) => tg("sendMessage", { chat_id: user, text, ...extra });
   if (!match) { await say("Напиши номер матча после команды: /video 8123456789. Номер есть в истории матчей в Доте и в приложении."); return { video: "no_match" }; }
   const profile = await env.COACH_KV.get(`user:${user}`, "json").catch(() => null);
   const account = Number(profile && profile.account_id) || null;
-  const slot = owner && pick ? pick - 1 : null;
+  const slot = owner && pick ? pick - 1 : (Number.isInteger(seat) && seat >= 0 && seat <= 9 ? seat : null);
   // владелец без привязанного аккаунта и без места: сразу спрашиваем, чей ролик
   if (owner && !account && slot === null) {
     await say(`Чей ролик по матчу ${match}? Выбери место игрока.`, { reply_markup: slotKeyboard(match) });
