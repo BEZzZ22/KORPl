@@ -15,6 +15,9 @@ on:
       raw:
         description: "да — положить и сырые данные"
         required: false
+      probe:
+        description: "да — напечатать, где в реплее лежат имена (отладка после патча)"
+        required: false
       norms:
         description: "Сколько матчей высокого ранга добавить в нормы"
         required: false
@@ -59,6 +62,7 @@ jobs:
         env:
           MATCH_IDS: ${{ inputs.match_ids }}
           RAW: ${{ inputs.raw }}
+          PROBE: ${{ inputs.probe }}
         run: |
           mkdir -p out/d out/dr
           for id in $MATCH_IDS; do
@@ -66,6 +70,7 @@ jobs:
             echo "::group::Матч $id"
             if ! bash tools/deep/fetch-dem.sh "$id" replay.dem match.json; then echo "реплей не скачался"; echo "::endgroup::"; continue; fi
             echo "реплей: $(stat -c %s replay.dem) байт"
+            if [ "$PROBE" = "да" ]; then DEEP_PROBE=1 ./deep-extract replay.dem 2>&1 >/dev/null | head -400 || true; fi
             if /usr/bin/time -f "сборщик: %e с, память %M КБ" ./deep-extract replay.dem > deep-raw.json && node tools/deep/analyze.mjs deep-raw.json out/d/norms.json > "out/d/$id.json"; then
               echo "разбор: $(wc -c < "out/d/$id.json") байт, сырьё $(wc -c < deep-raw.json) байт"
               node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const c={};for(const p of d.players)for(const f of p.findings)c[f.id]=(c[f.id]||0)+1;console.log("драк",d.fights.length,"выводы",JSON.stringify(c))' "out/d/$id.json"
