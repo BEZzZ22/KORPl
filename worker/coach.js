@@ -1460,10 +1460,26 @@ const WELCOME_TEXT = "Привет! Разбор твоих каток живё�
 const HINT_TEXT = "Разбор каток — в приложении: жми «Открыть разбор» ниже или кнопку «Приложение» слева от поля ввода. "
   + "Вопрос, жалобу или проблему с оплатой можно написать прямо сюда — передам разработчику.";
 const HINT_TTL = 3600;
+// Меню кнопками вместо клавиатуры (просьба Ярика 12.11): не все знают, что команды пишутся через слэш.
+// Кнопка шлёт свою подпись обычным текстом, menuCommand превращает её в команду. Меняешь подписи — правь и MENU
+const MENU_VERSION = "1";
+export const MENU = { "Видеоразбор": "/video", "Тренер и цены": "/pay", "Помощь": "/help" };
+export const menuKeyboard = {
+  keyboard: [[{ text: "Мои катки", web_app: { url: APP_URL } }, { text: "Видеоразбор" }], [{ text: "Тренер и цены" }, { text: "Помощь" }]],
+  resize_keyboard: true, is_persistent: true, input_field_placeholder: "ID матча или Friend ID",
+};
+const MENU_TEXT = "Главное теперь на кнопках внизу, вместо клавиатуры: «Мои катки», «Видеоразбор», «Тренер и цены», «Помощь». Слэш писать не нужно.";
+// «Видеоразбор» с кнопки — по последней катке, которую видел бот (пуш после игры); не знаем её — спросим номер
+export async function menuCommand(env, userId, text) {
+  const cmd = MENU[String(text || "").trim()];
+  if (cmd !== "/video") return cmd || null;
+  const last = await env.COACH_KV.get(`lastm:${userId}`).catch(() => null);
+  return last ? `/video ${last}` : cmd;
+}
 const appButton = { inline_keyboard: [[{ text: "Открыть разбор", web_app: { url: APP_URL } }]] };
 const WELCOME_PHOTO = `${APP_URL}welcome.jpg?v=1`;
 const welcomeButtons = { inline_keyboard: [[{ text: "Открыть разбор", web_app: { url: APP_URL } }], [{ text: "Посмотреть пример разбора", web_app: { url: `${APP_URL}?demo=1` } }]] };
-const HELP_TEXT = "Что умеет бот:\n"
+const HELP_TEXT = "Что умеет бот (главное — на кнопках внизу):\n"
   + "• Кинь ID матча или ссылку с OpenDota/Dotabuff/Stratz — открою разбор: кто слил, ошибки по таймкодам, повтор на карте.\n"
   + "• Кинь Friend ID — привяжу аккаунт, и после каждой катки напишу, можно ли разобрать.\n"
   + `• ${VIDEO_HELP}\n`
@@ -1513,6 +1529,11 @@ async function greet(env, msg) {
   // /start — с картинкой разбора и кнопкой примера: голый текст новички не дочитывали. Картинка не ушла — шлём текстом
   const ok = (start && await sendTelegram(env, "sendPhoto", { chat_id: msg.chat.id, photo: WELCOME_PHOTO, caption: WELCOME_TEXT, reply_markup: welcomeButtons }).catch(() => false))
     || await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: start ? WELCOME_TEXT : HINT_TEXT, reply_markup: start ? welcomeButtons : appButton }).catch(() => false);
+  // кнопки меню под полем ввода: у сообщения одна клавиатура, поэтому отдельным коротким сообщением
+  // показываем один раз на человека: кнопки дальше висят сами, а /help их возвращает, если человек их скрыл
+  if (ok && (await env.COACH_KV.get(`menu:${msg.from.id}`)) !== MENU_VERSION) {
+    if (await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: MENU_TEXT, reply_markup: menuKeyboard }).catch(() => false)) await env.COACH_KV.put(`menu:${msg.from.id}`, MENU_VERSION);
+  }
   return { greeted: ok ? 1 : 0 };
 }
 
@@ -1584,7 +1605,7 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
     if (got && got.pack) await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: thanksText(got.pack, got.wallet), reply_markup: appButton }).catch(() => false);
     return got;
   }
-  const cmd = String(msg.text || "").trim();
+  const cmd = (await menuCommand(env, msg.from.id, msg.text)) || String(msg.text || "").trim();
   if (/^\/paysupport(?:@\w+)?$/i.test(cmd) || /^\/terms(?:@\w+)?$/i.test(cmd)) {
     await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: /^\/terms/i.test(cmd) ? TERMS_TEXT : PAYSUPPORT_TEXT }).catch(() => false);
     return { info: 1 };
@@ -1619,7 +1640,7 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
   const video = parseVideoCommand(cmd);
   if (video) return requestVideo(env, (m, b) => tgCall(env, m, b), { user: msg.from.id, match: video.match, pick: video.pick, owner: isOwner(env, msg.from.id) }, now);
   if (/^\/help(?:@\w+)?$/i.test(cmd)) {
-    await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: HELP_TEXT, reply_markup: appButton }).catch(() => false);
+    await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text: HELP_TEXT, reply_markup: menuKeyboard }).catch(() => false);
     return { help: 1 };
   }
   // пуш после катки и напоминание о серии: отписка и подписка обратно

@@ -15,7 +15,7 @@ test("виджеты влезают в лимит Телеграма", () => {
 test("состояние карточки катки: до 1024 байт, итог по KDA", () => {
   const m = { match_id: 8123456789, player_slot: 0, radiant_win: true, hero_id: 1, kills: 3, deaths: 11, assists: 5, duration: 2460, gold_per_min: 412, xp_per_min: 530, last_hits: 180, hero_damage: 21450, tower_damage: 900 };
   const s = matchState(m, { 1: ["npc_dota_hero_antimage", "Anti-Mage"] });
-  assert.equal(s.h, "Катка на Anti-Mage");
+  assert.equal(s.h, "Anti-Mage");
   assert.equal(s.w, 1);
   assert.equal(s.t, 41);
   assert.ok(Buffer.byteLength(JSON.stringify({ ...s, v: "queued" })) <= 1024);
