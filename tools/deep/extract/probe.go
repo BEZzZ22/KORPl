@@ -107,7 +107,7 @@ func (x *extractor) probeDump(title string, e *manta.Entity) {
 }
 
 func (x *extractor) probe() {
-	if x.probed || x.players == nil || x.serverTime()-x.start < 600 || x.start <= 0 {
+	if x.probed || x.players == nil || x.serverTime()-x.start < 300 || x.start <= 0 {
 		return
 	}
 	x.probed = true

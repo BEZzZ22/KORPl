@@ -216,9 +216,12 @@ func pos(e *manta.Entity) (int32, int32, bool) {
 }
 
 func (x *extractor) entName(e *manta.Entity) string {
-	if idx, ok := e.GetInt32("m_pEntity.m_nameStringableIndex"); ok && idx >= 0 {
-		if s, ok := x.p.LookupStringByIndex("EntityNames", idx); ok {
-			return s
+	// поле переименовали в одном из патчей 2026 года: пробуем новое имя, потом старое
+	for _, f := range []string{"m_pEntity.m_nameStringTableIndex", "m_pEntity.m_nameStringableIndex"} {
+		if idx, ok := e.GetInt32(f); ok && idx >= 0 {
+			if s, ok := x.p.LookupStringByIndex("EntityNames", idx); ok && s != "" {
+				return s
+			}
 		}
 	}
 	return ""
@@ -448,11 +451,16 @@ func (x *extractor) sampleInventory(now float64) {
 
 func (x *extractor) sampleCreeps(sec int) {
 	f := creepFrame{T: sec, L: []int32{}, D: []int32{}}
-	for _, e := range x.ents {
-		cn := e.GetClassName()
-		if cn != "CDOTA_BaseNPC_Creep_Lane" && cn != "CDOTA_BaseNPC_Creep_Siege" {
-			continue
+	// по порядку номеров сущностей: один и тот же реплей даёт один и тот же файл
+	ids := make([]int32, 0, 64)
+	for idx, e := range x.ents {
+		if cn := e.GetClassName(); cn == "CDOTA_BaseNPC_Creep_Lane" || cn == "CDOTA_BaseNPC_Creep_Siege" {
+			ids = append(ids, idx)
 		}
+	}
+	sort.Slice(ids, func(a, b int) bool { return ids[a] < ids[b] })
+	for _, idx := range ids {
+		e := x.ents[idx]
 		if numOr(e, "m_lifeState", 1) != 0 {
 			continue
 		}
@@ -690,6 +698,13 @@ func main() {
 	if x.players == nil || len(x.secs) < 60 || x.start <= 0 {
 		fmt.Fprintln(os.Stderr, "в реплее нет игроков или игра не началась")
 		os.Exit(3)
+	}
+	for _, pl := range x.players {
+		if pl.Hero == "" {
+			// без имён героев журнал боя не привязать к игрокам: лучше не отдать ничего, чем отдать пустой разбор
+			fmt.Fprintln(os.Stderr, "не нашлись имена героев: похоже, после патча поменялись поля, запусти проверку с probe")
+			os.Exit(4)
+		}
 	}
 
 	start := x.start

@@ -2,7 +2,8 @@
 # Вручную: Actions → «Глубокий разбор: проверка и нормы».
 #   match_ids — номера матчей через пробел: разбор ляжет в ветку replays, d/<матч>.json (как после обычной заявки);
 #   raw = да — рядом ляжут сырые данные dr/<матч>.json.gz (для отладки правил);
-#   norms — сколько свежих матчей высокого ранга добавить в нормы d/norms.json (копятся в d/norms-src.json).
+#   norms — сколько свежих матчей высокого ранга добавить в нормы d/norms.json (копятся в d/norms-src.json);
+#   norms_reset = да — выбросить накопленное и собрать нормы заново (после смены правил в analyze.mjs).
 # Нейросетей и секретов нет: готовый парсер manta + правила.
 name: "Глубокий разбор: проверка и нормы"
 
@@ -22,6 +23,9 @@ on:
         description: "Сколько матчей высокого ранга добавить в нормы"
         required: false
         default: "0"
+      norms_reset:
+        description: "да — собрать нормы заново (после смены правил)"
+        required: false
 
 permissions:
   contents: write
@@ -86,8 +90,10 @@ jobs:
         if: ${{ inputs.norms != '' && inputs.norms != '0' }}
         env:
           NORMS: ${{ inputs.norms }}
+          RESET: ${{ inputs.norms_reset }}
         run: |
           case "$NORMS" in *[!0-9]*) echo "не число"; exit 0 ;; esac
+          if [ "$RESET" = "да" ]; then rm -f out/d/norms-src.json out/d/norms.json; echo "нормы собираем заново"; fi
           node tools/deep/norms-job.mjs "$NORMS" norms-work out/d/norms-src.json > done.txt || true
           if [ -s done.txt ]; then
             node tools/deep/norms.mjs out/d/norms-src.json $(cat done.txt) > norms.new && mv norms.new out/d/norms.json
