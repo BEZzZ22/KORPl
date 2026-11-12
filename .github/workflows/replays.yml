@@ -2,6 +2,7 @@
 # Воркер тренера держит очередь матчей (GET /replay-queue). Прогон дежурит почти 6 часов и раз в минуту смотрит очередь:
 # качает реплей у Valve, разбирает парсером OpenDota (docker odota/parser) и кладёт позиции
 # в ветку replays: r/<match_id>.json. Воркер видит файл, снимает матч с очереди и пишет игроку в Телеграм.
+# Рядом кладётся глубокий разбор d/<match_id>.json (tools/deep: туман войны, причины смертей, драки, время, варды).
 # Крон GitHub «раз в 10 минут» на деле срабатывает раз в 2–5 часов, поэтому заявка ждала часами.
 # Теперь следующий прогон уже стоит в очереди concurrency и стартует сразу, как закончится дежурство.
 # Секреты не нужны: очередь публичная, результат пишется встроенным GITHUB_TOKEN.
@@ -34,6 +35,18 @@ jobs:
         with:
           ref: replays
           path: out
+
+      # Глубокий разбор (tools/deep): свой сборщик на готовом парсере manta — туман войны, здоровье, готовность кнопок.
+      # Не собрался — дежурство идёт как раньше, просто без файла d/<матч>.json
+      - uses: actions/setup-go@v5
+        continue-on-error: true
+        with:
+          go-version-file: tools/deep/extract/go.mod
+          cache-dependency-path: tools/deep/extract/go.sum
+
+      - name: Сборщик глубокого разбора
+        continue-on-error: true
+        run: cd tools/deep/extract && go build -o ../../../deep-extract . && echo "собран"
 
       - name: Парсер OpenDota
         run: |
@@ -91,6 +104,16 @@ jobs:
                     *) break ;;
                   esac
                 done
+                # глубокий разбор тем же реплеем; не вышел — позиции всё равно отдадим
+                if [ -x ./deep-extract ]; then
+                  mkdir -p out/d
+                  if timeout 300 ./deep-extract replay.dem > deep-raw.json 2> deep.err && node tools/deep/analyze.mjs deep-raw.json out/d/norms.json > "out/d/$id.json" 2>> deep.err; then
+                    echo "глубокий разбор: $(wc -c < "out/d/$id.json") байт"
+                  else
+                    rm -f "out/d/$id.json"; echo "глубокий разбор не вышел: $(tail -c 300 deep.err)"
+                  fi
+                  rm -f deep-raw.json deep.err
+                fi
                 # как у самой OpenDota: поток через -T - (chunked), без Content-Length и Expect
                 code=$(curl -s --max-time 900 -X POST -T - -o parsed.jsonl -w "%{http_code}" http://localhost:5600 < replay.dem || echo "curl-fail")
                 if node tools/replay-summary.mjs "$id" < parsed.jsonl > "out/r/$id.json"; then
@@ -111,6 +134,7 @@ jobs:
                 echo "::endgroup::"
             done
             git -C out add r
+            [ -d out/d ] && git -C out add d
             if ! git -C out diff --cached --quiet; then
               git -C out commit -q -m "Реплеи: $ids"
               # пуш не прошёл и после повторов — не роняем дежурство: коммит уйдёт со следующим кругом
