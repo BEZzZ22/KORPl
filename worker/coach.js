@@ -1220,7 +1220,7 @@ function userNotes(a) {
   const out = [];
   const bad = Object.keys(a.e || {}).filter((k) => k.startsWith("link_bad_")).map(stepName);
   if (bad.length) out.push(`  неверный ID: ${bad.join(", ")}`);
-  if (a.j) out.push(/^Script error/.test(a.j) ? "  ошибка в чужом скрипте (Телеграм), приложению не мешала" : `  ошибка в коде: ${a.j}`);
+  if (a.j) out.push(/^Script error/.test(a.j) ? "  ошибка в чужом скрипте (Телеграм), приложению не мешала" : `  ошибка в коде: ${String(a.j).replace(/#tgWebAppData\S*/g, "")}`);
   return out;
 }
 const lastStep = (a) => (a.p ? a.p.split(",").pop().split(":")[0] : "");
@@ -2260,7 +2260,7 @@ export default {
     chores.push(streakReminders(env, (m, b) => tgCall(env, m, b), now).catch((e) => console.log(`серия: ${e && e.message || e}`)));
     chores.push(kickRelay(env, now).catch((e) => console.log(`выгрузка OpenDota: ${e && e.message || e}`)));
     chores.push(chatChores(env, (m, b) => tgCall(env, m, b), now).catch((e) => console.log(`чат: ${e && e.message || e}`)));
-    chores.push(broadcastStep(env, (m, b) => tgCall(env, m, b), now).catch((e) => console.log(`рассылка: ${e && e.message || e}`)));
+    chores.push(broadcastStep(env, (m, b) => tgCall(env, m, b), now, { menu: { markup: menuKeyboard, version: MENU_VERSION } }).catch((e) => console.log(`рассылка: ${e && e.message || e}`)));
     chores.push(checkVideo(env, (m, b) => tgCall(env, m, b), now).catch((e) => console.log(`видеоразбор: ${e && e.message || e}`)));
     chores.push(replyStep(env, (m, b) => tgCall(env, m, b), now).catch((e) => console.log(`ответ от бота: ${e && e.message || e}`)));
     ctx.waitUntil(Promise.all([checkWatches(env), checkReplays(env), reportOnRequest(env), ensureWebhook(env), ...chores]));

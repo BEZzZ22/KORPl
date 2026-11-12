@@ -39,3 +39,13 @@ test("ответ от бота: одному, один раз, итог в reply
   assert.deepEqual(await replyStep(env, tg), { ok: false });
   assert.equal(sent.length, 1);
 });
+
+test("рассылка menu*: кнопки меню под полем ввода и отметка, что они показаны", async () => {
+  const store = kv(), env = { COACH_KV: store }, sent = [];
+  await store.put("seen:7", "1");
+  await store.put("bcast_job", JSON.stringify({ id: "menu1", text: "Кнопки" }));
+  const tg = async (m, b) => { sent.push(b); return {}; };
+  await broadcastStep(env, tg, Date.now(), { menu: { markup: { keyboard: [[{ text: "Помощь" }]], is_persistent: true }, version: "1" } });
+  assert.equal(sent[0].reply_markup.keyboard[0][0].text, "Помощь");
+  assert.equal(await store.get("menu:7"), "1");
+});

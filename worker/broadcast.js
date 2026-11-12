@@ -9,7 +9,9 @@ const TTL = 30 * 86400;
 const owners = (env) => String(env.OWNER_TG_IDS || "").split(",").map((x) => x.trim()).filter(Boolean);
 export const bcastButtons = { inline_keyboard: [[{ text: "Добавить бота в чат пати", url: addUrl }], [{ text: "Открыть приложение", web_app: { url: APP_URL } }]] };
 
-export async function broadcastStep(env, tg, now = Date.now()) {
+// keyboards — клавиатуры для рассылок по имени: рассылка menu* ставит кнопки меню под полем ввода (menuKeyboard из coach.js)
+// и помечает menu:<id>, чтобы приветствие их не повторяло
+export async function broadcastStep(env, tg, now = Date.now(), keyboards = {}) {
   const kv = env.COACH_KV;
   const job = kv && await kv.get("bcast_job", "json").catch(() => null);
   if (!job || !/^[a-z0-9_-]{1,32}$/i.test(String(job.id || "")) || !String(job.text || "").trim()) return null;
@@ -29,8 +31,10 @@ export async function broadcastStep(env, tg, now = Date.now()) {
       done++;
       await kv.put(mark, "1", { expirationTtl: TTL });
       if (await kv.get(`nodigest:${id}`)) { stat.skip++; continue; }
-      const res = await tg("sendMessage", { chat_id: Number(id), text: job.text, reply_markup: bcastButtons, disable_web_page_preview: true }).catch(() => null);
+      const menu = /^menu/i.test(job.id) && keyboards.menu;
+      const res = await tg("sendMessage", { chat_id: Number(id), text: job.text, reply_markup: menu ? keyboards.menu.markup : bcastButtons, disable_web_page_preview: true }).catch(() => null);
       if (res) stat.ok++; else stat.fail++;
+      if (res && menu) await kv.put(`menu:${id}`, keyboards.menu.version);
     }
     if (got.list_complete || !got.cursor) break;
     cursor = got.cursor;
