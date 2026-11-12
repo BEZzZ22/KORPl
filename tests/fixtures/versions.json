@@ -8,12 +8,16 @@
   "sha": "fa104be1129fe933"
  },
  "app.js": {
-  "v": "150",
-  "sha": "49de0db89d94734f"
+  "v": "151",
+  "sha": "17cd1f6ede542dde"
  },
  "blame.js": {
   "v": "15",
   "sha": "ce25f67a3366dd4b"
+ },
+ "deep.js": {
+  "v": "1",
+  "sha": "0e86342764ca1dfb"
  },
  "dotamap.js": {
   "v": "9",
@@ -56,15 +60,15 @@
   "sha": "92c6d04cd19ade1a"
  },
  "texts.json": {
-  "v": "21",
-  "sha": "c0747bf789d5aa09"
+  "v": "22",
+  "sha": "721533435eeed635"
  },
  "theme.js": {
-  "v": "6",
-  "sha": "ddb64cfa4ef3037c"
+  "v": "7",
+  "sha": "a9d36182f91c03ff"
  },
  "v2.css": {
-  "v": "13",
-  "sha": "a7eebb4b195b567d"
+  "v": "14",
+  "sha": "d62c019ffbcd901b"
  }
 }

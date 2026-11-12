@@ -139,6 +139,7 @@ function coach(body) {
 
 // Настоящий разбор реплея этого матча (GitHub Actions + odota/parser)
 const REPLAY = gz("replay_9052987576.json.gz");
+const DEEP = gz("deep_9052987576.json.gz");
 // UI_REPLAY_BROKEN=1 — кривой файл позиций: трёх героев нет, у остальных дыры и обрезанный конец (вылет из игры, сбой парсера)
 if (process.env.UI_REPLAY_BROKEN) {
   const slots = Object.keys(REPLAY.pos);
@@ -215,6 +216,7 @@ async function handleRoute(route) {
     // UI_MIRROR_DOWN=1 — GitHub тоже недоступен (бывает у провайдеров): справочники и позиции идут через воркер
     if (process.env.UI_MIRROR_DOWN) return route.abort("connectionrefused");
     if (mirror) return route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(opendota(new URL(`https://api.opendota.com/api/constants/${mirror[1]}`))) });
+    if (url.pathname.endsWith(`/d/${match.match_id}.json`)) return route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(DEEP) });
     return url.pathname.endsWith(`/r/${match.match_id}.json`) ? route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(REPLAY) }) : route.fulfill({ status: 404, body: "" });
   }
   if (url.hostname === "telegram.org") return route.fulfill({ status: 200, contentType: "text/javascript", body: "" });
@@ -474,6 +476,19 @@ await step("timecode", async () => {
   await page.waitForSelector(".live-map", { timeout: 10000 });
   await page.locator(".tabs .tab", { hasText: "Обзор" }).click();
 });
+// Вкладка «Реплей»: глубокий разбор по записи игры — главное, каждая смерть, драки, время, линия
+await step("deep", async () => {
+  await page.locator(".tabs .tab", { hasText: "Реплей" }).click();
+  await page.waitForSelector(".deep .deep-head", { timeout: 10000 });
+  const deaths = await page.locator(".deep-death").count();
+  if (!deaths) throw new Error("нет карточек смертей");
+  await page.locator(".deep-death summary").first().click();
+  const text = await page.locator(".deep").innerText();
+  if (/\{\w+\}/.test(text)) throw new Error(`незаполненный шаблон: ${text.match(/\{\w+\}/)[0]}`);
+  if (!(await page.locator(".deep-bar").count())) throw new Error("нет полосок времени");
+  await shot("deep");
+  await page.locator(".tabs .tab", { hasText: "Обзор" }).click();
+});
 await step("moment-ask", async () => {
   await page.locator(".tabs .tab", { hasText: "Фазы" }).click();
   const before = await page.locator(".chat-msg.assistant").count();
@@ -483,7 +498,7 @@ await step("moment-ask", async () => {
   await page.waitForFunction((n) => document.querySelectorAll(".chat-msg.assistant:not(.typing)").length > n, before, { timeout: 10000 });
   await page.locator(".tabs .tab").nth(0).click();
 });
-for (const [i, name] of ["blame", "story", "phases", "deaths", "map", "build", "charts"].entries()) {
+for (const [i, name] of ["blame", "story", "replay", "phases", "deaths", "map", "build", "charts"].entries()) {
   await step(name, async () => {
     await page.locator(".tabs .tab").nth(i + 1).click();
     await page.waitForTimeout(250);
@@ -689,7 +704,7 @@ if (!only || only.has("paywall")) {
     await p8.goto(`${BASE}/index.html?match=${match.match_id}`);
     await p8.waitForSelector(".tab.locked", { timeout: 20000 });
     const locks = await p8.locator(".tab.locked").count();
-    if (locks !== 6) throw new Error(`замков на вкладках ${locks}, ждали 6`);
+    if (locks !== 7) throw new Error(`замков на вкладках ${locks}, ждали 7`);
     await p8.locator(".tab", { hasText: "Кто слил" }).click();
     if (await p8.locator(".locked-tab").count()) throw new Error("«Кто слил» под замком");
     await p8.locator(".tab", { hasText: "Фазы" }).click();

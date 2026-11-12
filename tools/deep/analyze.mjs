@@ -418,6 +418,11 @@ class Game {
       nw: this.tracks[v].nw[this.i(tsI)], lvl: this.tracks[v].lvl[this.i(tsI)],
     };
     r.kind = this.deathKind(r);
+    if (fight) {
+      const mates = fight.deaths.filter((q) => this.team[q.slot] === team);
+      r.fight = { t: fight.t, order: mates.findIndex((q) => q.slot === v && Math.abs(q.t - T) < 0.5) + 1, after: round(T - fight.t, 1),
+        dmg: Math.round(sum(fight.ev.filter((e) => e.s === v && e.t <= T).map((e) => e.n))) };
+    }
     return r;
   }
 
@@ -425,15 +430,26 @@ class Game {
   deathKind(r) {
     const k = r.killers;
     if (!k.length) return r.tower_dmg > 0 ? "tower" : "creeps";
-    const fogAll = k.every((q) => q.fog >= 3);
+    // «из тумана»: убийцу не видели вовсе или он показался за секунду-две до удара (блинк, выход из инвиза)
+    const total = sum(k.map((q) => q.dmg)) || 1;
+    const sudden = (q) => q.fog >= 2 || q.seen <= 2;
+    const fogShare = sum(k.filter(sudden).map((q) => q.dmg)) / total;
+    r.fog_share = round(fogShare, 2);
+    const fogAll = fogShare >= 0.6;
     const outnumber = k.length - (1 + r.allies_near);
     if (r.enemy_tower !== null && r.enemy_tower < 900 && r.tower_dmg > 0 && !r.in_fight) return "dive_enemy_tower";
-    if (r.low_for >= 10 && r.hp0 < 0.4) return "low_hp";
+    if ((r.hp0 < 0.3 && r.low_for >= 10) || (r.hp0 < 0.4 && r.low_for >= 15)) return "low_hp";
     if (r.in_fight && r.allies_near >= 2) return "fight";
     if (fogAll && k.some((q) => q.smoke)) return "smoke";
-    if (fogAll && r.side !== "own" && r.missing >= 3 && (r.ally_dist === null || r.ally_dist > 2000)) return "blind_farm";
+    // один, врагов не видно, свои вышки далеко: это уже не «не повезло», а выбор места
+    const exposedSpot = r.side !== "own" || r.own_tower === null || r.own_tower > 2500;
+    if (fogAll && exposedSpot && r.missing >= 3 && (r.ally_dist === null || r.ally_dist > 2500)) return "blind_farm";
     if (fogAll) return "gank";
-    if (k.some((q) => q.seen >= 4 && q.seenDist > 1000)) return "saw_coming";
+    // видел и не ушёл: главный по урону шёл к тебе на виду хотя бы 4 с с дистанции, с которой ещё можно уйти
+    const main = k[0];
+    // на линии соперник на виду всегда, поэтому там планка выше: пришёл издалека
+    const farEnough = r.t < 480 ? 2200 : 1500;
+    if (main.seen >= 4 && main.seenDist >= farEnough && main.seenDist <= 3500) return "saw_coming";
     if (outnumber >= 2) return "outnumbered";
     if (r.own_tower !== null && r.own_tower < 800) return "dived";
     return "duel";
@@ -534,8 +550,10 @@ class Game {
       let q = k;
       while (q < this.n && (act[q] === "m" || act[q] === "s")) q++;
       const dur = q - k, t = k + this.t0;
-      if (dur >= 35 && t > 300 && this.state(slot, "item_tpscroll", t) === 1 && !this.casts[slot].some((c) => c.n === "item_tpscroll" && c.t >= t - 5 && c.t <= t + dur)) {
-        walks.push({ t, dur, dist: Math.round(this.dist(this.pos(slot, t), this.pos(slot, t + dur))) });
+      const far = Math.round(this.dist(this.pos(slot, t), this.pos(slot, t + dur)));
+      // только настоящий переход через карту: рядом с базой или кругами по лесу — не в счёт
+      if (dur >= 35 && far >= 6500 && t > 300 && this.state(slot, "item_tpscroll", t) === 1 && !this.casts[slot].some((c) => c.n === "item_tpscroll" && c.t >= t - 5 && c.t <= t + dur)) {
+        walks.push({ t, dur, dist: far });
       }
       k = q;
     }
@@ -709,7 +727,7 @@ function findings(p, out) {
         heroes: d.killers.map((k) => hero(k.slot)), ward: d.ward_watch, exposed: d.exposed,
         last: last ? { hero: hero(last.slot), ago: Math.round(d.t0 - last.last.t), zone: last.last.zone.z, side: last.last.zone.side } : null });
     } else if (d.kind === "saw_coming") {
-      const k = d.killers.filter((q) => q.seen >= 4).sort((a, b) => b.seen - a.seen)[0];
+      const k = d.killers[0];
       add("death_saw_coming", 3, d.t, { ...base, hero: hero(k.slot), sec: k.seen, dist: k.seenDist });
     } else if (d.kind === "low_hp") add("death_low_hp", 3, d.t, { ...base, sec: d.low_for });
     else if (d.kind === "dive_enemy_tower") add("death_tower_dive", 2, d.t, { ...base, tower: d.tower_dmg });
@@ -717,7 +735,7 @@ function findings(p, out) {
     else if (d.kind === "duel" && top) add("death_duel", 1, d.t, { ...base, hero: hero(top.slot), nw: top.nw - d.nw, lvl: top.lvl - d.lvl });
     if (d.unused.length && d.kind !== "low_hp") add("death_unused_item", 3, d.t, { items: d.unused.slice(0, 2), free: d.free });
     if (d.ult_unused && d.free >= 3) add("death_unused_ult", 1, d.t, { ability: d.ult_unused, free: d.free });
-    if (d.after_buyback) add("death_after_buyback", 3, d.t, {});
+    if (d.after_buyback && d.zone !== "base") add("death_after_buyback", 3, d.t, {});
     if (d.ward_watch && d.exposed >= 10 && !["gank", "smoke"].includes(d.kind)) add("death_ward_watch", 2, d.t, { exposed: d.exposed });
   }
 
@@ -727,10 +745,10 @@ function findings(p, out) {
     }
     if (f.state !== "in") continue;
     const squishy = p.role === 5 || p.role === 4 || (p.role <= 2 && p.ranged);
-    if (squishy && f.front_rank === 1 && f.front_of >= 3 && f.next_dist - f.front_dist > 250 && (f.died_at !== undefined || f.first_target)) {
+    if (squishy && f.front_rank === 1 && f.front_of >= 3 && f.front_dist < 1300 && f.next_dist - f.front_dist > 250 && (f.died_at !== undefined || f.first_target)) {
       add("fight_too_close", f.died_at !== undefined && f.death_order === 1 ? 3 : 2, f.t, { dist: f.front_dist, next: f.next_dist, next_hero: hero(f.next_slot), died: f.died_at ?? null });
     }
-    if (p.role === 3 && f.front_rank && f.front_rank >= 3 && f.front_of >= 4 && f.won === false) {
+    if (p.role === 3 && f.front_rank && f.front_rank >= 3 && f.front_of >= 4 && f.won === false && f.front_dist >= 900 && f.front_dist <= 1800) {
       add("fight_too_far", 2, f.t, { rank: f.front_rank, of: f.front_of, dist: f.front_dist });
     }
     if (f.died_at !== undefined && f.died_at < 4 && f.casts === 0 && f.death_order === 1) add("fight_died_first", 3, f.t, { sec: f.died_at });
@@ -741,7 +759,7 @@ function findings(p, out) {
 
   const tm = p.time;
   for (const w of tm.walks) add("time_walk", 1, w.t, { sec: w.dur });
-  if (tm.idle_sec >= 90) add("time_idle", tm.idle_sec >= 180 ? 2 : 1, tm.idles[0] ? tm.idles[0].t : null, { sec: tm.idle_sec, longest: tm.idles[0] ? tm.idles[0].dur : 0 });
+  if (tm.idle_sec >= 150 && tm.total && tm.total.idle >= 0.04 && tm.idles[0]) add("time_idle", 1, tm.idles[0].t, { sec: tm.idle_sec, longest: tm.idles[0].dur });
   if (p.vs) {
     const v = p.vs;
     const worse = (k, higherIsBad = true) => v[k] && (higherIsBad ? v[k].v > v[k].p75 : v[k].v < v[k].p25);
