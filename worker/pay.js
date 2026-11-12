@@ -183,13 +183,16 @@ export function parsePayload(s) {
 }
 
 // tg(method, body) -> результат метода Bot API или null
-export async function invoiceLink(tg, pack, id) {
+export function invoiceParams(pack, id) {
   const p = PACKS[pack];
-  if (!p) return null;
-  return tg("createInvoiceLink", {
+  return p ? {
     title: p.title, description: p.text, payload: payloadOf(pack, id), provider_token: "", currency: "XTR",
     prices: [{ label: p.title, amount: p.stars }],
-  });
+  } : null;
+}
+export async function invoiceLink(tg, pack, id) {
+  const body = invoiceParams(pack, id);
+  return body ? tg("createInvoiceLink", body) : null;
 }
 
 // Телеграм ждёт ответа на pre_checkout_query до 10 секунд: проверяем, что пакет и сумма те же, что в счёте

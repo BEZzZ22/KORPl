@@ -12,6 +12,7 @@ import { handlePartyMessage } from "./party.js";
 import { broadcastStep, replyStep } from "./broadcast.js";
 import { relayTasks, relayRun, kickRelay, ODREQ_PREFIX } from "./relay.js";
 import { requestVideo, resumeVideo, parseVideoCommand, videoPending, videoQueue, videoDone, checkVideo, VIDEO_BUTTON, VIDEO_HELP } from "./video.js";
+import { handleWidgetQuery, sendShopWidget } from "./widget.js";
 import { matchFromText, matchButton, MATCH_TEXT, accountFromText, linkButton, LINK_TEXT, OD_HEADERS, noteReferral, rewardReferral, referralFromStart, noteStartSource, bumpStreak, growthView, streakReminders, inlineAnswer, noteRefMatch } from "./growth.js";
 import { CHAT_ID, handleChatUpdate, chatChores, chatStatus, releaseIfPending } from "./chatguard.js";
 import { spendUnit, openMatch, spendChat, isOpen, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT, loginUser, roboLink, roboResult, robokassaOn, payUrl, tokenUser } from "./pay.js";
@@ -1398,7 +1399,7 @@ export async function dailyReport(env, now = Date.now()) {
 // Апдейты бота приходят вебхуком на /tg (крон сам ставит его один раз). Отчёт — только владельцу в личке,
 // остальным приветствие с кнопкой приложения. «отчёт» — за сегодня до текущей минуты, «отчёт вчера», «отчёт 26.10»
 const WORKER_URL = "https://dotacoach.2007rggg.workers.dev";
-const WEBHOOK_VERSION = "4"; // меняется вместе с allowed_updates: крон переставит вебхук
+const WEBHOOK_VERSION = "5"; // меняется вместе с allowed_updates: крон переставит вебхук
 async function webhookSecret(token) {
   const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`tg-hook:${token}`)));
   return [...hash.slice(0, 20)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -1429,7 +1430,7 @@ export async function ensureWebhook(env) {
   await ensureProfile(env).catch((e) => console.log(`профиль бота: ${e && e.message || e}`));
   if ((await env.COACH_KV.get("tg_webhook")) === WEBHOOK_VERSION) return true;
   const ok = await sendTelegram(env, "setWebhook", {
-    url: `${env.WORKER_URL || WORKER_URL}/tg`, secret_token: await webhookSecret(env.BOT_TOKEN), allowed_updates: ["message", "edited_message", "callback_query", "chat_member", "pre_checkout_query", "inline_query"],
+    url: `${env.WORKER_URL || WORKER_URL}/tg`, secret_token: await webhookSecret(env.BOT_TOKEN), allowed_updates: ["message", "edited_message", "callback_query", "chat_member", "pre_checkout_query", "inline_query", "widget_query"],
     // висящие апдейты не выбрасываем: среди них может быть оплата звёздами, которую иначе не зачислим
     drop_pending_updates: false,
   }).catch(() => false);
@@ -1551,6 +1552,11 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
   // чат канала: капча, приветствие, антиспам (worker/chatguard.js)
   const guarded = await handleChatUpdate(env, (m, b) => tgCall(env, m, b), update, now);
   if (guarded) return { chat: guarded };
+  // нажатия в виджетах: карточка катки и витрина (worker/widget.js)
+  if (update && update.widget_query) {
+    const q = update.widget_query;
+    return handleWidgetQuery(env, (m, b) => tgCall(env, m, b), q, now, { requestVideo, owner: Boolean(q.from && isOwner(env, q.from.id)) });
+  }
   // кнопка «Видеоразбор» под карточкой матча (worker/video.js)
   const press = update && update.callback_query;
   // «vid:<матч>:<место>» — выбор игрока владельцем (место у остальных воркер не берёт)
@@ -1587,6 +1593,8 @@ export async function handleBotUpdate(env, update, now = Date.now()) {
     const card = robokassaOn(env) && { text: "Картой или СБП", url: await payUrl(env.BOT_TOKEN, msg.from, now) };
     const text = `Одна катка целиком — ${PACKS.p1.stars} звёзд или ${PACKS.p1.rub} ₽. Тренер: ${PACKS.p10.credits} разборов — ${PACKS.p10.stars} звёзд или ${PACKS.p10.rub} ₽, месяц — ${PACKS.month.stars} звёзд или ${PACKS.month.rub} ₽. Звёздами — в приложении, на экране тренера`
       + (card ? ", картой или через СБП — по кнопке ниже (ссылка на сутки)." : ".");
+    // витрина виджетом: выбрал пакет и способ — счёт следующим сообщением. Подпись — для старых приложений
+    if (await sendShopWidget(env, (m, b) => tgCall(env, m, b), msg.chat.id, `Тренер: ${PACKS.p10.credits} разборов — ${PACKS.p10.stars} звёзд или ${PACKS.p10.rub} ₽, месяц — ${PACKS.month.stars} звёзд или ${PACKS.month.rub} ₽, видеоразбор — ${PACKS.video.stars} звёзд или ${PACKS.video.rub} ₽.`)) return { pay: "widget" };
     await sendTelegram(env, "sendMessage", { chat_id: msg.chat.id, text, reply_markup: { inline_keyboard: [...(card ? [[card]] : []), ...appButton.inline_keyboard] } }).catch(() => false);
     return { pay: 1 };
   }

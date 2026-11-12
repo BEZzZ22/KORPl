@@ -101,7 +101,9 @@ test("пуш после катки: первый обход запоминает
   const r = await relayRun(env, tg, { data: { "/players/42/recentMatches": g(101, now - 600_000), "/players/43/recentMatches": g(201, now) }, users: t1.users }, now);
   assert.equal(r.push, 1);
   assert.equal(sent[0].chat_id, 7);
-  assert.match(sent[0].text, /поражение, 2\/9\/4, 40 мин/);
+  assert.match(sent[0].caption, /поражение, 2\/9\/4, 40 мин/);
+  assert.equal(JSON.parse(sent[0].chat_data).d, 9);
+  assert.equal(await kv.get("wgt:7:101"), null); // ответ без message_id — карточку не запоминаем
   assert.match(sent[0].reply_markup.inline_keyboard[0][0].web_app.url, /\?match=101$/);
   // старая катка (больше 3 часов) — не пушим
   await relayRun(env, tg, { data: { "/players/42/recentMatches": g(102, now - 5 * 3600_000) }, users: { 7: 42 } }, now);

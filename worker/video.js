@@ -5,6 +5,7 @@
 // в ней Telegram id.
 import { matchFromText } from "./growth.js";
 import { PACKS, spendVideo, giveVideo, invoiceLink, payUrl, robokassaOn } from "./pay.js";
+import { matchWidgetStatus } from "./widget.js";
 
 export const VIDEO_PREFIX = "vq:";
 export const VIDEO_FREE_DAYS = 7;          // один бесплатный ролик раз в столько дней, дальше — платный (PACKS.video); владельцу — без счёта
@@ -69,7 +70,15 @@ async function entries(env) {
 
 // Заявка от человека. tg(method, body) — вызов Bot API. Возвращает { video: статус }
 // seat — место игрока 0–9 из приложения: там человек смотрит разбор конкретного игрока, аккаунт привязывать не нужно
-export async function requestVideo(env, tg, { user, match, pick = null, owner = false, seat = null }, now = Date.now()) {
+// Если по катке висит карточка-виджет (worker/widget.js), в ней же обновляется статус ролика
+export async function requestVideo(env, tg, args, now = Date.now()) {
+  const r = await askVideo(env, tg, args, now);
+  if (r && args && args.match && r.video !== "no_match") await matchWidgetStatus(env, tg, args.user, args.match, r.video).catch(() => false);
+  return r;
+}
+const widgetStatus = (env, tg, user, match, v) => matchWidgetStatus(env, tg, user, match, v).catch(() => false);
+
+async function askVideo(env, tg, { user, match, pick = null, owner = false, seat = null }, now = Date.now()) {
   const say = (text, extra = {}) => tg("sendMessage", { chat_id: user, text, ...extra });
   if (!match) { await say("Напиши номер матча после команды: /video 8123456789. Номер есть в истории матчей в Доте и в приложении."); return { video: "no_match" }; }
   const profile = await env.COACH_KV.get(`user:${user}`, "json").catch(() => null);
@@ -158,6 +167,7 @@ export async function videoDone(env, tg, body, now = Date.now()) {
   const key = `${VIDEO_PREFIX}${match}:${user}`;
   const had = await env.COACH_KV.get(key);
   await env.COACH_KV.delete(key);
+  if (had) await widgetStatus(env, tg, user, match, body.status === "done" ? "done" : "error");
   if (body.status !== "done" && had) {
     // неудача ничего не тратит: бесплатный ролик и купленный возвращаются
     await giveBack(env, user, had);
@@ -181,6 +191,7 @@ export async function checkVideo(env, tg, now = Date.now()) {
     if (now - x.t < VIDEO_TTL) continue;
     await giveBack(env, x.user, await env.COACH_KV.get(x.key));
     await env.COACH_KV.delete(x.key);
+    await widgetStatus(env, tg, x.user, x.match, "error");
     await tg("sendMessage", { chat_id: x.user, text: `Видеоразбор матча ${x.match} не успел собраться. Попробуй ещё раз: /video ${x.match}` });
     dropped++;
   }
