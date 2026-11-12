@@ -1,0 +1,101 @@
+# Глубокий разбор по реплею (tools/deep): проверка на заданных матчах и сбор норм высокого ранга.
+# Вручную: Actions → «Глубокий разбор: проверка и нормы».
+#   match_ids — номера матчей через пробел: разбор ляжет в ветку replays, d/<матч>.json (как после обычной заявки);
+#   raw = да — рядом ляжут сырые данные dr/<матч>.json.gz (для отладки правил);
+#   norms — сколько свежих матчей высокого ранга добавить в нормы d/norms.json (копятся в d/norms-src.json).
+# Нейросетей и секретов нет: готовый парсер manta + правила.
+name: "Глубокий разбор: проверка и нормы"
+
+on:
+  workflow_dispatch:
+    inputs:
+      match_ids:
+        description: "Номера матчей через пробел"
+        required: false
+      raw:
+        description: "да — положить и сырые данные"
+        required: false
+      norms:
+        description: "Сколько матчей высокого ранга добавить в нормы"
+        required: false
+        default: "0"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deep-check
+  cancel-in-progress: false
+
+jobs:
+  deep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools/deep
+          sparse-checkout-cone-mode: true
+
+      - name: Ветка с результатами
+        uses: actions/checkout@v4
+        with:
+          ref: replays
+          path: out
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/deep/extract/go.mod
+          cache-dependency-path: tools/deep/extract/go.sum
+
+      - name: Сборщик
+        run: cd tools/deep/extract && go vet ./... && go build -o ../../../deep-extract .
+
+      - name: Матчи
+        env:
+          MATCH_IDS: ${{ inputs.match_ids }}
+          RAW: ${{ inputs.raw }}
+        run: |
+          mkdir -p out/d out/dr
+          for id in $MATCH_IDS; do
+            case "$id" in *[!0-9]*) echo "пропуск: не номер"; continue ;; esac
+            echo "::group::Матч $id"
+            if ! bash tools/deep/fetch-dem.sh "$id" replay.dem match.json; then echo "реплей не скачался"; echo "::endgroup::"; continue; fi
+            echo "реплей: $(stat -c %s replay.dem) байт"
+            if /usr/bin/time -f "сборщик: %e с, память %M КБ" ./deep-extract replay.dem > deep-raw.json && node tools/deep/analyze.mjs deep-raw.json out/d/norms.json > "out/d/$id.json"; then
+              echo "разбор: $(wc -c < "out/d/$id.json") байт, сырьё $(wc -c < deep-raw.json) байт"
+              node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const c={};for(const p of d.players)for(const f of p.findings)c[f.id]=(c[f.id]||0)+1;console.log("драк",d.fights.length,"выводы",JSON.stringify(c))' "out/d/$id.json"
+              if [ "$RAW" = "да" ]; then gzip -9 -c deep-raw.json > "out/dr/$id.json.gz"; fi
+            else
+              rm -f "out/d/$id.json"; echo "разбор не вышел"
+            fi
+            rm -f replay.dem match.json deep-raw.json
+            echo "::endgroup::"
+          done
+
+      - name: Нормы высокого ранга
+        if: ${{ inputs.norms != '' && inputs.norms != '0' }}
+        env:
+          NORMS: ${{ inputs.norms }}
+        run: |
+          case "$NORMS" in *[!0-9]*) echo "не число"; exit 0 ;; esac
+          node tools/deep/norms-job.mjs "$NORMS" norms-work out/d/norms-src.json > done.txt || true
+          if [ -s done.txt ]; then
+            node tools/deep/norms.mjs out/d/norms-src.json $(cat done.txt) > norms.new && mv norms.new out/d/norms.json
+            node -e 'const n=JSON.parse(require("fs").readFileSync("out/d/norms.json","utf8"));console.log("матчей в нормах:",n.matches,JSON.stringify(n.roles["1"]||{}))'
+          else
+            echo "новых матчей нет"
+          fi
+
+      - name: В ветку replays
+        run: |
+          git -C out config user.name "replay-bot"
+          git -C out config user.email "replay-bot@users.noreply.github.com"
+          git -C out add d dr
+          if git -C out diff --cached --quiet; then echo "нечего класть"; exit 0; fi
+          git -C out commit -q -m "Глубокий разбор: проверка"
+          for i in 1 2 3 4; do git -C out push -q origin HEAD:replays && break; sleep $((i * 5)); git -C out pull -q --rebase origin replays || true; done
