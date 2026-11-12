@@ -158,14 +158,14 @@ function draw(ctx, u, t) {
   } else if (t < t0(9) - 0.1) {
     // S8: died with ult ready
     const cut = t0(8) - 0.1;
-    M.shake(ctx, t * 2, (t0(8) + 0.9) * 2, 22);
+    M.shake(ctx, t * 2, (t0(8) + 1.4) * 2, 22);
     cam(ctx, t, cut, 2.0, 540, 960, { punch: 1.45 });
-    set(ctx, t); gosha(ctx, t, { X: t > t0(8) + 0.9 ? T.EXPR.shock : T.EXPR.sad, pose: t > t0(8) + 0.9 ? 'facepalm' : 'cheeks', sweat: 1, blush: 0.6, blink: 0 }); desk(ctx, t);
+    set(ctx, t); gosha(ctx, t, { X: t > t0(8) + 1.4 ? T.EXPR.shock : T.EXPR.sad, pose: t > t0(8) + 1.4 ? 'facepalm' : 'cheeks', sweat: 1, blush: 0.6, blink: 0 }); desk(ctx, t);
     ctx.restore();
-    T.speedLines(ctx, t, 0.8 * pt(t, t0(8) + 0.9, t0(8) + 1.1), '255,90,95');
-    T.stamp(ctx, t, t0(8) + 1.0, t1(8) + 0.3, 'УЛЬТ БЫЛ ГОТОВ', CX, 520, { size: 92, color: RED, rot: -0.08, bg: 'rgba(30,8,10,0.92)' });
-    caption(ctx, 'Гоша *остался*.', t, t0(8), t0(8) + 0.9);
-    caption(ctx, 'И умер с *готовым ультом*', t, t0(8) + 1.0, t1(8) + 0.2, { hl: RED });
+    T.speedLines(ctx, t, 0.8 * pt(t, t0(8) + 1.4, t0(8) + 1.6), '255,90,95');
+    T.stamp(ctx, t, t0(8) + 1.5, t1(8) + 0.3, 'УЛЬТ БЫЛ ГОТОВ', CX, 520, { size: 92, color: RED, rot: -0.08, bg: 'rgba(30,8,10,0.92)' });
+    caption(ctx, 'Гоша *остался*.', t, t0(8), t0(8) + 1.4);
+    caption(ctx, 'И умер с *готовым ультом*', t, t0(8) + 1.5, t1(8) + 0.2, { hl: RED });
   } else if (t < t0(10) - 0.1) {
     // S9: Gosha takes the sticky notes
     const cut = t0(9) - 0.1;
@@ -202,8 +202,8 @@ function draw(ctx, u, t) {
     const kq = springT(t, t0(13) + 0.8, M.SPRING.bouncy);
     if (kq > 0.01) { ctx.save(); ctx.translate(CX + 230, 700); ctx.scale(kq, kq); ctx.rotate(0.08 + 0.05 * Math.sin(t * 3)); ctx.font = font(380, 900, T.D); ctx.textAlign = 'center'; ctx.lineJoin = 'round'; ctx.lineWidth = 40; ctx.strokeStyle = INK; ctx.strokeText('?', 0, 130); ctx.fillStyle = GOLD; ctx.fillText('?', 0, 130); ctx.restore(); }
     T.stamp(ctx, t, t0(13) + 1.0, ST.duration, 'СТАНЕТ', CX + 230, 870, { size: 70, color: GREEN, rot: 0.06, bg: 'rgba(6,26,16,0.92)' });
-    caption(ctx, 'Сколько смертей в *следующей* катке?', t, t0(13), t0(13) + 2.0, { y: H * 0.74, size: 82 });
-    caption(ctx, 'Пиши *прогноз*', t, t0(13) + 2.1, t1(13) + 0.1, { y: H * 0.74, size: 110 });
+    caption(ctx, 'Сколько смертей в *следующей* катке?', t, t0(13), t0(13) + 3.3, { y: H * 0.74, size: 82 });
+    caption(ctx, 'Пиши *прогноз*', t, t0(13) + 3.4, t1(13) + 0.1, { y: H * 0.74, size: 110 });
     caption(ctx, 'Подпишись на *день 3*', t, t0(14), ST.duration, { y: H * 0.74, size: 100 });
     T.botTag(ctx, t, t0(14) + 0.8, ST.duration, 1560, 'разбери свою катку');
   }
@@ -229,7 +229,7 @@ M.film({
       [b(P[5].t0), 'frame', 'tok', { pitch: 'G5' }], [b(P[5].t0 + 0.35), '7 из 19', 'impact'],
       [b(P[6].t0 - 0.1), 'scroll', 'whoosh'], [b(P[6].t0 + 0.45), 'frame', 'tok', { pitch: 'A5' }], [b(P[6].t0 + 1.2), '14%', 'thud'],
       [b(P[7].t0 - 0.1), 'scroll', 'whoosh'], [b(P[7].t0 + 0.45), 'frame', 'tok', { pitch: 'B5' }], [b(P[7].t0 + 1.0), '6 сек', 'thud'],
-      [b(P[8].t0 - 0.1), 'cut', 'whoosh'], [b(P[8].t0 + 1.0), 'ульт', 'impact'],
+      [b(P[8].t0 - 0.1), 'cut', 'whoosh'], [b(P[8].t0 + 1.5), 'ульт', 'impact'],
       [b(P[9].t0 - 0.1), 'fist', 'whoosh'], [b(P[9].t0 + 0.6), 'note', 'pop', { pitch: 'C6' }],
       [b(P[10].t0 - 0.1), 'monitor', 'whoosh'], [b(P[10].t0), 'n1', 'pop', { pitch: 'C6' }], [b(P[11].t0), 'n2', 'pop', { pitch: 'E6' }], [b(P[12].t0), 'n3', 'pop', { pitch: 'G6' }], [b(P[12].t0 + 0.3), 'conf', 'bell', { pitch: 'C7' }],
       [b(P[13].t0 - 0.1), 'cut', 'whoosh'], [b(P[13].t0 + 0.4), 'было', 'thud'], [b(P[13].t0 + 0.8), '?', 'boing'],
