@@ -142,6 +142,8 @@ type extractor struct {
 	creeps   []creepFrame
 	log      []logEvent
 	hitSeen  map[string]bool
+	probing  bool
+	probed   bool
 	start    float64 // серверное время горна
 	out      output
 }
@@ -662,7 +664,17 @@ func main() {
 	x.out.V = 1
 	p.OnEntity(x.onEntity)
 	p.Callbacks.OnCMsgDOTACombatLogEntry(x.onCombatLog)
-	p.Callbacks.OnCNETMsg_Tick(func(*dota.CNETMsg_Tick) error { x.sample(); return nil })
+	if os.Getenv("DEEP_PROBE") != "" {
+		x.probing = true
+		x.probeSetup()
+	}
+	p.Callbacks.OnCNETMsg_Tick(func(*dota.CNETMsg_Tick) error {
+		x.sample()
+		if x.probing {
+			x.probe()
+		}
+		return nil
+	})
 	p.Callbacks.OnCDemoFileInfo(func(m *dota.CDemoFileInfo) error {
 		if d := m.GetGameInfo().GetDota(); d != nil {
 			x.out.MatchID = d.GetMatchId()
