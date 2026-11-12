@@ -18,48 +18,69 @@ export const WIDGET_TTL = 7 * 86400;
 const wgtKey = (user, match) => `wgt:${user}:${match}`;
 export const widgetsOn = (env) => String((env && env.WIDGETS) || "1") !== "0";
 export const SHOP_PACKS = ["p10", "month", "video"];
-const SHORT = { p10: "10 разборов", month: "Месяц", video: "Видеоразбор" }; // подписи на выборе пакета
+// подписи в витрине: коротко, пояснение одной строкой. «Выгоднее» — у месяца: до 300 разборов против 10
+const SHOP_ROWS = { p10: ["10 разборов", "Не сгорают"], month: ["Месяц", "До 10 разборов в день, 30 дней"], video: ["Видеоразбор", "Ролик на минуту по одной катке"] };
 
-// Общий вид: цвета темы Телеги, акцент оранжевый, победа зелёная, поражение красное. Без эмодзи и фиолетового
-const CSS = `*{box-sizing:border-box;margin:0}body{font:14px/1.35 -apple-system,system-ui,sans-serif;color:var(--tg-theme-text-color,#e8eaed);background:transparent;padding:12px}
-.m{color:var(--tg-theme-hint-color,#8a929c);font-size:12px}.r{display:flex;gap:6px;align-items:center}.c{flex:1}
-.t{padding:7px 10px;border-radius:10px;background:var(--tg-theme-secondary-bg-color,#1f2730);text-align:center;font-weight:600;font-size:13px}
-.t.on{background:#e8743b;color:#fff}.b{display:block;width:100%;margin-top:10px;padding:11px;border:0;border-radius:12px;background:#e8743b;color:#fff;font:600 15px system-ui,sans-serif}
-.p{margin-top:10px;padding:10px;border-radius:12px;background:var(--tg-theme-secondary-bg-color,#1f2730)}.s{margin-top:6px;text-align:center}`;
+// Вид — по брифу /mnt/project-files/app/widgets/design-prompt.md: тот же «тёмный минимал», что приложение (docs/v2.css).
+// Своя тёмная карточка при любой теме Телеги, золото — только у главного действия и выбранного, без эмодзи и фиолетового
+const EASE = "cubic-bezier(.16,1,.3,1)";
+const CSS = `*{box-sizing:border-box;margin:0;padding:0}
+body{font:14px/1.4 -apple-system,system-ui,sans-serif;color:#f4f4f5;background:#09090b;padding:16px;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
+.cap{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#8d8d96}
+.row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.go{display:flex;align-items:center;justify-content:space-between;width:100%;height:46px;margin-top:14px;padding:0 16px;border:0;border-radius:12px;background:#e6b858;color:#121008;font:650 15px -apple-system,system-ui,sans-serif;transition:transform .4s ${EASE}}
+.go:active{transform:scale(.97)}.go i{font-style:normal;font-weight:500;font-size:13px;opacity:.62}
+.up{animation:up .5s ${EASE} both}@keyframes up{from{opacity:0;transform:translateY(6px)}}
+.msg{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px}.msg:before{content:"";width:6px;height:6px;border-radius:50%;background:#e6b858;flex:none}`;
 const JS_BASE = `var W=window.TelegramWidget,D={};function $(i){return document.getElementById(i)}
-function hap(){try{W.HapticFeedback.selectionChanged()}catch(e){}}
-function ask(q,el,ok){el.textContent='Отправляю...';W.request(q).then(function(){el.textContent=ok},function(e){el.textContent=e&&(e.code==='RATE_LIMITED'||e.code==='BUSY')?'Подожди пару секунд и нажми ещё раз':'Не вышло, нажми ещё раз'})}`;
+function hap(t){try{t?W.HapticFeedback.impactOccurred('light'):W.HapticFeedback.selectionChanged()}catch(e){}}`;
 
 // ---------- карточка катки ----------
 
+// статус ролика: [шаг 1–3, тон 0 золото / 1 готово / 2 ошибка, строка]. sent и fail ставит сам виджет до ответа бота
 const MATCH_STATUS = {
-  queued: "Ролик делается, пришлю в чат минут через 5–10",
-  busy: "Ролик по этой катке уже делается",
-  pay: "Бесплатный ролик на этой неделе уже был: счёт в чате",
-  no_account: "Сначала привяжи аккаунт: как — написал в чате",
-  pick: "Выбери игрока в чате",
-  done: "Ролик готов, он в чате",
-  error: "Ролик не собрался, причина в чате",
+  sent: [1, 0, "Принял заявку"],
+  queued: [2, 0, "Собираю ролик, пришлю в чат через 5–10 минут"],
+  busy: [2, 0, "Ролик по этой катке уже собирается"],
+  pay: [1, 0, "Бесплатный ролик на неделе уже был, счёт в чате"],
+  no_account: [1, 0, "Сначала привяжи аккаунт, как — написал в чате"],
+  pick: [1, 0, "Выбери игрока в чате"],
+  done: [3, 1, "Ролик в чате"],
+  error: [3, 2, "Не собрался, причина в чате"],
+  fail: [1, 2, "Не дошло, нажми ещё раз"],
 };
 
 export const MATCH_HTML = `<style>${CSS}
-.k{font-size:22px;font-weight:700}.w{color:#4cb36b}.l{color:#e5533d}.g{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;margin-top:4px}</style>
-<div class="r"><div class="c"><div class="k" id="h"></div><div class="m" id="i"></div></div><div class="k" id="kda"></div></div>
-<div class="r" style="margin-top:10px"><div class="t c on" id="t0">Итог</div><div class="t c" id="t1">Цифры</div></div>
-<div class="p" id="p0"></div><div class="p g" id="p1" style="display:none"></div>
-<button class="b" id="vb">Видеоразбор</button><div class="m s" id="vs">Ролик на минуту: главные моменты на карте, с озвучкой</div>
+.tag{font-size:12px;font-weight:600;padding:3px 8px;border-radius:7px}.win{color:#3fcf8e;background:rgba(63,207,142,.12)}.loss{color:#f0585d;background:rgba(240,88,93,.12)}
+h1{margin-top:12px;font-size:30px;font-weight:750;letter-spacing:-.04em;line-height:1.05}
+.v{margin-top:6px;font-size:15px;color:#8d8d96}.v b{color:#f4f4f5;font-weight:600}
+.g{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:14px}
+.c{padding:10px 2px 8px;border-radius:12px;background:rgba(255,255,255,.025);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);text-align:center}
+.c b{display:block;font-size:17px;font-weight:700;letter-spacing:-.02em;white-space:nowrap}.c>span{display:block;margin-top:3px;font-size:9px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#5a5a62}
+.c:nth-child(2){animation-delay:40ms}.c:nth-child(3){animation-delay:80ms}.c:nth-child(4){animation-delay:.12s}
+.c em{font-style:normal}.red{color:#f0585d}.dm{margin-top:10px;font-size:12px;color:#8d8d96}.dm b{color:#f4f4f5;font-weight:600}
+.tr{display:none;margin-top:18px}.tr.on{display:block}
+.ln{height:2px;margin:0 4px;border-radius:2px;background:rgba(255,255,255,.1)}.ln i{display:block;height:2px;width:0;border-radius:2px;background:#e6b858;transition:width .7s ${EASE}}
+.st{display:flex;justify-content:space-between;margin-top:-5px}.st div{display:flex;flex-direction:column;align-items:center;gap:7px;font-size:11px;font-weight:600;color:#5a5a62}
+.st div:first-child{align-items:flex-start}.st div:last-child{align-items:flex-end}.st u{width:8px;height:8px;border-radius:50%;background:#26262b;transition:background .3s}
+.st .on{color:#f4f4f5}.st .on u{background:#e6b858}.ok .ln i,.ok .on u,.ok .msg:before{background:#3fcf8e}.bad .ln i,.bad .on u,.bad .msg:before{background:#f0585d}</style>
+<div class="row"><div class="cap" id="meta"></div><div class="tag" id="tag"></div></div>
+<h1 id="h"></h1><div class="v" id="v"></div><div class="g" id="g"></div><div class="dm" id="dm"></div>
+<div class="tr" id="tr"><div class="ln"><i id="fill"></i></div><div class="st"><div id="d0"><u></u>Заявка</div><div id="d1"><u></u>Сборка</div><div id="d2"><u></u>В чате</div></div><div class="msg" id="msg"></div></div>
+<button class="go" id="go"><span>Видеоразбор</span><i>ролик ~1 мин</i></button>
 <script>${JS_BASE}
 var S=${JSON.stringify(MATCH_STATUS)};
 function n(v){v=+v||0;return v>=1000?(v/1000).toFixed(1).replace('.0','')+'k':String(v)}
-function tab(i){$('t0').className='t c'+(i?'':' on');$('t1').className='t c'+(i?' on':'');$('p0').style.display=i?'none':'';$('p1').style.display=i?'':'none'}
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return'&#'+c.charCodeAt(0)+';'})}
+function track(k){var s=S[k];if(!s)return;$('tr').className='tr on'+(s[1]==1?' ok':s[1]==2?' bad':'');
+$('fill').style.width=(s[0]-1)*50+'%';for(var i=0;i<3;i++)$('d'+i).className=i<s[0]?'on':'';$('msg').textContent=s[2];$('go').style.display=s[1]==2?'':'none'}
 function render(){try{D=JSON.parse(W.chatData||'{}')||{}}catch(e){D={}}
-$('h').textContent=D.h||'Катка';$('i').innerHTML='<b class="'+(D.w?'w':'l')+'">'+(D.w?'Победа':'Поражение')+'</b> · '+(D.t||0)+' мин';
-$('kda').textContent=(D.k||0)+'/'+(D.d||0)+'/'+(D.a||0);$('p0').textContent=D.s||'';
-var r=[['Золото в минуту',D.g],['Опыт в минуту',D.x],['Добитые крипы',D.l],['Урон по героям',D.hd],['Урон по строениям',D.td]],h='';
-for(var j=0;j<r.length;j++)h+='<div class="m">'+r[j][0]+'</div><div style="text-align:right;font-weight:600">'+n(r[j][1])+'</div>';
-$('p1').innerHTML=h;if(D.v&&S[D.v])$('vs').textContent=S[D.v]}
-$('t0').addEventListener('click',function(){hap();tab(0)});$('t1').addEventListener('click',function(){hap();tab(1)});
-$('vb').addEventListener('click',function(){if(D.m)ask('vid:'+D.m,$('vs'),'Принял, смотри чат')});
+$('meta').textContent='После катки · '+(+D.t||0)+' мин';$('tag').className='tag '+(D.w?'win':'loss');$('tag').textContent=D.w?'Победа':'Поражение';
+$('h').textContent=D.h||'Катка';var m=/^([^:.]+[:.])\\s*(.*)$/.exec(D.s||'');$('v').innerHTML=m?'<b>'+esc(m[1])+'</b> '+esc(m[2]):esc(D.s);
+var c=[[(+D.k||0)+'/<em'+((+D.d||0)>=8?' class="red"':'')+'>'+(+D.d||0)+'</em>/'+(+D.a||0),'KDA'],[n(D.g),'GPM'],[n(D.x),'XPM'],[n(D.l),'Добитые']],h='';
+for(var i=0;i<4;i++)h+='<div class="c up"><b>'+c[i][0]+'</b><span>'+c[i][1]+'</span></div>';$('g').innerHTML=h;
+$('dm').innerHTML='Урон по героям <b>'+n(D.hd)+'</b> · по строениям <b>'+n(D.td)+'</b>';if(D.v)track(D.v)}
+$('go').addEventListener('click',function(){if(!D.m)return;hap(1);track('sent');W.request('vid:'+D.m).then(null,function(){track('fail')})});
 W.onEvent('chatDataChanged',render);render();W.ready()</script>`;
 
 // Одна фраза под карточкой: по KDA и итогу, без нейросети
@@ -68,7 +89,7 @@ export function matchVerdict(m) {
   const k = Number(m.kills) || 0, d = Number(m.deaths) || 0, a = Number(m.assists) || 0;
   const kda = (k + a) / Math.max(1, d);
   if (d >= 10) return `${d} смертей: тут и ушла игра. В разборе каждая смерть по минутам и что было не так.`;
-  if (won && d <= 3) return `Чистая катка, всего ${d} смертей. Глянь в разборе, где можно было закончить быстрее.`;
+  if (won && d <= 3) return `Чистая катка: ${["ни одной смерти", "одна смерть", "две смерти", "три смерти"][d]}. Глянь в разборе, где можно было закончить быстрее.`;
   if (!won && kda >= 3) return `Ты сделал своё (${k}/${d}/${a}), а игра всё равно ушла. Кто слил — в разборе.`;
   if (won) return "Победа. В разборе видно, что ещё подтянуть, чтобы такие катки шли чаще.";
   return "Разберём, где ушла игра: ошибки по минутам и кто слил.";
@@ -77,7 +98,7 @@ export function matchVerdict(m) {
 export function matchState(m, heroes = {}) {
   const hero = (heroes[m.hero_id] && heroes[m.hero_id][1]) || "";
   return {
-    m: Number(m.match_id), h: hero ? `Катка на ${hero}` : "Новая катка", w: (m.player_slot < 128) === Boolean(m.radiant_win) ? 1 : 0,
+    m: Number(m.match_id), h: hero || "Новая катка", w: (m.player_slot < 128) === Boolean(m.radiant_win) ? 1 : 0,
     k: Number(m.kills) || 0, d: Number(m.deaths) || 0, a: Number(m.assists) || 0, t: Math.round((Number(m.duration) || 0) / 60),
     g: Number(m.gold_per_min) || 0, x: Number(m.xp_per_min) || 0, l: Number(m.last_hits) || 0,
     hd: Number(m.hero_damage) || 0, td: Number(m.tower_damage) || 0, s: matchVerdict(m),
@@ -112,19 +133,28 @@ export async function matchWidgetStatus(env, tg, user, match, v) {
 // ---------- витрина ----------
 
 export function shopHtml(card) {
-  const packs = SHOP_PACKS.map((id) => [id, PACKS[id].title, PACKS[id].stars, PACKS[id].rub, PACKS[id].text, SHORT[id]]);
-  return `<style>${CSS}.h{font-size:17px;font-weight:700;margin-top:2px}.wr{flex-wrap:wrap}</style>
-<div class="r wr" id="ps"></div><div class="p"><div class="h" id="pt"></div><div class="m" style="margin-top:4px" id="px"></div></div>
-<div class="r" style="margin-top:10px${card ? "" : ";display:none"}"><div class="t c on" id="m0">Звёзды</div><div class="t c" id="m1">Карта или СБП</div></div>
-<button class="b" id="bb"></button><div class="m s" id="bs">Счёт придёт следующим сообщением</div>
+  const packs = SHOP_PACKS.map((id) => [id, PACKS[id].stars, PACKS[id].rub]);
+  const rows = SHOP_PACKS.map((id, i) => `<div class="p${i ? "" : " on"}" id="p${i}"><u></u><div class="n"><b>${SHOP_ROWS[id][0]}</b>${id === "month" ? '<em class="x">Выгоднее</em>' : ""}<span>${SHOP_ROWS[id][1]}</span></div><div class="pr" id="r${i}"></div></div>`).join("");
+  return `<style>${CSS}
+.p{display:flex;align-items:center;gap:12px;margin-top:8px;padding:12px 14px;border-radius:14px;background:#111113;box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);transition:box-shadow .3s ${EASE}}
+.p.on{box-shadow:inset 0 0 0 1px #e6b858}.p u{flex:none;width:16px;height:16px;border-radius:50%;box-shadow:inset 0 0 0 1.5px #5a5a62;transition:box-shadow .3s ${EASE}}.p.on u{box-shadow:inset 0 0 0 5px #e6b858}
+.n{flex:1;min-width:0}.n b{font-size:15px;font-weight:650}.n span{display:block;margin-top:1px;font-size:12px;color:#8d8d96}
+.x{margin-left:7px;font-style:normal;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#e6b858;vertical-align:2px}
+.pr{text-align:right;font-size:16px;font-weight:650}.pr small{display:block;font-size:11px;font-weight:500;color:#8d8d96}
+.sg{display:flex;margin-top:12px;padding:3px;border-radius:12px;background:#111113;box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}
+.sg div{flex:1;padding:8px;border-radius:9px;text-align:center;font-size:13px;font-weight:600;color:#8d8d96;transition:background .3s,color .3s}.sg .on{background:#f4f4f5;color:#09090b}</style>
+<div class="cap">Полный разбор и видео</div>${rows}
+<div class="sg"${card ? "" : ' style="display:none"'}><div class="on" id="m0">Звёзды</div><div id="m1">Карта или СБП</div></div>
+<button class="go" id="go"><span>Оплатить</span><i id="gp"></i></button><div class="msg" id="msg" style="display:none"></div>
 <script>${JS_BASE}
 var P=${JSON.stringify(packs)},sel=0,pay=0;
-function render(){var h='';for(var i=0;i<P.length;i++)h+='<div class="t'+(i===sel?' on':'')+'" data-i="'+i+'">'+P[i][5]+'</div>';$('ps').innerHTML=h;
-var p=P[sel];$('pt').textContent=p[1];$('px').textContent=p[4];$('m0').className='t c'+(pay?'':' on');$('m1').className='t c'+(pay?' on':'');
-$('bb').textContent='Купить · '+(pay?p[3]+' ₽':p[2]+' звёзд')}
-$('ps').addEventListener('click',function(e){var i=e.target&&e.target.getAttribute&&e.target.getAttribute('data-i');if(i!==null&&i!==undefined&&i!==''){sel=+i;hap();render()}});
+function pr(p){return pay?p[2]+' ₽':p[1]+' звёзд'}
+function render(){for(var i=0;i<P.length;i++){$('p'+i).className='p'+(i==sel?' on':'');$('r'+i).innerHTML=(pay?P[i][2]:P[i][1])+'<small>'+(pay?'₽':'звёзд')+'</small>'}
+$('m0').className=pay?'':'on';$('m1').className=pay?'on':'';$('gp').textContent=pr(P[sel]);$('go').style.display='';$('msg').style.display='none'}
+function say(t){$('msg').textContent=t;$('msg').style.display='';$('go').style.display='none'}
+for(var i=0;i<P.length;i++)(function(i){$('p'+i).addEventListener('click',function(){sel=i;hap();render()})})(i);
 $('m0').addEventListener('click',function(){pay=0;hap();render()});$('m1').addEventListener('click',function(){pay=1;hap();render()});
-$('bb').addEventListener('click',function(){ask('buy:'+P[sel][0]+':'+(pay?'c':'s'),$('bs'),'Счёт ниже в чате')});
+$('go').addEventListener('click',function(){hap(1);say('Отправляю счёт...');W.request('buy:'+P[sel][0]+':'+(pay?'c':'s')).then(function(){say('Счёт отправил ниже')},function(){$('go').style.display='';$('msg').textContent='Не дошло, нажми ещё раз'})});
 render();W.ready()</script>`;
 }
 

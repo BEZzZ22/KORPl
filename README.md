@@ -43,11 +43,12 @@ GitHub Actions ─> tools/*.py|mjs ─> YouTube / TikTok / VK / Instagram / TG-�
 | Оплату на сайте (Робокасса) | `docs/pay.html` + `pay-page.js`; на воркере — `worker/pay.js` (цены `PACKS`, пробник `FREE_COACH`) |
 | ИИ-тренер (промпт, проверка ответа) | `worker/coach.js`: `buildPrompt`, `ask`, `problemsOf`, `chat`, `compare`. Модели: Claude (тир `opus`, платный разбор), Groq и Gemini (быстрые), порядок — `COACH_PRIMARY` |
 | Ответы бота, команды владельца | `worker/coach.js` → `handleBotUpdate` |
+| Кнопки меню под полем ввода (команды без слэша) | `worker/coach.js`: `menuKeyboard`, подписи → команды в `MENU` / `menuCommand` |
 | Рефералку, серию дней, сводку недели, «серия сгорит» | `worker/growth.js` |
 | Пуш после катки, выгрузку OpenDota через Actions | `worker/relay.js` + `tools/od-relay.mjs` |
 | Вход через Steam | кнопка `steamButton` в `docs/app.js`, возврат — `docs/steam.html` (ссылка `startapp=l<steamID64>`) |
 | Видеоразбор катки (ролик 60–90 с, без нейросетей) | `tools/video/` (`make.mjs` — весь конвейер: `extract` → `moments` → `script` + `texts.json` → `tts.py` → `timeline` → `film/` → `audio.py`), заявки и очередь — `worker/video.js`, сборка — workflow «Видеоразбор» |
-| Виджеты в чате (Bot API 10.4): карточка катки в пуше после игры, витрина на /pay | `worker/widget.js` (HTML виджетов, `handleWidgetQuery` — нажатия). Выключить: переменная воркера `WIDGETS=0` |
+| Виджеты в чате (Bot API 10.4): карточка катки в пуше после игры, витрина на /pay | `worker/widget.js` (HTML виджетов, `handleWidgetQuery` — нажатия), дизайн-бриф — `/mnt/project-files/app/widgets/design-prompt.md`. Выключить: переменная воркера `WIDGETS=0` |
 | Защиту чата @dotarazbor_chat | `worker/chatguard.js` |
 | Ежедневный отчёт по юзерам | `worker/coach.js` → `buildReport` / `dailyReport` |
 | Справочники OpenDota (`items.json`, `abilities.json`, `builds.json`, `counterpick.json`) | генераторы `tools/fetch-*.mjs`, обновляет workflow «Сборки героев» |
@@ -57,7 +58,7 @@ GitHub Actions ─> tools/*.py|mjs ─> YouTube / TikTok / VK / Instagram / TG-�
 
 Маршруты воркера (`worker/coach.js`, `fetch`): `POST /` с `mode` = `card`, `sync`, `track`, `gate`, `vanity`, `feedback`, `replay`, `watch`, `wallet`, `buy`, `pay_link`, `open`, `ref_match`, `web_wallet`, `web_buy`, `chat`, `compare` (без `mode` — разбор тренером); `POST /tg` — вебхук бота; `GET`/`POST /relay` — выгрузка OpenDota (ключ — RELAY_KEY из токена Cloudflare); `POST /robokassa` — оплата картой; `GET`/`POST /video-queue` — очередь видеоразборов для Actions (тот же ключ), `POST /video-send` — готовый ролик человеку через воркер; `GET /od/*` — запасной путь к OpenDota; `GET /stats`, `/replay-queue`, `/card/<id>.png`; `POST /report`.
 
-Ключи хранилища (префиксы): `user:` профиль, `seen:` первый заход и источник, `wallet:` `pay:` `paid:` `robo:` `unl:` деньги (только D1, без запасного KV — `MONEY` в `store.js`), `ask:` лимиты вопросов, `watch:` подписки «разбор готов», `rq:` очередь реплеев, `streak:` серия, `refm:` катка, которую откроет бонус за друга, `top:` `topdone:` `notop:` топ недели в чате, `digest:` сводка недели, `pq:` `odreq:` `relay_*` выгрузка OpenDota, `lastm:` `pushlast:` `nopush:` пуш после катки (не чаще раза в 60 ч), `cg*:` защита чата, `wgt:` карточка катки виджетом (чтобы дописать статус ролика).
+Ключи хранилища (префиксы): `user:` профиль, `seen:` первый заход и источник, `wallet:` `pay:` `paid:` `robo:` `unl:` деньги (только D1, без запасного KV — `MONEY` в `store.js`), `ask:` лимиты вопросов, `watch:` подписки «разбор готов», `rq:` очередь реплеев, `streak:` серия, `refm:` катка, которую откроет бонус за друга, `top:` `topdone:` `notop:` топ недели в чате, `digest:` сводка недели, `pq:` `odreq:` `relay_*` выгрузка OpenDota, `lastm:` `pushlast:` `nopush:` пуш после катки (не чаще раза в 60 ч), `cg*:` защита чата, `wgt:` карточка катки виджетом (чтобы дописать статус ролика), `menu:` кнопки меню уже показаны.
 
 ## Секреты
 

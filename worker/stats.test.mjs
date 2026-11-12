@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mergeAct, trackUser, buildReport, reportOnRequest } from "./coach.js";
+import { mergeAct, trackUser, buildReport, reportOnRequest, menuCommand } from "./coach.js";
 
 // KV в памяти: get, getWithMetadata, put с metadata, list по префиксу
 function memKV() {
@@ -182,7 +182,12 @@ test("новичку на /start — приветствие с кнопкой, �
   const toOwner = sent.filter((m) => m.chat_id === 5);
   assert.equal(toOwner.length, 2);
   assert.match(toOwner[1].text, /\(id 7\):\n\n123/);
-  const toUser = sent.filter((m) => m.chat_id === 7);
+  // кнопки меню под полем ввода — один раз, отдельным сообщением после первого приветствия
+  const menu = sent.filter((m) => m.chat_id === 7 && m.reply_markup && m.reply_markup.keyboard);
+  assert.equal(menu.length, 1);
+  assert.equal(menu[0].reply_markup.is_persistent, true);
+  assert.deepEqual(menu[0].reply_markup.keyboard.flat().map((b) => b.text), ["Мои катки", "Видеоразбор", "Тренер и цены", "Помощь"]);
+  const toUser = sent.filter((m) => m.chat_id === 7 && !(m.reply_markup && m.reply_markup.keyboard));
   assert.equal(toUser.length, 3);
   assert.ok(toUser.every((m) => m.reply_markup.inline_keyboard[0][0].web_app.url));
   // /start — картинка разбора с подписью и кнопкой примера
@@ -310,4 +315,14 @@ test("профиль бота для поиска: имя и описания в
   assert.equal(await kv.get("tg_profile"), PROFILE_VERSION);
   assert.equal(await ensureProfile(env, send), false);
   assert.equal(calls.length, 6);
+});
+
+test("кнопки меню без слэша: подпись кнопки — команда, «Видеоразбор» — по последней катке", async () => {
+  const kv = memKV(), env = { COACH_KV: kv };
+  assert.equal(await menuCommand(env, 7, "Тренер и цены"), "/pay");
+  assert.equal(await menuCommand(env, 7, "Помощь"), "/help");
+  assert.equal(await menuCommand(env, 7, "Видеоразбор"), "/video");
+  await kv.put("lastm:7", "8123456789");
+  assert.equal(await menuCommand(env, 7, " Видеоразбор "), "/video 8123456789");
+  assert.equal(await menuCommand(env, 7, "видеоразбор катки"), null);
 });

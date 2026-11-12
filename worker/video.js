@@ -80,7 +80,7 @@ const widgetStatus = (env, tg, user, match, v) => matchWidgetStatus(env, tg, use
 
 async function askVideo(env, tg, { user, match, pick = null, owner = false, seat = null }, now = Date.now()) {
   const say = (text, extra = {}) => tg("sendMessage", { chat_id: user, text, ...extra });
-  if (!match) { await say("Напиши номер матча после команды: /video 8123456789. Номер есть в истории матчей в Доте и в приложении."); return { video: "no_match" }; }
+  if (!match) { await say("Пришли номер матча, например 8123456789: он есть в истории матчей в Доте и в приложении. Под ним будет кнопка «Видеоразбор»."); return { video: "no_match" }; }
   const profile = await env.COACH_KV.get(`user:${user}`, "json").catch(() => null);
   const account = Number(profile && profile.account_id) || null;
   const slot = owner && pick ? pick - 1 : (Number.isInteger(seat) && seat >= 0 && seat <= 9 ? seat : null);
