@@ -935,10 +935,55 @@ test("оплата картой из бота: ссылка с токеном н
   const init = await signInit({ auth_date: String(Math.floor(now / 1000)), user: JSON.stringify({ id: 8, first_name: "Ax" }) }, "123:abc");
   const link = await (await worker.fetch(req({ mode: "pay_link", initData: init }), e)).json();
   assert.match(link.url, /pay\.html#t=8\./);
-  const calls = mockFetch({ tg: [new Response("{}")] });
+  // виджет Телега не приняла — прежнее сообщение с кнопкой карты
+  const calls = mockFetch({ tg: [new Response("{}"), new Response("{}")] });
   await handleBotUpdate(e, { message: { chat: { id: 8, type: "private" }, from: { id: 8, first_name: "Ax" }, text: "/pay" } });
-  assert.equal(calls[0].body.reply_markup.inline_keyboard[0][0].text, "Картой или СБП");
-  assert.match(calls[0].body.text, /79 ₽/);
+  assert.match(calls[0].url, /\/sendWidget$/);
+  assert.match(calls[1].url, /\/sendMessage$/);
+  assert.equal(calls[1].body.reply_markup.inline_keyboard[0][0].text, "Картой или СБП");
+  assert.match(calls[1].body.text, /79 ₽/);
+  // приняла — только витрина: пакеты, цены, переключатель «Карта или СБП», подпись для старых приложений
+  const ok = mockFetch({ tg: [new Response(JSON.stringify({ ok: true, result: { message_id: 5 } }))] });
+  assert.deepEqual(await handleBotUpdate(e, { message: { chat: { id: 8, type: "private" }, from: { id: 8, first_name: "Ax" }, text: "/pay" } }), { pay: "widget" });
+  assert.equal(ok.length, 1);
+  assert.equal(ok[0].body.allow_queries, true);
+  assert.match(ok[0].body.html, /10 разборов/);
+  assert.match(ok[0].body.html, /Карта или СБП/);
+  assert.match(ok[0].body.caption, /49 звёзд или 79 ₽/);
+});
+
+test("виджеты: «Купить» в витрине — счёт звёздами или ссылка Робокассы, «Видеоразбор» в карточке — заявка и статус", async (t) => {
+  t.after(restore);
+  const { handleBotUpdate } = await import("./coach.js");
+  const kv = fakeKV();
+  const e = { ...env, COACH_KV: kv, BOT_TOKEN: "123:abc", ROBOKASSA_LOGIN: "shop", ROBOKASSA_PASS1: "p1", ROBOKASSA_PASS2: "p2" };
+  const good = () => new Response(JSON.stringify({ ok: true, result: true }));
+  const from = { id: 8, first_name: "Ax" }, chat = { id: 8, type: "private" };
+  let calls = mockFetch({ tg: [good(), good()] });
+  const r = await handleBotUpdate(e, { widget_query: { id: "q1", from, chat, message_id: 3, data: "buy:p10:s" } });
+  assert.deepEqual(r, { widget: "buy", pack: "p10", how: "stars" });
+  assert.match(calls[0].url, /\/answerWidgetQuery$/);
+  assert.equal(calls[0].body.widget_query_id, "q1");
+  assert.match(calls[1].url, /\/sendInvoice$/);
+  assert.equal(calls[1].body.currency, "XTR");
+  assert.equal(calls[1].body.prices[0].amount, 49);
+  assert.equal(calls[1].body.payload, "p10:8");
+  calls = mockFetch({ tg: [good(), good()] });
+  assert.equal((await handleBotUpdate(e, { widget_query: { id: "q2", from, chat, message_id: 3, data: "buy:month:c" } })).how, "card");
+  assert.match(calls[1].body.reply_markup.inline_keyboard[0][0].url, /^https:\/\/auth\.robokassa\.ru\//);
+  // чужой пакет или мусор — только ответ на нажатие
+  calls = mockFetch({ tg: [good()] });
+  assert.equal((await handleBotUpdate(e, { widget_query: { id: "q3", from, chat, data: "buy:free:s" } })).widget, "unknown");
+  assert.equal(calls.length, 1);
+  // карточка катки: заявка на ролик, статус дописывается в виджет
+  await kv.put("user:8", JSON.stringify({ account_id: 42 }));
+  await kv.put("wgt:8:8123456789", JSON.stringify({ m: 77, d: { m: 8123456789, h: "Катка на Тини" } }));
+  calls = mockFetch({ tg: [good(), good(), good()], actions: [new Response(null, { status: 204 })] });
+  const v = await handleBotUpdate(e, { widget_query: { id: "q4", from, chat, message_id: 77, data: "vid:8123456789" } });
+  assert.equal(v.video, "queued");
+  const edit = calls.find((c) => /editMessageWidgetData$/.test(c.url));
+  assert.equal(edit.body.message_id, 77);
+  assert.equal(JSON.parse(edit.body.chat_data).v, "queued");
 });
 
 test("владелец: «баланс» — звёзды от Телеграма и сумма оплат, чужим не отвечает", async (t) => {

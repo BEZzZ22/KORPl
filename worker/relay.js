@@ -12,6 +12,7 @@
 
 import { matchButton, mskDay, weeklyDigest, digestWindow, postWeeklyTop } from "./growth.js";
 import { partyRelay, partyHeroes, PARTY_Q } from "./party.js";
+import { sendMatchWidget } from "./widget.js";
 
 export const ODREQ_PREFIX = "odreq:";
 export const RELAY_ROUND = 3600_000;
@@ -103,6 +104,8 @@ export async function pushNewMatches(env, tg, users, data, heroes, now = Date.no
     const gapKey = `pushlast:${id}`;
     if (now - (Number(await kv.get(gapKey)) || 0) < PUSH_GAP) continue;
     await kv.put(gapKey, String(now), { expirationTtl: PUSH_GAP / 1000 });
+    // карточкой-виджетом (worker/widget.js), не вышло — прежним сообщением с кнопками
+    if (await sendMatchWidget(env, tg, id, m, heroes, pushText(m, heroes))) { sent++; continue; }
     if (await tg("sendMessage", { chat_id: Number(id), text: pushText(m, heroes), reply_markup: { inline_keyboard: [...matchButton(m.match_id, "Разобрать катку").inline_keyboard, [{ text: "Видеоразбор", callback_data: `vid:${m.match_id}` }]] } })) sent++;
   }
   return sent;
