@@ -362,3 +362,42 @@ html.v2 .bonus-entry b { color: var(--aegis); }
 .story-fight.even .story-res { color: var(--warn); }
 .story-fight.absent { opacity: 0.85; }
 .story-fight.askable:active { transform: none; background: rgba(255, 255, 255, 0.05); }
+
+/* Реплей: глубокий разбор (deep.js) */
+.deep-head p { margin: 6px 0 0; font-size: 15px; line-height: 1.5; }
+.deep-item { border-left: 3px solid var(--line-2); }
+.deep-item.sev3 { border-left-color: var(--dire); }
+.deep-item.sev2 { border-left-color: var(--warn); }
+.deep-row { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: baseline; }
+.deep-row time, .deep-death summary time, .deep-ward time { font: 700 13px/1.4 var(--display); color: var(--muted); font-variant-numeric: tabular-nums; }
+.deep-text { font-size: 14px; line-height: 1.5; }
+.deep-death { padding: 0; }
+.deep-death summary { display: grid; grid-template-columns: 44px 1fr auto; gap: 10px; align-items: center; padding: 14px 44px 14px 16px; cursor: pointer; list-style: none; }
+.deep-death summary::-webkit-details-marker { display: none; }
+.deep-death.avoidable .deep-kind { color: var(--dire); }
+.deep-kind { font-weight: 700; font-size: 14px; }
+.deep-killers { display: flex; gap: 4px; }
+.deep-hero { width: 34px; height: 19px; border-radius: 5px; object-fit: cover; }
+.deep-death > :not(summary) { margin: 0 16px 12px; }
+.deep-lines p { margin: 0 0 6px; font-size: 14px; line-height: 1.5; }
+.deep-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; font-size: 12px; }
+.deep-facts div { display: flex; justify-content: space-between; gap: 8px; }
+.deep-actions { display: flex; gap: 8px; }
+.deep-actions button { flex: 1; min-height: 40px; font-size: 13px; }
+.deep-fight { grid-template-columns: 44px 104px 1fr; }
+.deep-time { display: grid; gap: 10px; }
+.deep-bar { display: grid; grid-template-columns: 72px 1fr 40px; gap: 10px; align-items: center; font-size: 13px; }
+.deep-bar b { text-align: right; font-variant-numeric: tabular-nums; }
+.deep-bar.bad b, .deep-seen b.bad { color: var(--dire); }
+.deep-track { position: relative; height: 8px; border-radius: 4px; background: var(--well); }
+.deep-track i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--text); opacity: 0.55; }
+.deep-bar.bad .deep-track i { background: var(--dire); opacity: 0.8; }
+.deep-track em { position: absolute; top: -3px; bottom: -3px; width: 2px; border-radius: 1px; background: var(--aegis); }
+.deep-seen { display: grid; gap: 4px; font-size: 13px; padding-top: 4px; border-top: 1px solid var(--line); }
+.deep-wards { display: grid; gap: 2px; }
+.deep-ward { display: grid; grid-template-columns: 44px 1fr auto 64px; gap: 8px; align-items: baseline; padding: 8px 0; font-size: 13px; border-top: 1px solid var(--line); }
+.deep-ward b { text-align: right; }
+.deep-ward.empty b { color: var(--muted); font-weight: 400; }
+.deep-lane { display: grid; gap: 8px; }
+.deep-lane-row { display: grid; grid-template-columns: 1fr 72px 72px; gap: 8px; align-items: center; font-size: 14px; }
+.deep-lane-row b, .deep-foe { text-align: right; justify-self: end; font-variant-numeric: tabular-nums; }

@@ -6,6 +6,7 @@ import {
 import { aegisBadge, openShowcase, whenGone } from "./aegis.js?v=9";
 import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=9";
 import { matchVerdicts } from "./blame.js?v=15";
+import { deepView, deepBrief } from "./deep.js?v=1";
 import { rankMedal3d } from "./medal3d.js?v=7";
 import { heroCard3d } from "./herocard3d.js?v=5";
 import { tacticalTable } from "./map3d.js?v=14";
@@ -1434,6 +1435,7 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false, 
   const seq = navSeq;
   // файл позиций качается вместе с матчем, а не после него
   const replayP = quiet ? null : fetchReplay(matchId);
+  const deepP = quiet ? null : fetchDeep(matchId);
   let match;
   try {
     // ссылка на разбор: матч уже качается со старта (boot), второй раз не просим
@@ -1570,6 +1572,8 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false, 
   }
   // для блока «Обычно у тебя»: сырые цифры этой игры и чей аккаунт
   rawOf.set(a, { match, replay });
+  // глубокий разбор по реплею: не ждём его дольше остального, вкладка «Реплей» дотянет сама
+  attachDeep(a, await upTo(deepP, 1500, null));
   a.demo = demo;
   // чужая катка владельца: в историю, задачи, сравнение и серию дней не пишем
   a.foreign = foreign;
@@ -1717,6 +1721,7 @@ const ALL_TABS = [
   ["Обзор", overviewTab],
   ["Кто слил", blameTab],
   ["Ход игры", storyTab],
+  ["Реплей", deepTab],
   ["Фазы", phasesTab],
   ["Смерти", killersTab],
   ["Карта", mapTab],
@@ -2508,6 +2513,7 @@ function coachPayload(a) {
     draft: a.draft ? a.draft.notes.slice(0, 2).map((n) => n.text) : [],
     episodes: (a.episodes || []).slice(0, 4).map((e) => ({ clock: e.clock, kind: e.kind, facts: e.facts })),
     story: storyLines(a.story),
+    deep: a.deep ? deepBrief(a.deep, 8) : [],
     map: (a.replay_notes || []).slice(0, 5),
     past: pastReviews(a),
   };
@@ -3688,6 +3694,160 @@ function replayCta(a, intro) {
   return intro ? h("div", { class: "replay-inline" }, status, btn) : h("div", { class: "card replay-card" }, btn, status);
 }
 
+// ---------- глубокий разбор по реплею (tools/deep в GitHub Actions кладёт d/<матч>.json в ветку replays) ----------
+
+const DEEP_RAW = "https://raw.githubusercontent.com/BEZzZ22/KORPl/replays/d";
+const deepCache = new Map();
+const deepInflight = new Map();
+async function fetchDeep(matchId) {
+  if (deepCache.has(matchId)) return deepCache.get(matchId);
+  if (deepInflight.has(matchId)) return deepInflight.get(matchId);
+  const job = (async () => {
+    let data = null;
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15000);
+      let res = await fetch(`${DEEP_RAW}/${matchId}.json`, { signal: ctrl.signal }).catch(() => null);
+      // GitHub не открылся (сеть, не 404): тот же файл через воркер, как и позиции
+      if (!res && COACH_URL && !ctrl.signal.aborted) res = await fetch(`${COACH_URL}/dp/${matchId}.json`, { signal: ctrl.signal });
+      data = res && res.ok ? await res.json() : null;
+      clearTimeout(timer);
+    } catch { data = null; }
+    if (data && Array.isArray(data.players)) deepCache.set(matchId, data); else data = null;
+    deepInflight.delete(matchId);
+    return data;
+  })();
+  deepInflight.set(matchId, job);
+  return job;
+}
+
+// место игрока в файле: 0–4 Свет, 5–9 Тьма; сверяем героя, чтобы не показать чужой разбор
+function deepSlot(report, a) {
+  const f = a.facts;
+  const idx = f.slot < 128 ? f.slot : f.slot - 128 + 5;
+  if (report.players[idx] && report.players[idx].hero_id === f.hero_id) return idx;
+  return report.players.findIndex((p) => p.hero_id === f.hero_id);
+}
+
+function attachDeep(a, report) {
+  if (!report || a.deep) return a.deep || null;
+  const slot = deepSlot(report, a);
+  if (slot < 0) return null;
+  try {
+    a.deep = deepView(report, slot, { texts, heroName: (id) => dictionary.heroName(id), itemName: (k) => dictionary.itemName(k), abilityName: (k) => dictionary.sourceName(k) });
+  } catch (e) { console.error(e); a.deep = null; }
+  return a.deep;
+}
+
+const DEEP_RESULT = { won: "выиграли", lost: "проиграли", even: "размен" };
+const DEEP_STATE = { absent: "без тебя", dead: "ты был мёртв" };
+
+function deepTab(a) {
+  const box = h("div", { class: "deep" });
+  const draw = () => box.replaceChildren(...deepBody(a));
+  if (a.deep) draw();
+  else {
+    box.append(h("p", { class: "muted small" }, "Смотрю реплей…"));
+    fetchDeep(a.facts.match_id).then((report) => { attachDeep(a, report); if (box.isConnected || !box.parentNode) draw(); });
+  }
+  return box;
+}
+
+function deepBody(a) {
+  const v = a.deep;
+  if (!v) {
+    return [
+      h("div", { class: "card" },
+        h("div", { class: "problem-title" }, "Разбор по реплею"),
+        h("p", { class: "small muted" }, "По записи игры видно то, чего нет в обычной статистике: кто из врагов был в тумане перед каждой твоей смертью, сколько секунд тебя видели, где ты стоял в драках и что было готово, но не нажато.")),
+      replayCta(a),
+    ];
+  }
+  step("deep_tab");
+  const ask = (text) => () => { haptic(); chatFor(a).ask(text); };
+  const tc = (t, clockText) => (t === null || t === undefined ? null : h("time", {}, ...clockLinks(clockText, a)));
+  const card = (x) => h("div", { class: `card deep-item sev${x.sev}` },
+    h("div", { class: "deep-row" }, tc(x.t, x.clock), h("div", { class: "deep-text" }, x.text)),
+    x.tip && h("div", { class: "problem-action" }, x.tip));
+  const out = [];
+  out.push(h("div", { class: "card deep-head" },
+    h("div", { class: "story-label" }, `По реплею · ${v.role_name}`),
+    h("p", {}, v.head || "Ниже всё, что видно по записи игры."),
+    h("p", { class: "small muted" }, "Туман войны, позиции и здоровье взяты из записи игры посекундно. Это факты, а не оценка нейросети.")));
+
+  if (v.top.length) {
+    out.push(h("h2", {}, "Главное"));
+    v.top.forEach((x) => out.push(card(x)));
+  }
+
+  if (v.deaths.length) {
+    out.push(h("h2", {}, "Каждая смерть"));
+    out.push(h("p", { class: "small muted" }, "Нажми на время — откроется карта за 10 секунд до момента."));
+    v.deaths.forEach((d) => out.push(h("details", { class: `card deep-death${d.avoidable ? " avoidable" : ""}` },
+      h("summary", {},
+        h("time", {}, d.clock),
+        h("span", { class: "deep-kind" }, d.title),
+        h("span", { class: "deep-killers" }, ...d.killers.slice(0, 4).map((id) => heroImg(id, "deep-hero")))),
+      h("div", { class: "deep-lines" }, ...d.lines.map((l) => h("p", {}, l))),
+      d.tip && h("div", { class: "problem-action" }, d.tip),
+      h("div", { class: "deep-facts" }, ...d.facts.map(([k, val]) => h("div", {}, h("span", { class: "muted" }, k), h("b", {}, val)))),
+      h("div", { class: "deep-actions" },
+        a._goMap && h("button", { type: "button", class: "ghost", onclick: () => { haptic("light"); step("tc_map"); a._goMap(Math.round(d.t)); } }, "На карте"),
+        COACH_URL && h("button", { type: "button", class: "ghost", onclick: ask(`Разбери мою смерть на ${d.clock}. По реплею: ${d.lines.join(". ")}. Что надо было сделать по-другому?`) }, "Спросить тренера")))));
+  }
+
+  // мелкие стычки с одним убийством в список не идут, если по ним нет замечания
+  const noted = v.fights.filter((f) => f.state !== "dead" && (f.total >= 3 || f.notes.length));
+  if (noted.length) {
+    const inCount = noted.filter((f) => f.state === "in").length;
+    out.push(h("h2", {}, "Драки"));
+    out.push(h("p", { class: "small muted" }, `Крупных драк ${noted.length}, ты был в ${inCount}. Счёт: сколько убили вы и сколько потеряли.`));
+    out.push(h("div", { class: "card story-fights" }, ...noted.map((f) => h("div", { class: `story-fight deep-fight ${f.result}${f.state !== "in" ? " absent" : ""}` },
+      tc(f.t, f.clock),
+      h("span", { class: "story-res" }, `${DEEP_RESULT[f.result]} ${f.score}`),
+      h("span", {}, f.notes.length ? f.notes.join(". ") : f.state === "in" ? `${f.where}${f.dmg ? `, твой урон ${num(f.dmg)}` : ""}` : `${f.where}, ${DEEP_STATE[f.state] || ""}`)))));
+  }
+
+  out.push(h("h2", {}, "На что ушло время"));
+  out.push(h("div", { class: "card deep-time" },
+    ...v.time.bars.filter((b) => b.pct > 0 || b.ref).map((b) => h("div", { class: `deep-bar${b.bad ? " bad" : ""}` },
+      h("span", {}, b.label),
+      h("div", { class: "deep-track" }, h("i", { "data-w": Math.min(100, b.pct) }), b.ref !== null && h("em", { "data-left": Math.min(100, b.ref), title: "высокий ранг" })),
+      h("b", {}, `${b.pct}%`))),
+    h("div", { class: "deep-seen" },
+      h("div", {}, h("span", { class: "muted" }, "На виду у врага "), h("b", { class: v.time.seen.bad ? "bad" : "" }, `${v.time.seen.pct}%`), v.time.seen.ref !== null && h("span", { class: "muted" }, ` · высокий ранг ${v.time.seen.ref}%`)),
+      h("div", {}, h("span", { class: "muted" }, "Один, вдали от своих "), h("b", {}, `${v.time.alone.pct}%`), v.time.alone.ref !== null && h("span", { class: "muted" }, ` · высокий ранг ${v.time.alone.ref}%`))),
+    v.norms > 0 && h("p", { class: "small muted" }, `Отметка на полоске — медиана твоей роли в ${v.norms} ${plural(v.norms, "матче", "матчах", "матчах")} высокого ранга.`)));
+  v.time.notes.forEach((n) => out.push(card({ sev: 1, t: n.t, clock: n.t === null || n.t === undefined ? "" : mmss(n.t), text: n.text, tip: n.tip })));
+
+  if (v.vision.placed > 0 || v.vision.dewards > 0) {
+    out.push(h("h2", {}, "Варды"));
+    out.push(h("div", { class: "card deep-wards" },
+      h("div", { class: "phase-stats" },
+        h("span", {}, "Обсов ", h("b", {}, v.vision.placed)),
+        h("span", {}, "Показали врагов ", h("b", {}, `${v.vision.sightings} ${plural(v.vision.sightings, "раз", "раза", "раз")}`)),
+        h("span", {}, "Снял чужих ", h("b", {}, v.vision.dewards))),
+      ...v.vision.wards.map((w) => h("div", { class: `deep-ward${w.sightings === 0 ? " empty" : ""}` },
+        tc(w.t, w.clock), h("span", {}, w.where),
+        h("span", { class: "muted" }, w.killed ? `сняли через ${mmss(w.life)}` : `стоял ${mmss(w.life)}`),
+        h("b", {}, w.sightings ? `${w.sightings} ${plural(w.sightings, "раз", "раза", "раз")}` : "пусто")))));
+    v.vision.notes.forEach((n) => out.push(card({ sev: 1, t: null, clock: "", text: n.text, tip: n.tip })));
+  }
+
+  if (v.lane.foe) {
+    const L = v.lane;
+    out.push(h("h2", {}, "Линия к 10:00"));
+    out.push(h("div", { class: "card deep-lane" },
+      h("div", { class: "deep-lane-row head" }, h("span", {}), h("b", {}, "Ты"), h("span", { class: "deep-foe" }, heroImg(L.foe.hero_id, "deep-hero"))),
+      h("div", { class: "deep-lane-row" }, h("span", { class: "muted" }, "Добито крипов"), h("b", {}, L.lh10), h("b", {}, L.foe.lh10)),
+      h("div", { class: "deep-lane-row" }, h("span", { class: "muted" }, "Нетворс"), h("b", {}, num(L.nw10)), h("b", {}, num(L.foe.nw10))),
+      h("div", { class: "deep-lane-row" }, h("span", { class: "muted" }, "Уровень"), h("b", {}, L.lvl10), h("b", {}, L.foe.lvl10)),
+      h("p", { class: "small muted" }, `Урон по героям на линии: нанёс ${num(L.dealt)}, получил ${num(L.taken)}. Смертей: ${L.deaths}.`)));
+    L.notes.forEach((n) => out.push(card({ sev: 1, t: null, clock: "", text: n.text, tip: n.tip })));
+  }
+  return out;
+}
+
 function replayBlock(a) {
   const r = a.replay;
   const dots = r.heat.map((p) => svg("circle", { cx: mapX(p[0]).toFixed(1), cy: mapY(p[1]).toFixed(1), r: 1.6, class: "mm-heat" }));
@@ -4489,7 +4649,7 @@ async function boot() {
     const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
       constants("heroes"), localDict("items", 200), localDict("abilities", 1000),
       constants("item_ids"),
-      ownJson("knowledge.json?v=12"), ownJson("texts.json?v=21"),
+      ownJson("knowledge.json?v=12"), ownJson("texts.json?v=22"),
     ]);
     dictionary = createDictionary({ heroes, items, abilities });
     itemIds = ids;

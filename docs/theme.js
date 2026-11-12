@@ -13,7 +13,7 @@
   // отдаёт service worker из кэша, а предзагрузка мимо него только мешает
   if (!(navigator.serviceWorker && navigator.serviceWorker.controller)) {
     ["https://api.opendota.com/api/constants/heroes", "https://api.opendota.com/api/constants/item_ids",
-      "items.json", "abilities.json", "knowledge.json?v=12", "texts.json?v=21"].forEach(function (href) {
+      "items.json", "abilities.json", "knowledge.json?v=12", "texts.json?v=22"].forEach(function (href) {
       var link = document.createElement("link");
       link.rel = "preload";
       link.as = "fetch";

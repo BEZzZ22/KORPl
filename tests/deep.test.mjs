@@ -77,3 +77,42 @@ test("нормы: метрики копятся по ролям, с нормам
   const p = withNorms.players[0];
   assert.equal(p.vs.seen_share.v, Math.round(metrics(p).seen_share * 1000) / 1000);
 });
+
+// ---------- слова для приложения (docs/deep.js) ----------
+import { deepView, deepBrief } from "../docs/deep.js";
+
+const texts = JSON.parse(readFileSync(new URL("../docs/texts.json", import.meta.url), "utf8"));
+const lib = { texts, heroName: (id) => `Герой${id}`, itemName: (k) => `предмет ${k}`, abilityName: (k) => `способность ${k}` };
+
+test("слова: у каждого игрока разбор собирается без пустых шаблонов и мусора", () => {
+  for (let slot = 0; slot < 10; slot++) {
+    const v = deepView(report, slot, lib);
+    assert.ok(v && v.role >= 1 && v.role <= 5);
+    assert.equal(v.deaths.length, report.players[slot].deaths.length);
+    assert.ok(v.top.length <= 6);
+    const all = [v.head, ...v.top.flatMap((x) => [x.text, x.tip]), ...v.deaths.flatMap((d) => [d.title, d.tip, ...d.lines, ...d.facts.flat()]),
+      ...v.fights.flatMap((f) => [f.tip, f.where, ...f.notes]), ...v.time.notes.flatMap((n) => [n.text, n.tip]),
+      ...v.vision.notes.flatMap((n) => [n.text, n.tip]), ...v.lane.notes.flatMap((n) => [n.text, n.tip])];
+    for (const s of all) {
+      assert.equal(typeof s, "string");
+      assert.ok(!/\{\w+\}|undefined|NaN|null|\[object/.test(s), s);
+    }
+    for (const d of v.deaths) { assert.ok(d.lines.length >= 1, `смерть без объяснения: ${d.kind}`); assert.ok(d.title); }
+    for (const b of v.time.bars) assert.ok(b.pct >= 0 && b.pct <= 100);
+    assert.ok(deepBrief(v).length <= 8);
+  }
+});
+
+test("слова: каждый шаблон deep_* — непустой список строк, слова по правилам проекта", () => {
+  const keys = Object.keys(texts).filter((k) => k.startsWith("deep_"));
+  assert.ok(keys.length >= 40);
+  for (const k of keys) {
+    assert.ok(Array.isArray(texts[k]) && texts[k].length >= 1, k);
+    for (const s of texts[k]) { assert.ok(s && typeof s === "string", k); assert.ok(!/байбек|ластхит/i.test(s), `${k}: ${s}`); }
+  }
+});
+
+test("слова: одинаковый матч и игрок дают одинаковый текст", () => {
+  assert.deepEqual(deepView(report, 3, lib), deepView(report, 3, lib));
+  assert.equal(deepView(report, 42, lib), null);
+});

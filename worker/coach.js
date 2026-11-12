@@ -254,6 +254,8 @@ export function buildPrompt(raw) {
   list("Ход игры (причины и последствия)", raw.story, 6, (t) => clip(t, 360));
   // По реплею с позициями: где добивал крипов по фазам, сколько был рядом с командой, сколько стоял на базе
   list("По реплею (где был всю игру)", raw.map, 5, (t) => clip(t, 200));
+  // Глубокий разбор по реплею (docs/deep.js): туман перед смертями, позиция в драках, ненажатые предметы. Это проверенные факты
+  list("По записи игры (факты: туман, позиции, готовые кнопки)", raw.deep, 8, (t) => clip(t, 420));
   // Память тренера: главные выводы прошлых разборов этого игрока (их хранит приложение)
   list("Прошлые разборы (от свежих к старым)", raw.past, 5, (p) =>
     p?.main ? `${clip(p.hero, 30)}, ${p.won ? "победа" : "поражение"}: ${clip(p.main, 220)}` : "");
@@ -957,6 +959,7 @@ export function mergeUser(stored, incoming) {
 // для GET /replay-queue (его дёргает Actions раз в минуту, list на каждый запрос не по карману бесплатному KV);
 // снимок пересобирает крон из ключей rq:, поэтому потерянная в нём запись возвращается через 3 минуты
 const REPLAY_RAW = "https://raw.githubusercontent.com/BEZzZ22/KORPl/replays/r";
+const DEEP_RAW = "https://raw.githubusercontent.com/BEZzZ22/KORPl/replays/d";
 const REPLAY_QUEUE = "replay_queue";
 const REPLAY_PREFIX = "rq:";
 const REPLAY_LAST = "rq_last";        // время последней заявки: без свежих заявок и пустом снимке крон не тратит list
@@ -2198,10 +2201,11 @@ export default {
       if (ban) return reply(429, { error: ban.text, retry_after: Math.ceil(ban.wait / 1000) }, origin);
     }
     // файл позиций реплея с GitHub через воркер (после антиддоса: путь открытый): у части провайдеров raw.githubusercontent.com не открывается
-    const rp = request.method === "GET" && /^\/rp\/(\d{6,12})\.json$/.exec(new URL(request.url).pathname);
+    // /dp/ — глубокий разбор по реплею (папка d той же ветки)
+    const rp = request.method === "GET" && /^\/(rp|dp)\/(\d{6,12})\.json$/.exec(new URL(request.url).pathname);
     if (rp) {
       if (!ALLOWED_ORIGINS.includes(origin)) return reply(403, { error: "Нельзя." }, origin);
-      const res = await fetch(`${REPLAY_RAW}/${rp[1]}.json`, { signal: AbortSignal.timeout(15000), cf: { cacheTtl: 300 } }).catch(() => null);
+      const res = await fetch(`${rp[1] === "dp" ? DEEP_RAW : REPLAY_RAW}/${rp[2]}.json`, { signal: AbortSignal.timeout(15000), cf: { cacheTtl: 300 } }).catch(() => null);
       if (!res) return reply(502, { error: "GitHub не отвечает." }, origin);
       if (!res.ok) return reply(res.status === 404 ? 404 : 502, null, origin);
       return new Response(res.body, { status: 200, headers: { "Content-Type": "application/json", ...cors(origin) } });
