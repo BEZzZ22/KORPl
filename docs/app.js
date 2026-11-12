@@ -2426,7 +2426,10 @@ function step(name) {
 // браузер прячет подробности, и приложению она не мешает. Считаем отдельно, в «ошибку в коде» не пишем
 addEventListener("error", (e) => {
   const msg = String((e && e.message) || "error");
-  const file = String((e && e.filename) || "");
+  // хвост адреса (#tgWebAppData=…) — данные входа из Телеграма, в отчёт их не тащим
+  const file = String((e && e.filename) || "").split("#")[0];
+  // «ResizeObserver loop …» — предупреждение браузера, когда подстройка размера не успела за кадр. Ничего не ломает
+  if (/^ResizeObserver loop/.test(msg)) return;
   if (/^Script error\.?$/.test(msg) || (file && !file.startsWith(location.origin))) { track("err_ext"); return; }
   stats.jsError = `${msg} @ ${file.split("/").pop().split("?")[0] || "?"}:${(e && e.lineno) || 0}`.slice(0, 120);
   track("err_js");
