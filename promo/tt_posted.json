@@ -178,5 +178,11 @@
   "status": "PROCESSING_UPLOAD",
   "mode": "inbox",
   "at": "2026-11-13T10:06:27.416330+00:00"
+ },
+ "reklama": {
+  "publish_id": "v_inbox_file~v2.7707717548355323926",
+  "status": "PROCESSING_UPLOAD",
+  "mode": "inbox",
+  "at": "2026-11-13T18:11:03.930097+00:00"
  }
 }
