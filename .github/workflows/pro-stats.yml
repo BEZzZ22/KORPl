@@ -1,0 +1,16 @@
+# Разовая выгрузка цифр про-сцены для постов (OpenDota explorer, 90 дней).
+name: Стата про-сцены
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tools/pro_stats.py
