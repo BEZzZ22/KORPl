@@ -598,16 +598,5 @@
   "to": "Maelstorm0ne",
   "reply": true,
   "text": "Вот так выглядит видеоразбор, сделаем такой же на катку про: https://raw.githubusercontent.com/BEZzZ22/KORPl/claude/opus-55-capabilities-limits-ekkxhj/promo/img/video-review.mp4"
- },
- {
-  "id": "r33-maelstorm0ne-video",
-  "from": "main",
-  "to": "Maelstorm0ne",
-  "reply": true,
-  "delete_containing": "raw.githubusercontent.com",
-  "files": [
-   "promo/review/video/razbor.mp4"
-  ],
-  "text": "Вот так выглядит видеоразбор, сделаем такой же на катку про."
  }
 ]
