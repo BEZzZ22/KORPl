@@ -191,7 +191,12 @@ export function replayModel(match, replay, me, { heroKey, heroName }) {
   const heroIdx = (name) => { const v = byKey.get(name); return v ? players.indexOf(v) : -1; };
   const wards = [];
   match.players.forEach((p, i) => {
-    const leftOf = (log) => new Map((log || []).filter((w) => "ehandle" in w).map((w) => [w.ehandle, w]));
+    // номер сущности (ehandle) за матч может достаться другому варду: берём первую запись «пропал» после установки
+    const leftOf = (log) => {
+      const list = (log || []).filter((w) => "ehandle" in w).sort((a, b) => a.time - b.time);
+      const used = new Set();
+      return { get: (w) => { const l = list.find((x) => x.ehandle === w.ehandle && x.time >= w.time && !used.has(x)); if (l) used.add(l); return l; } };
+    };
     const left = leftOf(p.obs_left_log), senLeft = leftOf(p.sen_left_log);
     const add = (kind, w, l, life) => {
       if (typeof w.x !== "number") return;
@@ -201,8 +206,9 @@ export function replayModel(match, replay, me, { heroKey, heroName }) {
       wards.push({ kind, owner: i, radiant: players[i].radiant, x: w.x, y: w.y, t: w.time, end, breaker,
         dewarded: breaker != null || (kind === "obs" && end < w.time + life - 10) });
     };
-    for (const w of p.obs_log || []) add("obs", w, left.get(w.ehandle), OBS_LIFE);
-    for (const w of p.sen_log || []) add("sen", w, senLeft.get(w.ehandle), SEN_LIFE);
+    const byTime = (log) => [...(log || [])].sort((a, b) => a.time - b.time);
+    for (const w of byTime(p.obs_log)) add("obs", w, left.get(w), OBS_LIFE);
+    for (const w of byTime(p.sen_log)) add("sen", w, senLeft.get(w), SEN_LIFE);
   });
 
   // руны: время и кто взял; место — где стоял герой (только с реплеем)
@@ -716,7 +722,7 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
   speedBtn.type = "button";
   speedBtn.className = "lm-speed";
   const setSpeed = () => { speedBtn.textContent = `×${speed}`; };
-  speedBtn.addEventListener("click", () => { speed = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length]; setSpeed(); haptic("light"); });
+  speedBtn.addEventListener("click", () => { speed = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length]; setSpeed(); haptic("light"); draw(); });
 
   const clock = document.createElement("b");
   clock.className = "lm-clock";
@@ -755,36 +761,44 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
   // значок гаснет к концу своей жизни; life — сколько игровых секунд виден
   const fade = (node, age, life) => { if (!node) return; const o = Math.max(0.25, Math.min(1, 1 - (age - life * 0.6) / (life * 0.4))).toFixed(2); if (node.getAttribute("opacity") !== o) node.setAttribute("opacity", o); };
   const LIFE = { brk: 30, death: 45, strike: 5, rune: 20, rosh: 60, bfall: 8 };
+  // ...но не меньше стольких настоящих секунд: на ×30 и ×60 игровые секунды пролетают быстрее,
+  // чем значок успевает проявиться (руна на ×60 жила треть секунды, удар — 0,08 с)
+  const REAL = { brk: 1.8, death: 2.4, strike: 0.9, rune: 1.6, rosh: 3, bfall: 1.4 };
+  const lifeOf = (k) => Math.max(LIFE[k], REAL[k] * speed);
+  // лента: сколько игровых секунд событие держится в списке (на экране — не меньше 5 настоящих)
+  const feedSpan = () => Math.max(90, 5 * speed);
+  const FEED_ROWS = 5;
   let lastFeedKey = "", lastScore = "", lastZoom = false;
 
   function draw(force = false) {
+    const L = { brk: lifeOf("brk"), death: lifeOf("death"), strike: lifeOf("strike"), rune: lifeOf("rune"), rosh: lifeOf("rosh"), bfall: lifeOf("bfall") };
     model.wards.forEach((w, i) => {
       show(state.w, i, wNodes[i], t >= w.t && t < w.end);
-      const on = xNodes[i] && t >= w.end && t < w.end + LIFE.brk;
+      const on = xNodes[i] && t >= w.end && t < w.end + L.brk;
       show(state.x, i, xNodes[i], on);
-      if (on) fade(xNodes[i], t - w.end, LIFE.brk);
+      if (on) fade(xNodes[i], t - w.end, L.brk);
     });
     model.fights.forEach((f, i) => show(state.f, i, fNodes[i], t >= f.t - 2 && t < f.end + 4));
     model.kills.forEach((k, i) => {
-      show(state.k, i, kNodes[i], t >= k.t && t < k.t + LIFE.strike);
-      const on = t >= k.t && t < k.t + LIFE.death;
+      show(state.k, i, kNodes[i], t >= k.t && t < k.t + L.strike);
+      const on = t >= k.t && t < k.t + L.death;
       show(state.d, i, dNodes[i], on);
-      if (on) fade(dNodes[i], t - k.t, LIFE.death);
+      if (on) fade(dNodes[i], t - k.t, L.death);
     });
     model.runes.forEach((r, i) => {
-      const on = t >= r.t && t < r.t + LIFE.rune;
+      const on = t >= r.t && t < r.t + L.rune;
       show(state.r, i, rNodes[i], on);
-      if (on) fade(rNodes[i], t - r.t, LIFE.rune);
+      if (on) fade(rNodes[i], t - r.t, L.rune);
     });
     roshList.forEach((o, i) => {
-      const on = t >= o.t && t < o.t + LIFE.rosh;
+      const on = t >= o.t && t < o.t + L.rosh;
       show(state.o, i, oNodes[i], on);
-      if (on) fade(oNodes[i], t - o.t, LIFE.rosh);
+      if (on) fade(oNodes[i], t - o.t, L.rosh);
     });
     model.buildings.forEach((b, i) => {
       const dead = b.died != null && t >= b.died;
       if (state.b[i] !== dead || force) { state.b[i] = dead; bNodes[i].classList.toggle("dead", dead); }
-      show(state.bf, i, bfxNodes[i], dead && t < b.died + LIFE.bfall);
+      show(state.bf, i, bfxNodes[i], dead && t < b.died + L.bfall);
     });
     drawCreeps();
     drawBosses();
@@ -837,13 +851,19 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
     followBtn.disabled = !model.hasPos || selected < 0;
     followBtn.setAttribute("aria-pressed", String(follow && selected >= 0));
     followBtn.classList.toggle("on", follow && selected >= 0);
-    // лента: последние 4 события за полторы минуты
+    // лента: последние события. Строки, которые уже на экране, не пересоздаём: иначе при каждом новом
+    // событии все строки заново проявлялись бы из прозрачности и на быстрой перемотке лента мигала
     const recent = feedAt(t);
-    const key = recent.map((e) => `${e.t}${e.type}${e.i}`).join("|");
+    const key = recent.length ? recent.map((e) => `${e.t}${e.type}${e.i}`).join("|") : t <= 0 ? "start" : "quiet";
     if (key !== lastFeedKey) {
       lastFeedKey = key;
-      feed.replaceChildren(...(recent.length ? recent.reverse().map((e) => feedRow(e))
-        : [Object.assign(document.createElement("p"), { className: "lm-empty", textContent: t <= 0 ? "Жми плей: матч пойдёт с первой секунды, убийства, сломанные варды, руны и снесённые здания появятся здесь." : "Последние полторы минуты тихо." })]));
+      const keys = recent.length ? recent.reverse().map((e) => `${e.t}${e.type}${e.i}`) : [key];
+      const want = recent.length ? recent.map((e, n) => feedRows.get(keys[n]) || feedRow(e))
+        : [feedRows.get(key) || Object.assign(document.createElement("p"), { className: "lm-empty", textContent: t <= 0 ? "Жми плей: матч пойдёт с первой секунды, убийства, сломанные варды, руны и снесённые здания появятся здесь." : "Пока тихо." })];
+      feedRows.clear();
+      want.forEach((node, n) => feedRows.set(keys[n], node));
+      for (const node of [...feed.children]) if (!want.includes(node)) node.remove();
+      want.forEach((node, n) => { if (feed.children[n] !== node) feed.insertBefore(node, feed.children[n] || null); });
     }
     if (selected >= 0) {
       const p = model.players[selected];
@@ -889,10 +909,11 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
     ...model.buybacks.map((b, i) => ({ t: b.t, type: "bb", i, b })),
     ...model.tormentorKills.map((x, i) => (x.who != null ? { t: x.t, type: "torm", i, x } : null)).filter(Boolean),
   ].sort((a, b) => a.t - b.t);
+  const feedRows = new Map(); // ключ события -> его строка на экране
   function feedAt(now) {
-    const out = [];
-    for (const e of events) { if (e.t > now) break; if (now - e.t < 90) out.push(e); }
-    return out.slice(-4);
+    const out = [], span = feedSpan();
+    for (const e of events) { if (e.t > now) break; if (now - e.t < span) out.push(e); }
+    return out.slice(-FEED_ROWS);
   }
 
   function feedRow(e) {
