@@ -1027,7 +1027,13 @@ async def process_queue(c, state):
                         b = io.BytesIO(subprocess.run(["git", "show", f"origin/{QUEUE_BRANCH}:{f}"], capture_output=True).stdout)
                         b.name = f"review{i + 1}.mp4" if f.endswith(".mp4") else f"review{i + 1}.jpg"
                         blobs.append(b)
-                    await c.send_file(ent, blobs, caption=item["text"], supports_streaming=True)
+                    if item.get("video") and len(blobs) == 1:  # настоящий ролик: длительность и размер, а не картинка
+                        from telethon.tl.types import DocumentAttributeVideo
+                        dur, vw, vh = item["video"]
+                        await c.send_file(ent, blobs[0], caption=item["text"], force_document=False, supports_streaming=True,
+                                          attributes=[DocumentAttributeVideo(duration=dur, w=vw, h=vh, supports_streaming=True)])
+                    else:
+                        await c.send_file(ent, blobs, caption=item["text"])
                 else:
                     await c.send_message(ent, item["text"])
                 sent[to] = datetime.datetime.utcnow().isoformat(timespec="minutes")
