@@ -233,9 +233,10 @@ export function deepView(report, slot, lib) {
   const vz = p.vision;
   const myWards = report.wards.filter((w) => w.slot === slot).map((w) => ({
     t: w.t, clock: clock(w.t), x: w.x, y: w.y, where: where(w.zone.z, w.zone.side), life: w.life, killed: w.killed,
-    sightings: w.sightings, heroes: w.heroes, group: w.group,
+    sightings: w.sightings, heroes: w.heroes, group: w.group, meta: w.meta === undefined ? null : w.meta,
   }));
-  const vision = { placed: vz.placed, dewards: vz.dewards, sightings: vz.sightings, empty: vz.empty, wards: myWards, notes: [] };
+  const vision = { placed: vz.placed, dewards: vz.dewards, sightings: vz.sightings, empty: vz.empty, wards: myWards, notes: [],
+    meta: vz.meta === undefined ? null : vz.meta };
   if (p.role >= 4 && vz.placed >= 3 && vz.empty >= Math.ceil(vz.placed / 2)) vision.notes.push({ text: say("ward_empty", { empty: vz.empty, placed: vz.placed }), tip: tip("vs_wards") });
   if (vz.killed_fast >= 2) vision.notes.push({ text: say("ward_killed_fast", { n: vz.killed_fast }), tip: tip("ward_killed_fast") });
   if (p.role >= 4 && vz.placed >= 3 && vs.ward_sightings && vs.ward_sightings.v < vs.ward_sightings.p25) {
@@ -243,11 +244,48 @@ export function deepView(report, slot, lib) {
     vision.notes.push({ text: say("vs_wards", { v: one(vs.ward_sightings.v), ref: one(vs.ward_sightings.p50) }), tip: tip("vs_wards") });
   }
 
+  if (p.role >= 4 && vz.placed >= 4 && vz.meta !== undefined && vz.meta / vz.placed < 0.3) {
+    // куда хайранг ставит обсы в эту фазу игры, а ты не ставил: без повторов одной зоны
+    const spots = [...new Set((vz.meta_spots || []).map((x) => where(x.z, x.side)))];
+    const phase = ["до 10-й минуты", "с 10-й по 25-ю минуту", "после 25-й минуты"][vz.meta_phase || 0];
+    vision.notes.push({ text: say("ward_off_meta", { meta: vz.meta, placed: vz.placed, phase, spots: spots.length ? list(spots) : "в других местах" }), tip: tip("ward_off_meta") });
+  }
+
+  // --- кнопки в драках ---
+  const B = p.buttons || {};
+  const buttons = { rows: [], notes: [] };
+  if (B.ult) buttons.rows.push({ key: "ult", label: ability(B.ult.name), ready: B.ult.ready, used: B.ult.used, idle: B.ult.idle_sec });
+  if (B.bkb) buttons.rows.push({ key: "bkb", label: item("black_king_bar"), ready: B.bkb.ready, used: B.bkb.used });
+  if (B.saves) buttons.rows.push({ key: "saves", label: list(Object.keys(B.saves.items).map(item)), ready: B.saves.ready, used: B.saves.used });
+  if (B.ult && B.ult.ready >= 3 && B.ult.used / B.ult.ready <= 0.5) {
+    buttons.notes.push({ sev: 2, text: say("buttons_ult_held", { ability: ability(B.ult.name), ready: B.ult.ready, used: B.ult.used }), tip: tip("buttons_ult_held") });
+  }
+  if (B.bkb && B.bkb.ready >= 2 && B.bkb.used * 2 <= B.bkb.ready) {
+    buttons.notes.push({ sev: 3, text: say("buttons_bkb_held", { ready: B.bkb.ready, used: B.bkb.used }), tip: tip("buttons_bkb_held") });
+  }
+  if (B.saves && B.saves.ready >= 3 && B.saves.used * 3 <= B.saves.ready) {
+    buttons.notes.push({ sev: 2, text: say("buttons_saves_held", { items: list(Object.keys(B.saves.items).map(item)), ready: B.saves.ready, used: B.saves.used }), tip: tip("buttons_saves_held") });
+  }
+
   // --- линия ---
   const L = p.lane;
   const lane = { lh10: L.lh10, dn10: L.dn10, deaths: L.deaths, dealt: L.dealt, taken: L.taken, foe: L.foe ? { hero_id: report.players[L.foe.slot].hero_id, lh10: L.foe.lh10, nw10: L.foe.nw10, lvl10: L.foe.lvl10 } : null, nw10: L.nw10, lvl10: L.lvl10, notes: [] };
   if (L.foe && p.role <= 3 && L.lh10 - L.foe.lh10 <= -15) lane.notes.push({ text: say("lane_lost_cs", { lh: L.lh10, foe: L.foe.lh10, hero: heroOf(L.foe.slot) }), tip: "" });
   if (L.low_hp_sec >= 60) lane.notes.push({ text: say("lane_low_hp", { sec: dur(L.low_hp_sec) }), tip: tip("death_low_hp", "lane") });
+  // добивания: кривая по минутам и куда ушли крипы, умершие рядом с тобой на линии
+  const C = p.cs;
+  if (C) {
+    lane.lh = C.lh;
+    lane.lh_ref = vs.lh10 ? Math.round(vs.lh10.p50) : null;
+    if (C.near !== null && C.near > 0) lane.near = { all: C.near, mine: C.mine, ally: C.ally, denied: C.denied, missed: C.missed };
+    if (C.near !== null && p.role <= 3 && C.near >= 20 && C.missed >= Math.max(8, C.near * 0.25)) {
+      const worst = C.missed_by_min.indexOf(Math.max(...C.missed_by_min));
+      lane.notes.push({ sev: 2, text: say("lane_missed_cs", { missed: C.missed, near: C.near, mine: C.mine, min: worst + 1,
+        denied: C.denied >= 2 ? `, ещё ${C.denied} враг забрал денаем` : "" }), tip: tip("lane_missed_cs") });
+    }
+    const lost = L.foe && L.lh10 - L.foe.lh10 <= -15;
+    if (!lost && p.role <= 3 && vs.lh10 && vs.lh10.v < vs.lh10.p25) lane.notes.push({ text: say("vs_lh10", { v: L.lh10, ref: Math.round(vs.lh10.p50), ...roleWords }), tip: tip("lane_missed_cs", "vs") });
+  }
 
   // --- главное: до шести выводов, самые тяжёлые сверху, не больше двух одного вида ---
   const top = [];
@@ -273,7 +311,8 @@ export function deepView(report, slot, lib) {
   });
   time.notes.forEach((n) => push(n.sev || 2, n.t, n.text, n.tip, "time"));
   vision.notes.forEach((n) => push(2, null, n.text, n.tip, "vision"));
-  lane.notes.forEach((n) => push(1, null, n.text, n.tip, "lane"));
+  lane.notes.forEach((n) => push(n.sev || 1, null, n.text, n.tip, "lane"));
+  buttons.notes.forEach((n) => push(n.sev, null, n.text, n.tip, "buttons"));
   top.sort((a, b) => b.sev - a.sev || (a.t === null ? 1e9 : a.t) - (b.t === null ? 1e9 : b.t));
 
   const avoid = deaths.filter((d) => d.avoidable).length;
@@ -281,7 +320,7 @@ export function deepView(report, slot, lib) {
   return {
     slot, hero_id: p.hero_id, role: p.role, role_name: ROLE_NAME[p.role], head, avoidable: avoid,
     norms: report.norms ? report.norms.matches : 0,
-    top: top.slice(0, 6), deaths, fights, time, vision, lane,
+    top: top.slice(0, 6), deaths, fights, time, vision, lane, buttons,
   };
 }
 

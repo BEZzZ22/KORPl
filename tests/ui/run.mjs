@@ -492,7 +492,11 @@ await step("deep", async () => {
   const text = await page.locator(".deep").innerText();
   if (/\{\w+\}/.test(text)) throw new Error(`незаполненный шаблон: ${text.match(/\{\w+\}/)[0]}`);
   if (!(await page.locator(".deep-bar").count())) throw new Error("нет полосок времени");
+  if (!(await page.locator(".deep-cs .deep-cs-col").count())) throw new Error("нет добитых по минутам");
+  if (!(await page.locator(".deep-buttons").count())) throw new Error("нет кнопок в драках");
   await shot("deep");
+  await page.locator(".deep-cs").scrollIntoViewIfNeeded();
+  await shot("deep-cs", { full: false });
   await page.locator(".tabs .tab", { hasText: "Обзор" }).click();
 });
 await step("moment-ask", async () => {

@@ -116,3 +116,61 @@ test("слова: одинаковый матч и игрок дают один�
   assert.deepEqual(deepView(report, 3, lib), deepView(report, 3, lib));
   assert.equal(deepView(report, 42, lib), null);
 });
+
+test("добивания: кривая по минутам растёт, крипы рядом разложены без потерь", () => {
+  for (const p of report.players) {
+    const c = p.cs;
+    assert.ok(c.lh.length >= 10);
+    for (let i = 1; i < c.lh.length; i++) assert.ok(c.lh[i] >= c.lh[i - 1]);
+    assert.equal(c.mine + c.ally + c.denied + c.missed, c.near);
+    assert.ok(c.mine <= c.lh[9], `${p.hero}: своих рядом ${c.mine}, всего добито ${c.lh[9]}`);
+  }
+  // мидеры стоят на волне: почти у каждого рядом с ним умерло больше 30 крипов, и большую часть он добил сам
+  const mids = report.players.filter((p) => p.role === 2);
+  for (const p of mids) assert.ok(p.cs.near >= 30 && p.cs.mine / p.cs.near > 0.4, `${p.hero} ${JSON.stringify(p.cs)}`);
+});
+
+test("добивания: без мест смерти крипов (старый сборщик) раскладки нет, кривая есть", () => {
+  const old = analyze({ ...raw, cdeaths: undefined });
+  for (const p of old.players) { assert.equal(p.cs.near, null); assert.ok(p.cs.lh.length >= 10); }
+});
+
+test("кнопки: нажатий не больше, чем раз была готова; пассивная ульта не судится", () => {
+  for (const p of report.players) {
+    const b = p.buttons;
+    for (const k of ["ult", "bkb", "saves"]) if (b[k]) assert.ok(b[k].used <= b[k].ready && b[k].ready > 0);
+    if (b.ult) assert.ok(b.ult.casts > 0 && b.ult.idle_sec >= 0);
+  }
+  const riki = report.players.find((p) => p.hero === "riki");
+  assert.equal(riki.buttons.ult, null);
+});
+
+test("позиции для карты из сырых данных: формат как у парсера OpenDota", async () => {
+  const { positions } = await import("../tools/deep/positions.mjs");
+  const r = positions(raw, 1);
+  assert.equal(r.step, 2);
+  assert.equal(Math.abs(r.start % 2), 0);
+  assert.deepEqual(Object.keys(r.pos).sort(), ["0", "1", "128", "129", "130", "131", "132", "2", "3", "4"]);
+  const n = Math.floor((r.end - r.start) / 2) + 1;
+  for (const xs of Object.values(r.pos)) {
+    assert.equal(xs.length, n);
+    for (const p of xs) if (p) assert.ok(p[0] >= 60 && p[0] <= 196 && p[1] >= 60 && p[1] <= 196);
+  }
+  assert.ok(r.lasthits.length > 500 && r.lasthits.every(([t, hero, k]) => Number.isFinite(t) && !hero.startsWith("npc_") && "crm".includes(k)));
+});
+
+test("точки обсов высокого ранга: нормы собирают точки, у игрока появляется сравнение", async () => {
+  const { wardSpots } = await import("../tools/deep/norms.mjs");
+  const src = { matches: [] };
+  for (let i = 0; i < 16; i++) addMatch(src, { ...report, end: 2400, match_id: 500 + i });
+  const spots = wardSpots(src);
+  assert.equal(spots.matches, 16);
+  assert.ok(Object.keys(spots).some((k) => k !== "matches" && spots[k].length));
+  const withNorms = analyze(raw, buildNorms(src));
+  // свои же матчи как нормы: каждый обс стоит на «точке хайранга», если в его клетке он не одинок по командам и фазам
+  assert.ok(withNorms.wards.some((w) => w.meta === true));
+  for (const p of withNorms.players) assert.ok(p.vision.meta >= 0 && p.vision.meta <= p.vision.placed);
+  // мало матчей — точек нет, сравнения нет
+  const few = analyze(raw, buildNorms({ matches: src.matches.slice(0, 3) }));
+  assert.ok(few.players.every((p) => p.vision.meta === undefined));
+});
