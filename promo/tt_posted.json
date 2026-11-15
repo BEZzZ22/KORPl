@@ -184,5 +184,11 @@
   "status": "PROCESSING_UPLOAD",
   "mode": "inbox",
   "at": "2026-11-13T18:11:03.930097+00:00"
+ },
+ "gosha3": {
+  "publish_id": "v_inbox_file~v2.7708458746514507798",
+  "status": "PROCESSING_UPLOAD",
+  "mode": "inbox",
+  "at": "2026-11-15T18:07:54.620323+00:00"
  }
 }
