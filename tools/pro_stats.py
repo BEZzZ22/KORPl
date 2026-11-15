@@ -2,7 +2,7 @@
 import json, urllib.parse, urllib.request, sys
 
 def q(sql):
-    url = "https://api.opendota.com/api/explorer?sql=" + urllib.parse.quote(sql)
+    url = urllib.request.Request("https://api.opendota.com/api/explorer?sql=" + urllib.parse.quote(sql), headers={"User-Agent": "Mozilla/5.0"})
     for _ in range(3):
         try:
             with urllib.request.urlopen(url, timeout=120) as r:
