@@ -49,6 +49,17 @@ test("повтор: все убийства, варды обеих команд,
   assert.equal(m.meIdx, 0);
 });
 
+test("повтор: номер сущности варда повторился — каждый вард получает свою запись «пропал»", () => {
+  const opts = { heroKey: (id) => heroes[id].name.replace("npc_dota_hero_", ""), heroName: names.heroName };
+  const players = match.players.map((p, i) => (i ? { ...p, obs_log: [], obs_left_log: [], sen_log: [], sen_left_log: [] } : {
+    ...p, sen_log: [], sen_left_log: [],
+    obs_log: [{ time: 100, x: 100, y: 100, ehandle: 7 }, { time: 900, x: 110, y: 110, ehandle: 7 }],
+    obs_left_log: [{ time: 250, x: 100, y: 100, ehandle: 7 }, { time: 1000, x: 110, y: 110, ehandle: 7 }],
+  }));
+  const m = replayModel({ ...match, players }, null, players[0], opts);
+  assert.deepEqual(m.wards.map((w) => [w.t, w.end]), [[100, 250], [900, 1000]]);
+});
+
 test("повтор без реплея: смерти в драках берут место из teamfights", () => {
   const m = replayModel(match, null, ME, { heroKey: (id) => heroes[id].name.replace("npc_dota_hero_", ""), heroName: names.heroName });
   assert.equal(m.hasPos, false);

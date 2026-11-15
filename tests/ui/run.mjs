@@ -537,6 +537,22 @@ for (const [i, name] of ["blame", "story", "replay", "phases", "deaths", "map", 
         const info = await page.locator(".m3d-info").innerText();
         if (!/Смерт|смерти|Обс/.test(info)) throw new Error(`тап по столбу не показал, что там: «${info}»`);
       }
+      // на ×60 значок события виден не меньше полутора настоящих секунд (раньше руна гасла за треть секунды),
+      // а строки ленты не пересоздаются при каждом новом событии
+      if (await page.$(".minimap.live .lm-e.rune")) {
+        for (let n = 0; n < 3 && (await page.locator(".lm-speed").innerText()) !== "×60"; n++) await page.locator(".lm-speed").click();
+        const seen = await page.evaluate(() => {
+          const map = document.querySelector(".live-map"), runes = [...document.querySelectorAll(".minimap.live .lm-e.rune")];
+          const title = runes[3].querySelector("title").textContent, [m, s] = /(\d+):(\d+)$/.exec(title).slice(1).map(Number);
+          map.seek(m * 60 + s + 1);
+          const row = document.querySelector(".lm-feed .lm-ev");
+          map.seek(m * 60 + s + 80);
+          return { rune: runes[3].getAttribute("display"), kept: !row || row.isConnected };
+        });
+        if (seen.rune !== "inline") throw new Error("на ×60 значок руны гаснет раньше полутора секунд");
+        if (!seen.kept) throw new Error("лента пересоздаёт строки, которые уже на экране");
+        for (let n = 0; n < 3 && (await page.locator(".lm-speed").innerText()) !== "×30"; n++) await page.locator(".lm-speed").click();
+      }
       // слежение за героем: карта приближается
       await page.evaluate(() => document.querySelector(".live-map").seek(1000));
       await page.locator(".lm-follow").click();
