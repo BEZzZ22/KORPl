@@ -1858,7 +1858,8 @@ async function handlePost(request, env, ctx, origin) {
     const user = env.BOT_TOKEN ? await telegramUser(raw.initData, env.BOT_TOKEN) : null;
     const limited = throttle(user && user.id ? `tg${user.id}` : ip, Date.now(), 10, "replay", 300);
     if (limited) return reply(429, { error: limited }, origin);
-    return reply(200, { status: await queueReplay(env, match, user && user.id ? user.id : null) }, origin);
+    // quiet — карта заказала разбор сама, когда её открыли: в очередь ставим, а в личку потом не пишем
+    return reply(200, { status: await queueReplay(env, match, user && user.id && !raw.quiet ? user.id : null) }, origin);
   }
 
   // видеоразбор из приложения: ролик по игроку, чей разбор открыт (worker/video.js)

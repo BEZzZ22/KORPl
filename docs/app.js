@@ -4,12 +4,12 @@ import {
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
 } from "./engine.js?v=49";
 import { aegisBadge, openShowcase, whenGone } from "./aegis.js?v=9";
-import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=10";
+import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=11";
 import { matchVerdicts } from "./blame.js?v=15";
 import { deepView, deepBrief } from "./deep.js?v=1";
 import { rankMedal3d } from "./medal3d.js?v=7";
 import { heroCard3d } from "./herocard3d.js?v=5";
-import { tacticalTable } from "./map3d.js?v=15";
+import { tacticalTable } from "./map3d.js?v=16";
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -3649,17 +3649,19 @@ const replayCache = new Map();
 
 // Файл позиций, если реплей уже разобран; нет файла или сети — null, разбор идёт без него
 const replayInflight = new Map();
-async function fetchReplay(matchId) {
+async function fetchReplay(matchId, fresh = false) {
   if (replayCache.has(matchId)) return replayCache.get(matchId);
   if (replayInflight.has(matchId)) return replayInflight.get(matchId);
+  // fresh — ждём только что заказанный разбор: GitHub держит ответ «нет файла» в кэше минут пять, метка в адресе его обходит
+  const tag = fresh ? `?t=${Date.now()}` : "";
   const job = (async () => {
     let data = null;
     try {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 15000);
-      let res = await fetch(`${REPLAY_RAW}/${matchId}.json`, { signal: ctrl.signal }).catch(() => null);
+      let res = await fetch(`${REPLAY_RAW}/${matchId}.json${tag}`, { signal: ctrl.signal }).catch(() => null);
       // GitHub не открылся (не 404, а сеть): у части провайдеров он закрыт — тот же файл через воркер
-      if (!res && COACH_URL && !ctrl.signal.aborted) res = await fetch(`${COACH_URL}/rp/${matchId}.json`, { signal: ctrl.signal });
+      if (!res && COACH_URL && !ctrl.signal.aborted) res = await fetch(`${COACH_URL}/rp/${matchId}.json${tag}`, { signal: ctrl.signal });
       data = res && res.ok ? await res.json() : null;
       clearTimeout(timer);
     } catch { data = null; }
@@ -3692,6 +3694,68 @@ function replayCta(a, intro) {
     }
   };
   return intro ? h("div", { class: "replay-inline" }, status, btn) : h("div", { class: "card replay-card" }, btn, status);
+}
+
+// Героев на карте ведёт только файл позиций из реплея. Раньше его надо было заказать кнопкой, и почти никто не заказывал:
+// герои ехали в считаных катках. Теперь открытая карта заказывает разбор сама и ждёт файл; пришёл — onReady(data).
+// Valve хранит реплеи около двух недель: для старых каток не заказываем
+const REPLAY_KEEP_DAYS = 10, REPLAY_POLL_MS = Number(globalThis.REPLAY_POLL_MS) || 30000, REPLAY_WAIT_MS = 40 * 60000;
+const replayWaits = new Map(); // матч -> { t0, timer, ref, state, why }
+function replayFresh(match) {
+  return Boolean(match && match.start_time && Date.now() / 1000 - match.start_time < REPLAY_KEEP_DAYS * 86400);
+}
+const REPLAY_TEXT = {
+  wait: "Реплей разбирается, обычно это 5–30 минут. Карта обновится сама: поедут все 10 героев. Пока видно варды, здания и смерти в драках.",
+  late: "Реплей всё ещё в очереди. Загляни в эту катку позже: герои на карте появятся сами.",
+  offline: "Не получилось заказать разбор реплея: нет связи с сервером. Открой катку ещё раз чуть позже.",
+};
+// Ожидание файла живёт отдельно от карточки и держит её слабой ссылкой: ушли со страницы —
+// карточка и вся вкладка не остаются в памяти, пока тикает проверка
+function replayWait(id) {
+  let w = replayWaits.get(id);
+  if (w) return w;
+  w = { t0: Date.now(), timer: 0, ref: null, state: "", why: "" };
+  replayWaits.set(id, w);
+  const cur = () => (w.ref && w.ref.deref()) || null;
+  const set = (state, why = "") => { w.state = state; w.why = why; const x = cur(); if (x) x.show(w); };
+  const stop = () => { clearInterval(w.timer); w.timer = 0; };
+  const check = async () => {
+    if (document.hidden) return;
+    const data = await fetchReplay(id, true);
+    if (data) { stop(); replayWaits.delete(id); const x = cur(); if (x) x.onReady(data); return; }
+    // разбор не вышел (реплея уже нет у Valve и т. п.): говорим причину, а не ждём впустую
+    const err = await fetch(`${REPLAY_RAW}/${id}.err.json?t=${Date.now()}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    if (err && err.t && err.t * 1000 > w.t0 - 60000) { stop(); set("error", String(err.error || "").slice(0, 160)); return; }
+    if (Date.now() - w.t0 > REPLAY_WAIT_MS) { stop(); set("late"); }
+  };
+  (async () => {
+    try {
+      // quiet: заказ тихий, бот не пишет в личку за каждую открытую катку (initData — только для лимита на человека)
+      const data = await postCoach({ mode: "replay", match_id: id, quiet: true, initData: (tg && tg.initData) || "" });
+      set("wait");
+      if (data.status === "done") check();
+      w.timer = setInterval(check, REPLAY_POLL_MS);
+    } catch {
+      replayWaits.delete(id);
+      set("offline");
+    }
+  })();
+  return w;
+}
+function replayAuto(a, onReady) {
+  const status = h("p", { class: "small muted", role: "status" }, "Заказываю разбор реплея: герои поедут по карте, как только он будет готов.");
+  const box = h("div", { class: "replay-inline" }, status);
+  const show = (w) => {
+    const text = w.state === "error" ? `Реплей разобрать не получилось${w.why ? `: ${w.why}` : ""}. Героев на карте для этой катки не будет.` : REPLAY_TEXT[w.state];
+    if (text) status.textContent = text;
+  };
+  // ждёт только последняя нарисованная карта; подписку держит сама карточка
+  const sub = { show, onReady };
+  box._replaySub = sub;
+  const w = replayWait(a.facts.match_id);
+  w.ref = new WeakRef(sub);
+  show(w);
+  return box;
 }
 
 // ---------- глубокий разбор по реплею (tools/deep в GitHub Actions кладёт d/<матч>.json в ветку replays) ----------
@@ -3923,7 +3987,9 @@ function mapTab(a) {
   let live = null;
   // файл позиций мог прийти уже после разбора: героев на карте всё равно покажем
   if (raw && !raw.replay && replayCache.has(a.facts.match_id)) raw.replay = replayCache.get(a.facts.match_id);
-  if (raw) {
+  const buildLive = () => {
+    live = null;
+    if (!raw) return;
     try {
       const model = replayModel(raw.match, raw.replay, raw.match.players.find((p) => p.account_id === a.hist_self.account) || null, {
         heroKey: (id) => dictionary.heroKey(id).replace("npc_dota_hero_", ""), heroName: (id) => dictionary.heroName(id),
@@ -3936,12 +4002,25 @@ function mapTab(a) {
     } catch (e) {
       console.warn(e);
     }
-  }
+  };
+  // карточка повтора; без файла позиций свежая катка сама заказывает разбор реплея и, когда он готов,
+  // карточка заменяется на месте: герои едут без кнопок и без повторного открытия матча
+  const liveCard = () => {
+    buildLive();
+    if (!live) return null;
+    const card = h("div", { class: "card map-card live-card" }, live);
+    if (!a.replay && !raw.replay) {
+      const auto = COACH_URL && !a.demo && replayFresh(raw.match);
+      card.append(auto
+        ? replayAuto(a, (data) => { raw.replay = data; const next = liveCard(); if (next) card.replaceWith(next); })
+        : replayCta(a, "Сейчас видно варды, здания и смерти в драках. Разбери реплей — на карте поедут все 10 героев, а тренер увидит, кто где стоял."));
+    }
+    return card;
+  };
+  const card = liveCard();
   return h("div", {},
     h("h2", {}, "Повтор матча"),
-    live && h("div", { class: "card map-card live-card" },
-      live,
-      !a.replay && !raw.replay && replayCta(a, "Сейчас видно варды, здания и смерти в драках. Разбери реплей — на карте поедут все 10 героев, а тренер увидит, кто где стоял.")),
+    card,
     !live && !a.replay && replayCta(a),
     V2 && (m.deaths.length > 0 || m.wards.length > 0 || (a.replay && a.replay.deaths.length > 0)) && h("h2", {}, "Тактический стол"),
     V2 && (m.deaths.length > 0 || m.wards.length > 0 || (a.replay && a.replay.deaths.length > 0)) && h("div", { class: "card map3d-card" },

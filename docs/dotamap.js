@@ -572,7 +572,7 @@ export function liveMap(model, { iconUrl, haptic = () => {} }) {
     : bfxLayer.appendChild(evNode(`bfall ${b.side === "goodguys" ? (myRadiant ? "ally" : "foe") : (myRadiant ? "foe" : "ally")}`, b.x, b.y, 0.5, buildingLabel(b), ripple(), shards(8)))));
 
   // хвосты: каждый герой тянет за собой след последних секунд — видно, кто куда бежит
-  const TAIL = 8;
+  const TAIL = 15;
   const tailLayer = el("g", { class: "lm-tails" });
   const tails = model.players.map((p, i) => {
     const g = el("g", { class: `tail ${sideOf(i)}` }, el("path", { class: "old" }), el("path", { class: "new" }));
