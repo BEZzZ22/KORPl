@@ -63,7 +63,7 @@ function opendota(url) {
   if (p === "/constants/item_ids") return itemIds;
   if (p === `/matches/${match.match_id}`) return hiddenMode
     ? { ...match, players: match.players.map((x) => (x.player_slot === ME.player_slot || x.player_slot === 130 ? { ...x, account_id: null } : x)) }
-    : unparsedMode ? unparsedMatch : match;
+    : unparsedMode ? unparsedMatch : process.env.UI_REPLAY_LATE ? { ...match, start_time: Math.floor(Date.now() / 1000) - 3600 } : match;
   let m;
   if ((m = /^\/heroes\/(\d+)\/itemPopularity$/.exec(p))) return { early_game_items: proItems[m[1]] || {} };
   if ((m = /^\/heroes\/(\d+)\/matchups$/.exec(p))) return match.players.filter((x) => x.isRadiant !== ME.isRadiant)
@@ -118,6 +118,7 @@ function coach(body) {
     return { url: "https://coach.example/card/000000000000000000000000.png" };
   }
   if (raw.mode === "watch") return { ok: true };
+  if (raw.mode === "replay") { if (raw.quiet) replayOrders.push(raw); return { status: "queued" }; }
   if (raw.mode === "vanity") return raw.name === "axel_dota" ? { steam64: String(76561197960265728n + BigInt(ACCOUNT)) } : { __status: 404, error: "По этой ссылке профиль не нашёлся. Пришли Friend ID: в Доте в профиле, цифры под ником." };
   if (raw.mode === "gate") return gateCalls++ === 0 ? { ok: false, channel: true, chat: false } : { ok: true, channel: true, chat: true };
   if (raw.mode === "feedback") return { ok: true };
@@ -153,6 +154,8 @@ if (process.env.UI_REPLAY_BROKEN) {
 const PLACEHOLDER = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
 
 const errors = [];
+const replayOrders = [];
+let replayReady = false;
 const cardSizes = [];
 let gateCalls = 0;
 const pay = { on: false, paid: false, lock: false, first: false };
@@ -166,7 +169,8 @@ const context = await browser.newContext({
 });
 // Привязанный аккаунт и одна уже открытая раньше катка, чтобы было с чем сравнить
 // UI_DESIGN=v2 — прогон нового дизайна (тёмный минимал), иначе классика
-await context.addInitScript(([acc, other, design]) => {
+await context.addInitScript(([acc, other, design, late]) => {
+  if (late) globalThis.REPLAY_POLL_MS = 1000; // UI_REPLAY_LATE: не ждать файл позиций по полминуты
   try {
     if (design) localStorage.setItem("design", design);
     localStorage.setItem("account_id", String(acc));
@@ -174,7 +178,7 @@ await context.addInitScript(([acc, other, design]) => {
     // задача с прошлой катки: не больше одной смерти до 10:00 (у Tusk в этой катке две — провал)
     if (!localStorage.getItem(`goal:${acc}`)) localStorage.setItem(`goal:${acc}`, JSON.stringify({ text: "Цель на следующую катку: не больше одной смерти до 10:00", check: { group: "lane_deaths", metric: "lane_deaths", op: "<=", target: 1 }, match: 1, t: 1000 }));
   } catch { /* */ }
-}, [ACCOUNT, { match: 1, hero: "Invoker", hero_id: 74, won: true, kda: "12/3/9", t: 0, payload: { hero: "Invoker", won: true, kda: "12/3/9", duration: "41:02" } }, process.env.UI_DESIGN || ""]);
+}, [ACCOUNT, { match: 1, hero: "Invoker", hero_id: 74, won: true, kda: "12/3/9", t: 0, payload: { hero: "Invoker", won: true, kda: "12/3/9", duration: "41:02" } }, process.env.UI_DESIGN || "", process.env.UI_REPLAY_LATE || ""]);
 let netDown = false;
 const localFailed = new Set();
 let busyOnce = false; // офлайн-проверка: все запросы рвутся, как без сети
@@ -217,6 +221,8 @@ async function handleRoute(route) {
     if (process.env.UI_MIRROR_DOWN) return route.abort("connectionrefused");
     if (mirror) return route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(opendota(new URL(`https://api.opendota.com/api/constants/${mirror[1]}`))) });
     if (url.pathname.endsWith(`/d/${match.match_id}.json`)) return route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(DEEP) });
+    // UI_REPLAY_LATE=1 — свежая катка без файла позиций: карта сама заказывает разбор, файл появляется, когда шаг «map» его отпустит
+    if (process.env.UI_REPLAY_LATE && /\/r\/\d+\.(err\.)?json$/.test(url.pathname) && (url.pathname.includes(".err.") || !replayReady)) return route.fulfill({ status: 404, headers: { "Access-Control-Allow-Origin": "*" }, body: "" });
     return url.pathname.endsWith(`/r/${match.match_id}.json`) ? route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(REPLAY) }) : route.fulfill({ status: 404, body: "" });
   }
   if (url.hostname === "telegram.org") return route.fulfill({ status: 200, contentType: "text/javascript", body: "" });
@@ -505,6 +511,17 @@ for (const [i, name] of ["blame", "story", "replay", "phases", "deaths", "map", 
     await shot(name);
     if (name === "map") {
       // повтор: все десять героев на карте в разгар драки, плей двигает время
+      if (process.env.UI_REPLAY_LATE) {
+        // файла позиций ещё нет: карта без героев сама заказала разбор (тихо, без initData) и ждёт
+        await page.waitForSelector(".live-card .replay-inline", { timeout: 5000 });
+        if (await page.$(".live-map .lm-h[display=inline]")) throw new Error("герои на карте до разбора реплея");
+        if (await page.$(".live-card .replay-btn")) throw new Error("свежая катка всё ещё просит нажать кнопку разбора реплея");
+        replayReady = true;
+        await page.waitForSelector(".live-map .lm-h[display=inline]", { timeout: 15000 });
+        if (!replayOrders.length || !replayOrders.every((x) => x.quiet)) throw new Error(`заказ разбора реплея: ${JSON.stringify(replayOrders).slice(0, 200)}`);
+        if (await page.$(".live-card .replay-inline")) throw new Error("файл позиций пришёл, а подпись ожидания осталась");
+        console.log("реплей пришёл позже: карта обновилась сама, герои едут");
+      }
       await page.waitForSelector(".live-map .lm-h[display=inline]", { timeout: 5000 });
       const heroes = await page.evaluate(() => { document.querySelector(".live-map").seek(1030); return document.querySelectorAll(".lm-h[display=inline]").length; });
       if (heroes < 8 && !process.env.UI_REPLAY_BROKEN) throw new Error(`на карте героев: ${heroes}`);
