@@ -6,7 +6,7 @@ import {
 import { aegisBadge, openShowcase, whenGone } from "./aegis.js?v=9";
 import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=11";
 import { matchVerdicts } from "./blame.js?v=15";
-import { deepView, deepBrief } from "./deep.js?v=1";
+import { deepView, deepBrief } from "./deep.js?v=2";
 import { rankMedal3d } from "./medal3d.js?v=7";
 import { heroCard3d } from "./herocard3d.js?v=5";
 import { tacticalTable } from "./map3d.js?v=16";
@@ -3894,8 +3894,20 @@ function deepBody(a) {
       ...v.vision.wards.map((w) => h("div", { class: `deep-ward${w.sightings === 0 ? " empty" : ""}` },
         tc(w.t, w.clock), h("span", {}, w.where),
         h("span", { class: "muted" }, w.killed ? `сняли через ${mmss(w.life)}` : `стоял ${mmss(w.life)}`),
-        h("b", {}, w.sightings ? `${w.sightings} ${plural(w.sightings, "раз", "раза", "раз")}` : "пусто")))));
+        h("b", {}, w.sightings ? `${w.sightings} ${plural(w.sightings, "раз", "раза", "раз")}` : "пусто"))),
+      v.vision.meta !== null && h("p", { class: "small muted" }, `На точках, где обсы ставит высокий ранг: ${v.vision.meta} из ${v.vision.placed}.`)));
     v.vision.notes.forEach((n) => out.push(card({ sev: 1, t: null, clock: "", text: n.text, tip: n.tip })));
+  }
+
+  if (v.buttons && v.buttons.rows.length) {
+    out.push(h("h2", {}, "Кнопки в драках"));
+    out.push(h("div", { class: "card deep-buttons" },
+      ...v.buttons.rows.map((r) => h("div", { class: `deep-lane-row${r.used * 2 <= r.ready && r.ready >= 2 ? " bad" : ""}` },
+        h("span", { class: "muted" }, r.label),
+        h("b", {}, `${r.used} из ${r.ready}`),
+        h("span", { class: "muted small" }, r.idle ? `готов без дела ${mmss(r.idle)}` : ""))),
+      h("p", { class: "small muted" }, "Сколько раз кнопка была готова в драке, где ты был, и сколько раз ты её нажал. Сейвы и BKB считаются только там, где по тебе сильно били.")));
+    v.buttons.notes.forEach((n) => out.push(card({ sev: n.sev, t: null, clock: "", text: n.text, tip: n.tip })));
   }
 
   if (v.lane.foe) {
@@ -3907,6 +3919,17 @@ function deepBody(a) {
       h("div", { class: "deep-lane-row" }, h("span", { class: "muted" }, "Нетворс"), h("b", {}, num(L.nw10)), h("b", {}, num(L.foe.nw10))),
       h("div", { class: "deep-lane-row" }, h("span", { class: "muted" }, "Уровень"), h("b", {}, L.lvl10), h("b", {}, L.foe.lvl10)),
       h("p", { class: "small muted" }, `Урон по героям на линии: нанёс ${num(L.dealt)}, получил ${num(L.taken)}. Смертей: ${L.deaths}.`)));
+    if (L.lh && L.lh.length >= 2) {
+      // добитые по минутам: столбик на каждую минуту до 10:00, высота — от максимума
+      const mins = L.lh.slice(0, 10);
+      const top = Math.max(1, ...mins, L.lh_ref || 0);
+      out.push(h("div", { class: "card deep-cs" },
+        h("div", { class: "story-label" }, "Добитые крипы по минутам"),
+        h("div", { class: "deep-cs-bars" }, ...mins.map((n, i) => h("div", { class: "deep-cs-col" },
+          h("b", {}, n), h("i", { "data-h": Math.round((n / top) * 100) }), h("span", { class: "muted" }, i + 1)))),
+        L.lh_ref !== null && h("p", { class: "small muted" }, `У твоей роли на высоком ранге к 10:00 обычно ${L.lh_ref}.`),
+        L.near && h("p", { class: "small muted" }, `Вражеских крипов умерло рядом с тобой: ${L.near.all}. ${[`Добил ты ${L.near.mine}`, L.near.ally && `союзники ${L.near.ally}`, L.near.denied && `враг забрал денаем ${L.near.denied}`, L.near.missed && `умерли сами ${L.near.missed}`].filter(Boolean).join(", ")}.`)));
+    }
     L.notes.forEach((n) => out.push(card({ sev: 1, t: null, clock: "", text: n.text, tip: n.tip })));
   }
   return out;
@@ -4728,7 +4751,7 @@ async function boot() {
     const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
       constants("heroes"), localDict("items", 200), localDict("abilities", 1000),
       constants("item_ids"),
-      ownJson("knowledge.json?v=12"), ownJson("texts.json?v=22"),
+      ownJson("knowledge.json?v=12"), ownJson("texts.json?v=23"),
     ]);
     dictionary = createDictionary({ heroes, items, abilities });
     itemIds = ids;

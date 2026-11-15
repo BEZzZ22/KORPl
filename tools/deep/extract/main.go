@@ -120,6 +120,7 @@ type output struct {
 	Build    []*building  `json:"buildings"`
 	Creeps   []creepFrame `json:"creeps"`
 	Log      []logEvent   `json:"log"`
+	CDeaths  [][4]float64 `json:"cdeaths"` // смерти крипов линии: [время, команда, x, y] — по ним видно упущенные добивания
 }
 
 type extractor struct {
@@ -138,6 +139,8 @@ type extractor struct {
 	wards    map[int32]*ward
 	wardList []*ward
 	build    map[int32]*building
+	creepUp  map[int32]bool // крип линии жив (для места смерти)
+	cdeaths  [][4]float64
 	buildLst []*building
 	creeps   []creepFrame
 	log      []logEvent
@@ -486,6 +489,10 @@ func (x *extractor) onEntity(e *manta.Entity, op manta.EntityOp) error {
 			w.alive = false
 			w.T1 = x.serverTime()
 		}
+		if x.creepUp[idx] {
+			x.creepDied(e)
+		}
+		delete(x.creepUp, idx)
 		delete(x.wards, idx)
 		delete(x.build, idx)
 		delete(x.ents, idx)
@@ -519,6 +526,14 @@ func (x *extractor) onEntity(e *manta.Entity, op manta.EntityOp) error {
 		if w != nil && w.alive && numOr(e, "m_lifeState", 0) != 0 {
 			w.alive = false
 			w.T1 = x.serverTime()
+		}
+	case "CDOTA_BaseNPC_Creep_Lane", "CDOTA_BaseNPC_Creep_Siege":
+		up := numOr(e, "m_lifeState", 0) == 0
+		if up {
+			x.creepUp[idx] = true
+		} else if x.creepUp[idx] {
+			x.creepDied(e)
+			x.creepUp[idx] = false
 		}
 	case "CDOTA_BaseNPC_Tower", "CDOTA_BaseNPC_Barracks", "CDOTA_BaseNPC_Fort":
 		b := x.build[idx]
@@ -651,6 +666,18 @@ func (x *extractor) onCombatLog(m *dota.CMsgDOTACombatLogEntry) error {
 
 func round2(v float64) float64 { return math.Round(v*100) / 100 }
 
+func (x *extractor) creepDied(e *manta.Entity) {
+	st := x.gameState()
+	if st != 4 && st != 5 {
+		return
+	}
+	px, py, ok := pos(e)
+	if !ok {
+		return
+	}
+	x.cdeaths = append(x.cdeaths, [4]float64{x.serverTime(), numOr(e, "m_iTeamNum", 0), float64(px), float64(py)})
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "запуск: deep-extract replay.dem > raw.json")
@@ -668,7 +695,7 @@ func main() {
 		os.Exit(2)
 	}
 	x := &extractor{p: p, ents: map[int32]*manta.Entity{}, invState: map[string]int{}, invName: map[string]string{},
-		wards: map[int32]*ward{}, build: map[int32]*building{}, hitSeen: map[string]bool{}}
+		wards: map[int32]*ward{}, build: map[int32]*building{}, creepUp: map[int32]bool{}, hitSeen: map[string]bool{}}
 	x.out.V = 1
 	p.OnEntity(x.onEntity)
 	p.Callbacks.OnCMsgDOTACombatLogEntry(x.onCombatLog)
@@ -737,6 +764,11 @@ func main() {
 		x.creeps[i].T = int(math.Round(float64(x.creeps[i].T) - start))
 	}
 	x.out.Creeps = x.creeps
+	x.out.CDeaths = make([][4]float64, 0, len(x.cdeaths))
+	for _, c := range x.cdeaths {
+		c[0] = rel(c[0])
+		x.out.CDeaths = append(x.out.CDeaths, c)
+	}
 	for i := range x.log {
 		x.log[i].T = rel(x.log[i].T)
 		if x.log[i].Slt != nil {

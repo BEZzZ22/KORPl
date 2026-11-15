@@ -15,9 +15,14 @@ const HERO_PREFIX = "npc_dota_hero_";
 const SAVE_ITEMS = ["item_black_king_bar", "item_force_staff", "item_hurricane_pike", "item_glimmer_cape", "item_ghost",
   "item_cyclone", "item_wind_waker", "item_manta", "item_satanic", "item_lotus_orb", "item_ethereal_blade",
   "item_invis_sword", "item_silver_edge"];
+// для сводки по кнопкам — только то, что жмут ради спасения (Сатаник и инвиз жмут и в нападении)
+const BUTTON_SAVES = ["item_force_staff", "item_hurricane_pike", "item_glimmer_cape", "item_ghost", "item_cyclone", "item_wind_waker",
+  "item_manta", "item_lotus_orb"];
 const ALLY_SAVES = ["item_glimmer_cape", "item_force_staff", "item_hurricane_pike", "item_lotus_orb", "item_cyclone",
   "item_wind_waker", "item_ghost", "item_pavise", "item_solar_crest", "item_holy_locket", "item_mekansm", "item_guardian_greaves"];
 
+const LANE_CREEP = /^npc_dota_(?:creep_)?(goodguys|badguys)_(?:melee|ranged|siege|flagbearer)/;
+const CS_NEAR = 800; // крип умер в шаге от героя: его можно было добить
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const sum = (xs) => xs.reduce((a, b) => a + b, 0);
 const mean = (xs) => (xs.length ? sum(xs) / xs.length : 0);
@@ -38,6 +43,21 @@ export function analyze(raw, norms = null) {
   if (norms) applyNorms(out, norms);
   for (const p of out.players) p.findings = findings(p, out);
   return out;
+}
+
+// где это на карте: зона и чья сторона для команды team (2 Свет, 3 Тьма)
+export function zoneOf(p, team) {
+  const x = p[0] / 100, y = p[1] / 100;
+  const mine = team === 2 ? x + y < 256 : x + y > 256;
+  if (x < 96 && y < 96) return { z: "base", side: team === 2 ? "own" : "enemy" };
+  if (x > 160 && y > 160) return { z: "base", side: team === 3 ? "own" : "enemy" };
+  let z;
+  if (Math.abs(x + y - 256) < 11 && Math.abs(x - y) > 12) z = "river";
+  else if (Math.abs(x - y) < 11) z = "mid";
+  else if (x < 88 || y > 168) z = "top";
+  else if (x > 168 || y < 88) z = "bot";
+  else z = "jungle";
+  return { z, side: z === "river" ? "river" : mine ? "own" : "enemy" };
 }
 
 class Game {
@@ -83,6 +103,7 @@ class Game {
     this.kills = []; // добивания крипов и построек героями
     this.wardKills = [];
     this.buybacks = [];
+    this.creepLog = []; // смерти крипов линии из журнала: кто добил (по ним считаем упущенные добивания)
     for (const e of L) {
       if (e.k === "dmg") {
         const v = this.heroSlot(e.v);
@@ -101,6 +122,8 @@ class Game {
         } else {
           const s = this.heroSlot(e.s);
           if (s >= 0) this.kills.push({ t: e.t, s, v: e.v });
+          const lane = LANE_CREEP.exec(e.v || "");
+          if (lane) this.creepLog.push({ t: e.t, team: lane[1] === "goodguys" ? 2 : 3, s });
         }
       } else if (e.k === "abil" || e.k === "item") {
         const s = this.heroSlot(e.a);
@@ -146,7 +169,10 @@ class Game {
     if (!list) return null;
     let cur = null;
     for (const e of list) { if (e.t > t) break; cur = e; }
-    if (!cur || cur.s === -1 || !this.everCooldown[slot].has(cur.n)) return null; // пассивный ульт нельзя «не нажать»
+    if (!this.castNames) this.castNames = this.casts.map((list) => new Set(list.map((c) => c.n)));
+    // пассивный ульт нельзя «не нажать»: ульт должен уходить на перезарядку и хоть раз нажиматься за игру
+    // (иначе в ячейке ульта пассивка вроде Backstab, которая «перезаряжается» сама)
+    if (!cur || cur.s === -1 || !this.everCooldown[slot].has(cur.n) || !this.castNames[slot].has(cur.n)) return null;
     return { name: cur.n, ready: cur.s === 1 };
   }
   used(slot, name, a, b) { return this.casts[slot].some((c) => c.n === name && c.t >= a - 0.2 && c.t <= b + 0.2); }
@@ -162,19 +188,7 @@ class Game {
   }
 
   // --- где это на карте ---
-  zone(p, team) {
-    const x = p[0] / 100, y = p[1] / 100;
-    const mine = team === 2 ? x + y < 256 : x + y > 256;
-    if (x < 96 && y < 96) return { z: "base", side: team === 2 ? "own" : "enemy" };
-    if (x > 160 && y > 160) return { z: "base", side: team === 3 ? "own" : "enemy" };
-    let z;
-    if (Math.abs(x + y - 256) < 11 && Math.abs(x - y) > 12) z = "river";
-    else if (Math.abs(x - y) < 11) z = "mid";
-    else if (x < 88 || y > 168) z = "top";
-    else if (x > 168 || y < 88) z = "bot";
-    else z = "jungle";
-    return { z, side: z === "river" ? "river" : mine ? "own" : "enemy" };
-  }
+  zone(p, team) { return zoneOf(p, team); }
   towerNear(p, team, t, own) {
     let best = null;
     for (const b of this.towers) {
@@ -514,6 +528,19 @@ class Game {
     if (ult && ult.ready && lived >= 4 && !this.used(slot, ult.name, f.t - 2, endMine + 0.5)) r.ult_unused = ult.name;
     const bkb = this.state(slot, "item_black_king_bar", f.t) === 1 && !this.used(slot, "item_black_king_bar", f.t - 1, endMine + 0.5);
     if (bkb && myDeaths.length) r.bkb_unused = true;
+    // что было готово к началу драки и нажато ли до конца (или до своей смерти); короткие стычки не в счёт
+    if (lived >= 4 || myDeaths.length) {
+      const keys = {};
+      const mhp = this.tracks[slot].mhp[this.i(t)] || 1;
+      const pressed = myDeaths.length > 0 || r.taken >= mhp * 0.5; // сейв нужен, только когда по тебе реально били
+      if (ult && ult.ready) keys.ult = { name: ult.name, used: this.used(slot, ult.name, f.t - 2, endMine + 0.5) };
+      if (pressed && this.state(slot, "item_black_king_bar", f.t) === 1) keys.bkb = { used: this.used(slot, "item_black_king_bar", f.t - 2, endMine + 0.5) };
+      for (const n of BUTTON_SAVES) {
+        if (!pressed || this.state(slot, n, f.t) !== 1) continue;
+        (keys.saves = keys.saves || {})[n.slice(5)] = this.used(slot, n, f.t - 2, endMine + 0.5);
+      }
+      if (Object.keys(keys).length) r.keys = keys;
+    }
     r.hp0 = round(this.hpPct(slot, t - 1), 2);
     return r;
   }
@@ -653,6 +680,82 @@ class Game {
     return r;
   }
 
+  // --- добивания: кривая по минутам и куда ушли крипы, умершие рядом ---
+  // Место смерти каждого крипа линии даёт сборщик (cdeaths), кто добил — журнал боя. Крип чужой команды умер в шаге
+  // от героя: добил сам, отдал союзнику, враг задинаил своего или крип умер «сам» (от крипов и вышки) — упущен.
+  csReport(slot, from = 0, to = 600) {
+    const tr = this.tracks[slot];
+    const team = this.team[slot], foeTeam = 5 - team;
+    const lastMin = Math.max(1, Math.min(Math.floor((this.end - 5) / 60), 20));
+    const lh = [], dn = [];
+    for (let m = 1; m <= lastMin; m++) { const k = this.i(m * 60); lh.push(tr.lh[k]); dn.push(tr.dn[k]); }
+    const r = { lh, dn, near: 0, mine: 0, ally: 0, denied: 0, missed: 0, missed_by_min: [] };
+    const cd = this.raw.cdeaths;
+    if (!Array.isArray(cd) || !cd.length) { r.near = null; return r; }
+    const log = this.creepLog;
+    const used = new Set();
+    const act = this.activity[slot];
+    for (const [t, cteam, x, y] of cd) {
+      if (t < from || t >= Math.min(to, this.end - 5) || cteam !== foeTeam) continue;
+      const k = this.i(t);
+      if (!tr.alive[k] || act[k] === "b") continue;
+      if (this.dist([tr.x[k], tr.y[k]], [x, y]) > CS_NEAR) continue;
+      // запись журнала с той же командой и ближайшим временем
+      let best = -1, bd = 0.35;
+      for (let q = 0; q < log.length; q++) {
+        if (log[q].t > t + 0.35) break;
+        if (used.has(q) || log[q].team !== cteam) continue;
+        const d = Math.abs(log[q].t - t);
+        if (d <= bd) { bd = d; best = q; }
+      }
+      if (best < 0) continue;
+      used.add(best);
+      const s = log[best].s;
+      r.near++;
+      if (s === slot) r.mine++;
+      else if (s >= 0 && this.team[s] === foeTeam) r.denied++;
+      else if (s >= 0) r.ally++;
+      else {
+        r.missed++;
+        const m = Math.floor(t / 60);
+        r.missed_by_min[m] = (r.missed_by_min[m] || 0) + 1;
+      }
+    }
+    for (let m = 0; m < r.missed_by_min.length; m++) r.missed_by_min[m] = r.missed_by_min[m] || 0;
+    return r;
+  }
+
+  // --- кнопки: ульта, BKB и сейвы в драках, где ты был ---
+  buttonsReport(slot, fr) {
+    const ult = { name: null, ready: 0, used: 0, idle_sec: 0, casts: 0 };
+    const bkb = { ready: 0, used: 0 };
+    const saves = { ready: 0, used: 0, items: {} };
+    for (const f of fr) {
+      if (f.state !== "in" || !f.keys) continue;
+      const k = f.keys;
+      if (k.ult) { ult.name = k.ult.name; ult.ready++; if (k.ult.used) ult.used++; }
+      if (k.bkb) { bkb.ready++; if (k.bkb.used) bkb.used++; }
+      for (const [n, u] of Object.entries(k.saves || {})) {
+        saves.ready++; if (u) saves.used++;
+        const it = (saves.items[n] = saves.items[n] || [0, 0]);
+        it[0]++; if (u) it[1]++;
+      }
+    }
+    // сколько ульта простаивала готовой после 10:00 (живой, не на базе): долгий простой = ульту берегут не для драк
+    let lastName = null;
+    for (let t = 600; t < this.end - 5; t += 5) {
+      const u = this.ult(slot, t);
+      if (!u) continue;
+      lastName = u.name;
+      const k = this.i(t);
+      if (u.ready && this.tracks[slot].alive[k] && this.activity[slot][k] !== "b") ult.idle_sec += 5;
+    }
+    if (!ult.name) ult.name = lastName;
+    if (ult.name) ult.casts = this.casts[slot].filter((c) => c.n === ult.name).length;
+    // ульту ни разу не нажали за игру — скорее всего, это пассивка в ячейке ульты (или чужая сборка способностей): не судим
+    return { ult: ult.name && ult.casts > 0 ? ult : null, bkb: bkb.ready ? bkb : null, saves: saves.ready ? saves : null };
+  }
+
   playerReport(slot, fights, wards) {
     const p = this.players[slot];
     const deaths = this.deaths.filter((d) => d.slot === slot).map((d) => this.deathReport(d, fights));
@@ -664,7 +767,8 @@ class Game {
     return {
       slot, team: p.team === 2 ? 0 : 1, hero_id: p.hero_id, hero: p.hero.slice(HERO_PREFIX.length), ranged: p.ranged, role: this.roles[slot],
       nw: this.tracks[slot].nw[last], lvl: this.tracks[slot].lvl[last],
-      deaths, fights: fr, time: this.timeReport(slot), lane: this.laneReport(slot),
+      deaths, fights: fr, time: this.timeReport(slot), lane: this.laneReport(slot), cs: this.csReport(slot),
+      buttons: this.buttonsReport(slot, fr),
       vision: {
         placed: myWards.length, dewards,
         empty: myWards.filter((w) => w.sightings === 0 && w.life >= 120).length,
@@ -695,6 +799,10 @@ export function metrics(p) {
     front_dist: fightsIn.length ? mean(fightsIn.filter((f) => f.front_dist).map((f) => f.front_dist)) : 0,
     blind_deaths: share(["gank", "blind_farm", "smoke"]),
     ward_sightings: p.vision.placed ? p.vision.sightings / p.vision.placed : 0,
+    lh10: p.lane ? p.lane.lh10 : 0,
+    // доля крипов, умерших рядом на линии, которые добил сам (нет данных о месте — метрики нет)
+    ...(p.cs && p.cs.near >= 10 ? { cs_share: p.cs.mine / p.cs.near } : {}),
+    ...(p.buttons && p.buttons.ult && p.buttons.ult.ready >= 3 ? { ult_use: p.buttons.ult.used / p.buttons.ult.ready } : {}),
   };
 }
 
@@ -707,7 +815,31 @@ function applyNorms(out, norms) {
     p.vs = {};
     for (const [k, v] of Object.entries(m)) if (ref[k]) p.vs[k] = { v: round(v, 3), p25: ref[k][0], p50: ref[k][1], p75: ref[k][2] };
   }
+  // точки обсов высокого ранга: стоит ли твой обс там, где его обычно ставят в это время игры
+  const spots = norms.wards;
+  if (!spots || (spots.matches || 0) < WARD_SPOT_MATCHES) return;
+  for (const w of out.wards) {
+    const list = spots[`${w.team}-${wardPhase(w.t)}`] || [];
+    w.meta = list.some(([x, y]) => Math.hypot(x - w.x, y - w.y) * UNIT < WARD_SPOT_R);
+  }
+  for (const p of out.players) {
+    const mine = out.wards.filter((w) => w.slot === p.slot);
+    p.vision.meta = mine.filter((w) => w.meta).length;
+    // куда хайранг ставит чаще всего в ту фазу, где ты поставил больше всего обсов (и куда ты не ставил)
+    const byPhase = [0, 1, 2].map((ph) => mine.filter((w) => wardPhase(w.t) === ph).length);
+    const ph = byPhase.indexOf(Math.max(...byPhase));
+    const team = p.team === 0 ? 2 : 3;
+    p.vision.meta_spots = (spots[`${p.team}-${ph}`] || [])
+      .filter(([x, y]) => !mine.some((w) => Math.hypot(x - w.x, y - w.y) * UNIT < WARD_SPOT_R))
+      .slice(0, 3).map(([x, y, n]) => ({ x, y, n, ...zoneOf([x, y], team) }));
+    p.vision.meta_phase = ph;
+  }
 }
+
+// фаза игры для вардов: 0 — до 10:00, 1 — до 25:00, 2 — дальше
+export function wardPhase(t) { return t < 600 ? 0 : t < 1500 ? 1 : 2; }
+export const WARD_SPOT_R = 900; // «та же точка»: в пределах примерно экрана обзора
+export const WARD_SPOT_MATCHES = 15; // меньше матчей — точки случайные, не сравниваем
 
 // --- выводы: что именно сказать человеку, по убыванию важности ---
 // Каждый вывод: { id, sev 1..3, t (секунда или null), ...числа }. Текст — в render.mjs.
@@ -773,10 +905,24 @@ function findings(p, out) {
   if (p.role >= 4 && p.vision.placed >= 3 && p.vision.empty >= Math.ceil(p.vision.placed / 2)) add("ward_empty", 2, null, { empty: p.vision.empty, placed: p.vision.placed });
   if (p.vision.killed_fast >= 2) add("ward_killed_fast", 1, null, { n: p.vision.killed_fast });
 
+  if (p.role >= 4 && p.vision.placed >= 4 && p.vision.meta !== undefined && p.vision.meta / p.vision.placed < 0.3) {
+    add("ward_off_meta", 1, null, { meta: p.vision.meta, placed: p.vision.placed, spots: (p.vision.meta_spots || []).map((s) => [s.z, s.side]) });
+  }
+
+  const B = p.buttons || {};
+  if (B.ult && B.ult.ready >= 3 && B.ult.used / B.ult.ready <= 0.5) add("buttons_ult_held", 2, null, { ability: B.ult.name, ready: B.ult.ready, used: B.ult.used });
+  if (B.bkb && B.bkb.ready >= 2 && B.bkb.used * 2 <= B.bkb.ready) add("buttons_bkb_held", 3, null, { ready: B.bkb.ready, used: B.bkb.used });
+  if (B.saves && B.saves.ready >= 3 && B.saves.used * 3 <= B.saves.ready) add("buttons_saves_held", 2, null, { ready: B.saves.ready, used: B.saves.used, items: Object.keys(B.saves.items) });
+
+  const C = p.cs;
+  if (C && C.near !== null && p.role <= 3 && C.near >= 20 && C.missed >= Math.max(8, C.near * 0.25)) {
+    add("lane_missed_cs", 2, null, { missed: C.missed, near: C.near, mine: C.mine, denied: C.denied, ally: C.ally });
+  }
   const L = p.lane;
   if (L.foe && p.role <= 3) {
     const diff = L.lh10 - L.foe.lh10;
     if (diff <= -15) add("lane_lost_cs", 2, 600, { lh: L.lh10, foe: L.foe.lh10, hero: hero(L.foe.slot) });
+    else if (p.vs && p.vs.lh10 && p.vs.lh10.v < p.vs.lh10.p25) add("vs_lh10", 1, 600, { v: L.lh10, ref: Math.round(p.vs.lh10.p50) });
     if (L.low_hp_sec >= 60) add("lane_low_hp", 1, null, { sec: L.low_hp_sec });
   }
   return res.sort((a, b) => b.sev - a.sev || (a.t ?? 1e9) - (b.t ?? 1e9));

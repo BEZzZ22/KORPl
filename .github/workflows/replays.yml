@@ -1,7 +1,7 @@
 # Разбор реплеев с позициями героев.
 # Воркер тренера держит очередь матчей (GET /replay-queue). Прогон дежурит почти 6 часов и раз в минуту смотрит очередь:
-# качает реплей у Valve, разбирает парсером OpenDota (docker odota/parser) и кладёт позиции
-# в ветку replays: r/<match_id>.json. Воркер видит файл, снимает матч с очереди и пишет игроку в Телеграм.
+# качает реплей у Valve, разбирает своим сборщиком (tools/deep/extract, 1–2 с на катку) и кладёт позиции
+# в ветку replays: r/<match_id>.json. Парсер OpenDota (docker odota/parser) — только запасной путь, если сборщик не справился. Воркер видит файл, снимает матч с очереди и пишет игроку в Телеграм.
 # Рядом кладётся глубокий разбор d/<match_id>.json (tools/deep: туман войны, причины смертей, драки, время, варды).
 # Крон GitHub «раз в 10 минут» на деле срабатывает раз в 2–5 часов, поэтому заявка ждала часами.
 # Теперь следующий прогон уже стоит в очереди concurrency и стартует сразу, как закончится дежурство.
@@ -48,11 +48,6 @@ jobs:
         continue-on-error: true
         run: cd tools/deep/extract && go build -o ../../../deep-extract . && echo "собран"
 
-      - name: Парсер OpenDota
-        run: |
-          docker run -d --name parser -p 5600:5600 odota/parser
-          for i in $(seq 1 60); do curl -s -o /dev/null http://localhost:5600/healthz && break; sleep 2; done
-
       - name: Дежурство
         run: |
           git -C out config user.name "replay-bot"
@@ -62,7 +57,7 @@ jobs:
           until=$(( $(date +%s) + 340 * 60 ))
           while [ "$(date +%s)" -lt "$until" ]; do
             curl -sf --max-time 30 https://dotacoach.2007rggg.workers.dev/replay-queue -o queue.json || echo '{"matches":[]}' > queue.json
-            # берём 4 матча, которые ещё ждут разбора: уже разобранные и со свежей ошибкой воркер снимет сам,
+            # берём 8 матчей (катка разбирается за секунды), которые ещё ждут разбора: уже разобранные и со свежей ошибкой воркер снимет сам,
             # и они не должны занимать места новых заявок. Битый ответ очереди — просто пустая очередь (шаг идёт с bash -e)
             ids=$(node -e '
               const fs = require("fs");
@@ -72,9 +67,9 @@ jobs:
                 if (fs.existsSync(`out/r/${id}.json`)) return false;
                 try { const e = JSON.parse(fs.readFileSync(`out/r/${id}.err.json`, "utf8")); return Boolean(e.t && e.t < (since[id] || 0)); } catch { return true; }
               };
-              console.log((Array.isArray(q.matches) ? q.matches : []).filter(Number.isInteger).filter(fresh).slice(0, 4).join(" "));
+              console.log((Array.isArray(q.matches) ? q.matches : []).filter(Number.isInteger).filter(fresh).slice(0, 8).join(" "));
             ' || true)
-            if [ -z "$ids" ]; then sleep 60; continue; fi
+            if [ -z "$ids" ]; then sleep 30; continue; fi
             echo "$(date -u +%H:%M) очередь: $ids"
             git -C out pull -q --rebase origin replays || true
             for id in $ids; do
@@ -105,19 +100,31 @@ jobs:
                   esac
                 done
                 # глубокий разбор тем же реплеем; не вышел — позиции всё равно отдадим
+                t0=$(date +%s)
                 if [ -x ./deep-extract ]; then
                   mkdir -p out/d
                   if timeout 300 ./deep-extract replay.dem > deep-raw.json 2> deep.err && node tools/deep/analyze.mjs deep-raw.json out/d/norms.json > "out/d/$id.json" 2>> deep.err; then
-                    echo "глубокий разбор: $(wc -c < "out/d/$id.json") байт"
+                    echo "глубокий разбор: $(wc -c < "out/d/$id.json") байт за $(( $(date +%s) - t0 )) с"
                   else
                     rm -f "out/d/$id.json"; echo "глубокий разбор не вышел: $(tail -c 300 deep.err)"
                   fi
-                  rm -f deep-raw.json deep.err
+                fi
+                # позиции для карты: из тех же сырых данных (секунды вместо минут). Не вышло — запасной путь, парсер OpenDota
+                if [ -s deep-raw.json ] && node tools/deep/positions.mjs "$id" deep-raw.json > "out/r/$id.json"; then
+                  echo "позиции из сборщика: $(wc -c < "out/r/$id.json") байт, всего $(( $(date +%s) - t0 )) с"
+                  rm -f deep-raw.json deep.err replay.dem
+                  echo "::endgroup::"; continue
+                fi
+                rm -f "out/r/$id.json" deep-raw.json deep.err
+                # парсер OpenDota поднимаем только когда он понадобился: обычно не нужен вовсе
+                if ! docker inspect parser > /dev/null 2>&1; then
+                  docker run -d --name parser -p 5600:5600 odota/parser > /dev/null
+                  for i in $(seq 1 60); do curl -s -o /dev/null http://localhost:5600/healthz && break; sleep 2; done
                 fi
                 # как у самой OpenDota: поток через -T - (chunked), без Content-Length и Expect
                 code=$(curl -s --max-time 900 -X POST -T - -o parsed.jsonl -w "%{http_code}" http://localhost:5600 < replay.dem || echo "curl-fail")
                 if node tools/replay-summary.mjs "$id" < parsed.jsonl > "out/r/$id.json"; then
-                  echo "готово: $(wc -c < "out/r/$id.json") байт"
+                  echo "готово (парсер OpenDota): $(wc -c < "out/r/$id.json") байт"
                 else
                   rm -f "out/r/$id.json"
                   # что пошло не так: ответ парсера, размер, начало вывода и хвост логов контейнера (логи Actions без входа не видны)

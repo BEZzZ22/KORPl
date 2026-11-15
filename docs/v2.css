@@ -401,3 +401,11 @@ html.v2 .bonus-entry b { color: var(--aegis); }
 .deep-lane { display: grid; gap: 8px; }
 .deep-lane-row { display: grid; grid-template-columns: 1fr 72px 72px; gap: 8px; align-items: center; font-size: 14px; }
 .deep-lane-row b, .deep-foe { text-align: right; justify-self: end; font-variant-numeric: tabular-nums; }
+.deep-buttons { display: grid; gap: 8px; }
+.deep-buttons .deep-lane-row { grid-template-columns: 1fr 64px 1fr; }
+.deep-buttons .deep-lane-row span:last-child { text-align: right; }
+.deep-buttons .deep-lane-row.bad b { color: var(--dire); }
+.deep-cs-bars { display: flex; align-items: flex-end; gap: 4px; height: 96px; margin: 10px 0 6px; }
+.deep-cs-col { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 3px; font-size: 10px; }
+.deep-cs-col b { font-size: 11px; font-variant-numeric: tabular-nums; }
+.deep-cs-col i { display: block; width: 100%; min-height: 2px; border-radius: 3px 3px 0 0; background: var(--text); opacity: 0.55; }
