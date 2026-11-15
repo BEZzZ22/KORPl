@@ -1016,14 +1016,18 @@ async def process_queue(c, state):
                 await c.send_message(ent, item["text"], reply_to=item.get("reply_to"), link_preview=False)
                 print("Отправлено в наш чат")
             elif isinstance(ent, User) and not ent.bot:
-                if item.get("files"):  # картинки из ветки очереди одним альбомом, текст подписью
+                if item.get("delete_containing"):  # убрать свои недавние сообщения с этой подстрокой
+                    async for old in c.iter_messages(ent, limit=15, from_user="me"):
+                        if item["delete_containing"] in (old.raw_text or ""):
+                            await c.delete_messages(ent, [old.id], revoke=True)
+                if item.get("files"):  # файлы из ветки очереди: картинки альбомом, видео как ролик; текст подписью
                     import io, subprocess
                     blobs = []
                     for i, f in enumerate(item["files"]):
                         b = io.BytesIO(subprocess.run(["git", "show", f"origin/{QUEUE_BRANCH}:{f}"], capture_output=True).stdout)
-                        b.name = f"review{i + 1}.jpg"
+                        b.name = f"review{i + 1}.mp4" if f.endswith(".mp4") else f"review{i + 1}.jpg"
                         blobs.append(b)
-                    await c.send_file(ent, blobs, caption=item["text"])
+                    await c.send_file(ent, blobs, caption=item["text"], supports_streaming=True)
                 else:
                     await c.send_message(ent, item["text"])
                 sent[to] = datetime.datetime.utcnow().isoformat(timespec="minutes")
