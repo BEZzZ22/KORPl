@@ -1,7 +1,7 @@
 // Видеоразбор: заявки в боте и очередь для Actions (worker/video.js)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseVideoCommand, requestVideo, videoQueue, videoDone, checkVideo, resumeVideo, VIDEO_TTL } from "./video.js";
+import { parseVideoCommand, requestVideo, videoQueue, videoDone, checkVideo, resumeVideo, videoOldest, VIDEO_TTL } from "./video.js";
 import { handleBotUpdate } from "./coach.js";
 
 function fakeKV() {
@@ -89,8 +89,16 @@ test("видео: зависшая заявка снимается по срок
   sent.length = 0;
   assert.equal(await checkVideo(env, tg, NOW + 20 * 60 * 1000), 0);
   assert.equal((await videoQueue(env, NOW + 20 * 60 * 1000)).jobs.length, 1);
+  assert.equal(sent.length, 0);
+  // полчаса без ролика: одно «задерживается», не на каждом прогоне крона
+  await checkVideo(env, tg, NOW + 31 * 60 * 1000);
+  await checkVideo(env, tg, NOW + 40 * 60 * 1000);
+  assert.equal(sent.filter((x) => /дольше обычного/.test(x.text)).length, 1);
+  assert.deepEqual(await videoOldest(env, NOW + 40 * 60 * 1000), { oldest: NOW, n: 1 });
+  sent.length = 0;
   assert.equal(await checkVideo(env, tg, NOW + VIDEO_TTL + 1000), 1);
   assert.match(sent[0].text, /не успел/);
+  assert.equal(await videoOldest(env, NOW + VIDEO_TTL + 1000), null);
   assert.deepEqual((await videoQueue(env, NOW + VIDEO_TTL + 1000)).jobs, []);
 });
 

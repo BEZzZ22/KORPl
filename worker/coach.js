@@ -11,7 +11,8 @@ import { kickShorts } from "./kick.js";
 import { handlePartyMessage } from "./party.js";
 import { broadcastStep, replyStep } from "./broadcast.js";
 import { relayTasks, relayRun, kickRelay, ODREQ_PREFIX } from "./relay.js";
-import { requestVideo, resumeVideo, parseVideoCommand, videoPending, videoQueue, videoDone, checkVideo, VIDEO_BUTTON, VIDEO_HELP } from "./video.js";
+import { requestVideo, resumeVideo, parseVideoCommand, videoPending, videoQueue, videoDone, checkVideo, videoOldest, VIDEO_BUTTON, VIDEO_HELP } from "./video.js";
+import { watchdog } from "./watchdog.js";
 import { handleWidgetQuery, sendShopWidget } from "./widget.js";
 import { matchFromText, matchButton, MATCH_TEXT, accountFromText, linkButton, LINK_TEXT, OD_HEADERS, noteReferral, rewardReferral, referralFromStart, noteStartSource, bumpStreak, growthView, streakReminders, inlineAnswer, noteRefMatch } from "./growth.js";
 import { CHAT_ID, handleChatUpdate, chatChores, chatStatus, releaseIfPending } from "./chatguard.js";
@@ -964,6 +965,7 @@ const REPLAY_QUEUE = "replay_queue";
 const REPLAY_PREFIX = "rq:";
 const REPLAY_LAST = "rq_last";        // время последней заявки: без свежих заявок и пустом снимке крон не тратит list
 const REPLAY_TTL = 24 * 3600 * 1000;
+const REPLAY_LATE = 60 * 60 * 1000;    // столько ждём молча, дальше пишем человеку «задерживается»
 
 async function replayQueue(env, now = Date.now()) {
   const list = (await env.COACH_KV.get(REPLAY_QUEUE, "json")) || [];
@@ -1035,6 +1037,13 @@ async function replayEntries(env, now) {
 }
 
 // Крон: что из очереди уже разобрано (или не получилось) — снимаем и пишем игроку
+// Для сторожа фона: когда выгрузка последний раз спрашивала, самые старые заявки на реплей и ролик
+export async function watchProbe(env, now = Date.now()) {
+  const [seen, rq, video] = await Promise.all([env.COACH_KV.get("relay_seen"), replayQueue(env, now), videoOldest(env, now)]);
+  const oldest = rq.reduce((m, x) => Math.min(m, x.t), Infinity);
+  return { relay: Number(seen) || 0, replays: rq.length ? { oldest, n: rq.length } : null, video };
+}
+
 export async function checkReplays(env, now = Date.now()) {
   if (!env.COACH_KV) return 0;
   const list = await replayEntries(env, now);
@@ -1065,7 +1074,15 @@ export async function checkReplays(env, now = Date.now()) {
     }
     const st = status.get(x.match);
     const s = st && !(st.s === "error" && st.t && st.t * 1000 < x.t) ? st.s : null;
-    if (!s) { keep.push(x); continue; }
+    if (!s) {
+      keep.push(x);
+      // час без ответа: говорим, что заявка жива, а не молчим до суток
+      if (x.user && now - x.t >= REPLAY_LATE && !(await env.COACH_KV.get(`rlate:${x.key}`))) {
+        await env.COACH_KV.put(`rlate:${x.key}`, "1", { expirationTtl: Math.ceil(REPLAY_TTL / 1000) });
+        await tell(x, { text: `Реплей матча ${x.match} разбирается дольше обычного: на GitHub очередь. Пришлю, как будет готов. Обычный разбор в приложении уже работает.` });
+      }
+      continue;
+    }
     await env.COACH_KV.put(`replay:${x.match}`, s, { expirationTtl: 30 * 86400 });
     await env.COACH_KV.delete(x.key);
     await tell(x, s === "done"
@@ -2268,6 +2285,8 @@ export default {
     chores.push(broadcastStep(env, (m, b) => tgCall(env, m, b), now, { menu: { markup: menuKeyboard, version: MENU_VERSION } }).catch((e) => console.log(`рассылка: ${e && e.message || e}`)));
     chores.push(checkVideo(env, (m, b) => tgCall(env, m, b), now).catch((e) => console.log(`видеоразбор: ${e && e.message || e}`)));
     chores.push(replyStep(env, (m, b) => tgCall(env, m, b), now).catch((e) => console.log(`ответ от бота: ${e && e.message || e}`)));
+    // сторож фона: раз в 6 минут, чтобы не тратить чтения базы на каждый прогон
+    if (new Date(now).getUTCMinutes() % 6 < 3) chores.push(watchProbe(env, now).then((probe) => watchdog(env, (m, b) => tgCall(env, m, b), probe, now)).catch((e) => console.log(`сторож: ${e && e.message || e}`)));
     ctx.waitUntil(Promise.all([checkWatches(env), checkReplays(env), reportOnRequest(env), ensureWebhook(env), ...chores]));
   },
 };
