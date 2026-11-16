@@ -104,7 +104,8 @@ test("пуш после катки: первый обход запоминает
   assert.match(sent[0].caption, /поражение, 2\/9\/4, 40 мин/);
   assert.equal(JSON.parse(sent[0].chat_data).d, 9);
   assert.equal(await kv.get("wgt:7:101"), null); // ответ без message_id — карточку не запоминаем
-  assert.match(sent[0].reply_markup.inline_keyboard[0][0].web_app.url, /\?match=101$/);
+  assert.match(sent[0].reply_markup.inline_keyboard[0][0].web_app.url, /\?match=101&src=push$/);
+  assert.equal(await kv.get(`pushn:${new Date(now + 3 * 3600_000).toISOString().slice(0, 10)}`), "1");
   // старая катка (больше 3 часов) — не пушим
   await relayRun(env, tg, { data: { "/players/42/recentMatches": g(102, now - 5 * 3600_000) }, users: { 7: 42 } }, now);
   assert.equal(sent.length, 1);
@@ -120,7 +121,7 @@ test("пуш после катки: первый обход запоминает
   const r2 = await relayRun(env, tg, { data: { "/players/42/recentMatches": g(105, after - 600_000) }, users: { 7: 42 } }, after);
   assert.equal(r2.push, 1);
   assert.equal(sent.length, 2);
-  assert.match(sent[1].reply_markup.inline_keyboard[0][0].web_app.url, /\?match=105$/);
+  assert.match(sent[1].reply_markup.inline_keyboard[0][0].web_app.url, /\?match=105&src=push$/);
   assert.match(pushText(g(1, now)[0], { 1: ["npc_dota_hero_antimage", "Anti-Mage"] }), /^Катка на Anti-Mage: поражение/);
 });
 

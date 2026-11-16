@@ -57,8 +57,9 @@ export function accountFromText(text) {
 export const linkButton = (acc) => ({ inline_keyboard: [[{ text: "Привязать и открыть мои катки", web_app: { url: `${APP_URL}?link=${acc}` } }]] });
 export const LINK_TEXT = (acc) => `Похоже на твой Friend ID: ${acc}. Жми кнопку — привяжу его в приложении и покажу последние катки на разбор.`;
 
-export const matchUrl = (id) => `${APP_URL}?match=${id}`;
-export const matchButton = (id, text = "Разобрать катку") => ({ inline_keyboard: [[{ text, web_app: { url: matchUrl(id) } }]] });
+// src — откуда открыли (push — пуш после катки): приложение пишет шаг from_<src>, отчёт считает, сколько пушей открыли
+export const matchUrl = (id, src = "") => `${APP_URL}?match=${id}${src ? `&src=${src}` : ""}`;
+export const matchButton = (id, text = "Разобрать катку", src = "") => ({ inline_keyboard: [[{ text, web_app: { url: matchUrl(id, src) } }]] });
 export const MATCH_TEXT = (id) => `Катка ${id}. Жми кнопку — откроется разбор: кто слил, ошибки по таймкодам, повтор на карте. `
   + "Если реплей ещё не разобран, приложение само закажет его у OpenDota.";
 

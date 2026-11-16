@@ -105,8 +105,13 @@ export async function pushNewMatches(env, tg, users, data, heroes, now = Date.no
     if (now - (Number(await kv.get(gapKey)) || 0) < PUSH_GAP) continue;
     await kv.put(gapKey, String(now), { expirationTtl: PUSH_GAP / 1000 });
     // карточкой-виджетом (worker/widget.js), не вышло — прежним сообщением с кнопками
-    if (await sendMatchWidget(env, tg, id, m, heroes, pushText(m, heroes))) { sent++; continue; }
-    if (await tg("sendMessage", { chat_id: Number(id), text: pushText(m, heroes), reply_markup: { inline_keyboard: [...matchButton(m.match_id, "Разобрать катку").inline_keyboard, [{ text: "Видеоразбор", callback_data: `vid:${m.match_id}` }]] } })) sent++;
+    if (await sendMatchWidget(env, tg, id, m, heroes, pushText(m, heroes), "push")) { sent++; continue; }
+    if (await tg("sendMessage", { chat_id: Number(id), text: pushText(m, heroes), reply_markup: { inline_keyboard: [...matchButton(m.match_id, "Разобрать катку", "push").inline_keyboard, [{ text: "Видеоразбор", callback_data: `vid:${m.match_id}` }]] } })) sent++;
+  }
+  // сколько пушей ушло за день: в отчёте рядом с тем, сколько из них открыли (шаг from_push в приложении)
+  if (sent) {
+    const k = `pushn:${mskDay(now)}`;
+    await kv.put(k, String((Number(await kv.get(k)) || 0) + sent), { expirationTtl: 30 * 86400 });
   }
   return sent;
 }

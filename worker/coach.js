@@ -1217,7 +1217,7 @@ const EVENT_LABELS = {
   analysis: "разборов", coach: "с тренером", chat: "вопросов тренеру", compare: "сравнений", replay: "реплеев",
   share: "поделились", link: "привязали аккаунт", profile: "профиль", hero_stats: "статы героя", draft: "драфт",
   blame: "«кто слил»", share_blame: "поделились итогом матча", demo: "смотрели пример", disagree_blame: "не согласны с «кто слил»",
-  design_v2: "включили новый дизайн", design_classic: "вернули классику", paid: "оплатили тренера", paywall: "упёрлись в оплату", lock: "упёрлись в замок вкладок", coach_auto: "тренер сам на 1-м матче",
+  design_v2: "включили новый дизайн", design_classic: "вернули классику", paid: "оплатили тренера", paywall: "упёрлись в оплату", lock: "упёрлись в замок вкладок", coach_auto: "тренер сам на 1-м матче", from_push: "открыли из пуша",
 };
 const STEP_LABELS = {
   home: "главная", home_list: "список игр", home_empty: "«матчей не видно»", match: "открыл матч", link_bad_empty: "пустой ID", link_bad_vanity: "ссылка с ником", link_bad_url: "не та ссылка", link_bad_num: "не те цифры", link_bad_text: "ввёл ник", link_vanity_ok: "ссылка с ником сработала", link_vanity_none: "ссылка с ником: нет профиля", empty_retry: "жмёт «Проверить снова»", empty_found: "матчи нашлись", match_parsing: "ждёт разбор реплея", match_lite: "быстрый разбор без реплея",
@@ -1225,7 +1225,7 @@ const STEP_LABELS = {
   profile: "профиль", hero_stats: "статы героя", draft: "драфт", coach: "тренер", chat: "вопрос тренеру", compare: "сравнение", buy: "открыл оплату", buy_card: "оплата картой", paywall: "упёрся в оплату", lock: "замок на вкладках",
   replay: "реплей", share: "поделился", blame: "«кто слил»", share_blame: "поделился итогом", demo: "пример разбора", disagree_blame: "не согласен", err_opendota: "ОШИБКА OpenDota", err_no_match: "ОШИБКА нет матча", err_replay: "ОШИБКА реплей",
   err_parse: "ОШИБКА разбора", err_boot: "ОШИБКА загрузки", err_other: "ОШИБКА",
-  design_v2: "новый дизайн", design_classic: "классика",
+  design_v2: "новый дизайн", design_classic: "классика", from_push: "открыл из пуша",
 };
 const stepName = (x) => STEP_LABELS[x] || x;
 // «главная 0с → привязал аккаунт 40с → «матчей не видно» 45с → ушёл на 4 мин»
@@ -1314,6 +1314,10 @@ export async function buildReport(env, now = Date.now(), day = mskDay(now - 8640
       .map(([k, t]) => [t, [...today.values()].filter((a) => (a.e || {})[k]).length]).filter(([, n]) => n);
     if (stuck.length) lines.push(`Застряли: ${stuck.map(([t, n]) => `${t} — ${n}`).join(", ")}`);
   }
+  // пуш после катки (relay.js): сколько ушло и сколько людей открыли разбор кнопкой из пуша
+  const pushed = Number(await env.COACH_KV.get(`pushn:${day}`)) || 0;
+  const fromPush = [...today.values()].filter((a) => (a.e || {}).from_push).length;
+  if (pushed || fromPush) lines.push("", `Пуш после катки: отправлено ${pushed}, открыли разбор из пуша ${fromPush}`);
   // оплаты звёздами за день (pay.js), возвраты отмечены
   const paid = (await listAll(env, `paid:${day}:`)).filter((k) => k.metadata);
   if (paid.length) {
