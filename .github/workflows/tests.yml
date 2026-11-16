@@ -1,0 +1,42 @@
+name: Тесты на PR
+
+# Каждый PR в основную ветку: npm test (движок, приложение, воркер).
+# Красный — не мержить. Ролики и промо не трогаем, поэтому клон без больших файлов.
+on:
+  pull_request:
+    paths-ignore:
+      - "promo/**"
+      - "**/*.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          filter: blob:limit=5m
+          sparse-checkout: |
+            docs
+            worker
+            tests
+            tools
+            package.json
+            package-lock.json
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      - run: npm test
