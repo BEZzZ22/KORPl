@@ -13,6 +13,7 @@ const WANT_TTL = 3600;                     // сколько помним, ка�
 const weekKey = (user) => `vweek:${user}`;
 const wantKey = (user) => `vwant:${user}`;
 export const VIDEO_TTL = 3 * 3600 * 1000;  // заявка старше — Actions так и не справился, снимаем
+const VIDEO_LATE = 30 * 60 * 1000;          // столько ждём молча, дальше пишем «задерживается»
 const VIDEO_WORKFLOW = "https://api.github.com/repos/BEZzZ22/KORPl/actions/workflows/video.yml/dispatches";
 const VIDEO_REF = "claude/opus-55-capabilities-limits-ekkxhj";
 
@@ -129,6 +130,15 @@ export async function videoQueue(env, now = Date.now()) {
 
 // Сколько заявок ждёт сборки: дежурный выгрузки (tools/od-relay.mjs) по этому числу запускает workflow «Видеоразбор».
 // Запуск от самого воркера (GH_TOKEN) — запасной: токен бывает просрочен, и заявка висела бы до ручного запуска
+// Для сторожа фона (watchdog.js): самая старая живая заявка и сколько их. Без свежих заявок list не тратим
+export async function videoOldest(env, now = Date.now()) {
+  if (!env.COACH_KV) return null;
+  const last = Number(await env.COACH_KV.get("video_last")) || 0;
+  if (!last || now - last > VIDEO_TTL + 3600_000) return null;
+  const live = (await entries(env)).filter((x) => now - x.t < VIDEO_TTL);
+  return live.length ? { oldest: live[0].t, n: live.length } : null;
+}
+
 export async function videoPending(env, now = Date.now()) {
   if (!env.COACH_KV) return 0;
   const last = Number(await env.COACH_KV.get("video_last")) || 0;
@@ -188,6 +198,11 @@ export async function checkVideo(env, tg, now = Date.now()) {
   const list = await entries(env);
   let dropped = 0;
   for (const x of list) {
+    // долго нет ролика: говорим, что помним, а не молчим до отказа через 3 часа
+    if (now - x.t >= VIDEO_LATE && now - x.t < VIDEO_TTL && !(await env.COACH_KV.get(`vlate:${x.key}`))) {
+      await env.COACH_KV.put(`vlate:${x.key}`, "1", { expirationTtl: Math.ceil(VIDEO_TTL / 1000) });
+      await tg("sendMessage", { chat_id: x.user, text: `Видеоразбор матча ${x.match} собирается дольше обычного: на сборке очередь. Пришлю, как будет готов.` });
+    }
     if (now - x.t < VIDEO_TTL) continue;
     await giveBack(env, x.user, await env.COACH_KV.get(x.key));
     await env.COACH_KV.delete(x.key);

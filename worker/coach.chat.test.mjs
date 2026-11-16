@@ -491,7 +491,7 @@ test("fetch: sync — только с подписью Телеграма, да�
 });
 
 // ---------- очередь реплеев ----------
-import { queueReplay, checkReplays, kickReplays } from "./coach.js";
+import { queueReplay, checkReplays, kickReplays, watchProbe } from "./coach.js";
 
 test("реплеи: очередь для Actions, готовый результат снимается и приходит сообщение", async (t) => {
   t.after(restore);
@@ -1081,4 +1081,24 @@ test("картинки Steam через воркер: только картин�
   assert.match(seen[1], /akamai/);
   globalThis.fetch = async () => { throw new Error("второй раз — из кэша"); };
   assert.equal((await proxySteamImage(u("/apps/dota2/images/dota_react/heroes/tusk.png"), cache)).status, 200);
+});
+
+test("реплеи: час без ответа — одно «задерживается» игроку; сторож видит заявку", async (t) => {
+  t.after(restore);
+  const kv = fakeKV();
+  const e = { COACH_KV: kv, BOT_TOKEN: "x" };
+  const t0 = Date.now();
+  await queueReplay(e, 4444444, 9, t0);
+  let calls = mockFetch({ gh: [404, 404].map((s) => new Response("", { status: s })) });
+  await checkReplays(e, t0 + 30 * 60000);
+  assert.equal(calls.filter((c) => c.who === "tg").length, 0);
+  calls = mockFetch({ gh: [404, 404].map((s) => new Response("", { status: s })), tg: [new Response("{}")] });
+  await checkReplays(e, t0 + 61 * 60000);
+  assert.match(calls.find((c) => c.who === "tg").body.text, /дольше обычного/);
+  calls = mockFetch({ gh: [404, 404].map((s) => new Response("", { status: s })) });
+  await checkReplays(e, t0 + 64 * 60000);
+  assert.equal(calls.filter((c) => c.who === "tg").length, 0);
+  const probe = await watchProbe(e, t0 + 64 * 60000);
+  assert.deepEqual(probe.replays, { oldest: t0, n: 1 });
+  assert.equal(probe.relay, 0);
 });
