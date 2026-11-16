@@ -62,6 +62,7 @@ const TURBO_MODE = 23;
 
 const tg = window.Telegram && window.Telegram.WebApp;
 const app = document.getElementById("app");
+let abilitiesReady = null; // словарь со способностями: ждёт только разбор (matchScreen)
 let dictionary = null, knowledge = null, texts = null, itemIds = null, norms = {}, guides = null, builds = null, heroMeta = null;
 let pollTimer = null;
 let section = "home", lastAnalysis = null, tabbar = null;
@@ -1578,7 +1579,7 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false, 
   // Опоздавший файл позиций всё равно попадёт на «Карту» (берётся из replayCache)
   const [pro, bench, matchups, replay] = await Promise.all([
     upTo(proItems(player.hero_id), OPTIONAL_WAIT, {}), upTo(heroBench(player.hero_id), OPTIONAL_WAIT, {}),
-    upTo(heroMatchups(player.hero_id), OPTIONAL_WAIT, []), upTo(replayP, OPTIONAL_WAIT, null), extrasReady]);
+    upTo(heroMatchups(player.hero_id), OPTIONAL_WAIT, []), upTo(replayP, OPTIONAL_WAIT, null), extrasReady, abilitiesReady]);
   if (stale(seq)) return;
   if (!(await modsP)) {
     if (!stale(seq)) errorScreen("Не загрузилась часть приложения. Проверь интернет и попробуй ещё раз.", () => go(matchScreen, matchId, slot, accountId, 0, demo));
@@ -4772,12 +4773,15 @@ async function boot() {
     // всё одной волной: раньше нормы и сборки грузились по очереди после справочников
     // нормы по рангам и сборки (~400 КБ) нужны только разбору и драфту: главная их не ждёт, качаются в фоне
     if (!extrasReady) extrasReady = loadExtras();
-    const [heroes, items, abilities, ids, kb, tx] = await Promise.all([
-      constants("heroes"), localDict("items", 200), localDict("abilities", 1000),
+    // способности (~240 КБ) нужны только разбору: главная их не ждёт, словарь дополняется, когда они придут
+    const abilitiesP = localDict("abilities", 1000).catch(() => ({}));
+    const [heroes, items, ids, kb, tx] = await Promise.all([
+      constants("heroes"), localDict("items", 200),
       constants("item_ids"),
       ownJson("knowledge.json?v=12"), ownJson("texts.json?v=23"),
     ]);
-    dictionary = createDictionary({ heroes, items, abilities });
+    dictionary = createDictionary({ heroes, items, abilities: {} });
+    if (!abilitiesReady) abilitiesReady = abilitiesP.then((abilities) => { dictionary = createDictionary({ heroes, items, abilities }); });
     itemIds = ids;
     knowledge = kb;
     texts = tx;
