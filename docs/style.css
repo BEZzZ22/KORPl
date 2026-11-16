@@ -242,6 +242,7 @@ button.ghost:active { transform: scale(.98); filter: none; }
 .fresh-label { font-size: 13px; font-weight: 700; color: var(--muted); margin-bottom: 12px; }
 .fresh-hero { font: 700 22px/1.1 var(--display); letter-spacing: -.02em; margin-bottom: 4px; }
 .fresh-img { width: 96px; height: 54px; border-radius: 12px; box-shadow: 0 12px 24px -10px rgba(0, 0, 0, 0.9); }
+.fresh-hook { margin-top: 12px; color: var(--text); line-height: 1.35; }
 .fresh-cta { margin-top: 16px; padding: 13px; border-radius: var(--r-md); text-align: center; font-weight: 800; color: #1a1206;
   background: linear-gradient(180deg, #f6dda4, #e8c27a 48%, #c9984a); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 10px 24px -8px rgba(232, 194, 122, 0.55); }
 
@@ -1331,3 +1332,8 @@ details.more-box[open] > summary { margin-bottom: 6px; }
 details.ach-more { margin-top: 10px; }
 details.ach-more > summary { font-weight: 700; }
 details.ach-more .ach-grid { margin-top: 10px; }
+
+/* размытая вкладка над замком: видно, что за ним настоящий разбор этой катки */
+.locked-preview { position: relative; max-height: 220px; overflow: hidden; margin-bottom: -60px; filter: blur(5px); opacity: .55; pointer-events: none; user-select: none;
+  -webkit-mask-image: linear-gradient(#000 40%, transparent); mask-image: linear-gradient(#000 40%, transparent); }
+.locked-preview + .locked-tab { position: relative; }

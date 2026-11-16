@@ -193,3 +193,15 @@ test("дежурный запускает сборку видеоразбора,
   assert.equal(await kickVideo(2, { ...opts, now: 1e9 + 61000, fetcher: gh(false) }), true);
   assert.ok(calls.includes("POST /dispatches"));
 });
+
+test("дежурный запускает «Разбор реплеев» по своей очереди, независимо от видеоразбора", async () => {
+  const { kickRun } = await import("../tools/od-relay.mjs");
+  const calls = [];
+  const gh = async (url, init = {}) => { calls.push(`${init.method || "GET"} ${url}`); return { ok: true, status: 200, json: async () => ({ total_count: 0 }) }; };
+  const opts = { token: "t", repo: "o/r", ref: "main", fetcher: gh };
+  assert.equal(await kickRun("replays.yml", 3, { ...opts, now: 2e9 }), true);
+  assert.ok(calls.some((c) => c === "POST https://api.github.com/repos/o/r/actions/workflows/replays.yml/dispatches"));
+  // у видеоразбора своя минутная пауза
+  assert.equal(await kickRun("video.yml", 1, { ...opts, now: 2e9 + 1000 }), true);
+  assert.equal(await kickRun("replays.yml", 3, { ...opts, now: 2e9 + 2000 }), false);
+});

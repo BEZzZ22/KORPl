@@ -17,6 +17,7 @@ import { sendMatchWidget } from "./widget.js";
 export const ODREQ_PREFIX = "odreq:";
 export const RELAY_ROUND = 3600_000;
 const ACTIVE_DAYS = 14;
+const HIDDEN_WAIT = 14 * 86400_000;    // сколько ждём, что человек откроет данные матчей
 const PUSH_BUDGET = 1200;               // запросов в сутки на обход аккаунтов из ~2000 бесплатных у OpenDota
 export const roundGap = (n) => RELAY_ROUND * Math.max(1, Math.ceil((n * 24) / PUSH_BUDGET));
 // 08.11 решение Ярика: звать на разбор не после каждой катки, а одним сообщением раз в 2–3 дня
@@ -92,12 +93,23 @@ export async function pushNewMatches(env, tg, users, data, heroes, now = Date.no
   let sent = 0;
   for (const [id, acc] of Object.entries(users || {})) {
     const list = data[`/players/${acc}/recentMatches`];
-    if (!Array.isArray(list) || !list.length) continue;
+    if (!Array.isArray(list)) continue;
+    const hidKey = `hid:${id}`;
+    // пусто — в Доте закрыты данные матчей («матчей не видно» в приложении): помечаем и ждём, когда откроет
+    if (!list.length) { if (!(await kv.get(hidKey))) await kv.put(hidKey, "1", { expirationTtl: HIDDEN_WAIT / 1000 }); continue; }
     const m = list.reduce((a, b) => (Number(b.match_id) > Number(a.match_id) ? b : a));
     const key = `lastm:${id}`;
     const last = Number(await kv.get(key)) || 0;
     if (Number(m.match_id) <= last) continue;
     await kv.put(key, String(m.match_id), { expirationTtl: 60 * 86400 });
+    const wasHidden = await kv.get(hidKey);
+    if (wasHidden) await kv.delete(hidKey);
+    // матчей не было видно ни разу, а теперь есть: человек открыл данные — говорим сразу, а не ждём, пока зайдёт сам
+    if (!last && wasHidden) {
+      if (await kv.get(`nopush:${id}`)) continue;
+      await tg("sendMessage", { chat_id: Number(id), text: openedText(m, heroes), reply_markup: matchButton(m.match_id, "Разобрать катку", "open") });
+      continue;
+    }
     if (!last) continue;
     if (now - (Number(m.start_time) + Number(m.duration)) * 1000 > PUSH_FRESH) continue;
     if (await kv.get(`nopush:${id}`)) continue;
@@ -114,6 +126,12 @@ export async function pushNewMatches(env, tg, users, data, heroes, now = Date.no
     await kv.put(k, String((Number(await kv.get(k)) || 0) + sent), { expirationTtl: 30 * 86400 });
   }
   return sent;
+}
+
+// Матчи открылись после «матчей не видно»
+export function openedText(m, heroes = {}) {
+  const hero = (heroes[m.hero_id] && heroes[m.hero_id][1]) || "";
+  return `Матчи в Доте открылись, теперь вижу твои игры. Последняя — ${hero ? `на ${hero}, ` : ""}${m.kills}/${m.deaths}/${m.assists}. Жми, разберу её.`;
 }
 
 export function pushText(m, heroes = {}) {
