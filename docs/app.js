@@ -4,12 +4,28 @@ import {
   CATEGORIES, BAD, WARN, GOOD, ZONE_NAMES,
 } from "./engine.js?v=49";
 import { aegisBadge, openShowcase, whenGone } from "./aegis.js?v=9";
-import { mapX, mapY, minimap, replayModel, liveMap } from "./dotamap.js?v=11";
-import { matchVerdicts } from "./blame.js?v=15";
-import { deepView, deepBrief } from "./deep.js?v=2";
-import { rankMedal3d } from "./medal3d.js?v=7";
-import { heroCard3d } from "./herocard3d.js?v=5";
-import { tacticalTable } from "./map3d.js?v=16";
+
+// Модули разбора (карта, «Кто слил», реплей, 3D) главной не нужны: грузим их не на старте, а в фоне после
+// первого экрана или при открытии матча. Раньше они качались и разбирались до первого кадра.
+let mapX, mapY, minimap, replayModel, liveMap, matchVerdicts, deepView, deepBrief, heroCard3d, tacticalTable, rankMedal3d;
+let analysisModsP = null, medalP = null;
+function analysisMods() {
+  if (!analysisModsP) {
+    analysisModsP = Promise.all([import("./dotamap.js?v=11"), import("./blame.js?v=15"), import("./deep.js?v=2"),
+      import("./herocard3d.js?v=5"), import("./map3d.js?v=16")]).then(([map, blame, deep, card, table]) => {
+      ({ mapX, mapY, minimap, replayModel, liveMap } = map);
+      ({ matchVerdicts } = blame);
+      ({ deepView, deepBrief } = deep);
+      ({ heroCard3d } = card);
+      ({ tacticalTable } = table);
+    }).catch((e) => { analysisModsP = null; throw e; });
+  }
+  return analysisModsP;
+}
+function medalMod() {
+  if (!medalP) medalP = import("./medal3d.js?v=7").then((m) => { rankMedal3d = m.rankMedal3d; }).catch((e) => { medalP = null; throw e; });
+  return medalP;
+}
 
 // Медали ранга Доты: старший разряд ранг-тира — медаль, младший — звёзды
 const MEDALS = ["Рекрут", "Страж", "Рыцарь", "Герой", "Легенда", "Властелин", "Божество", "Титан"];
@@ -925,6 +941,7 @@ async function profileScreen() {
   }
   loading("Открываю профиль…");
   let player, wl, matches, heroes;
+  const medal = V2 ? medalMod().catch(() => null) : null;
   try {
     [player, wl, matches, heroes] = await Promise.all([
       api(`/players/${account}`),
@@ -936,6 +953,7 @@ async function profileScreen() {
     if (!stale(seq)) errorScreen("OpenDota не отвечает.", () => navRoot("profile", profileScreen));
     return;
   }
+  if (medal) await upTo(medal, 3000, null);
   if (stale(seq)) return;
   if (!player || !player.profile) {
     render(h("div", { class: "page-head" }, h("h1", {}, "Профиль")),
@@ -956,7 +974,7 @@ async function profileScreen() {
   const topHeroes = (heroes || []).filter((hx) => hx.games > 0).sort((a, b) => b.games - a.games).slice(0, 6);
 
   render(
-    V2 && h("div", { class: "rank3d-wrap" }, rankMedal3d(player.rank_tier, { reduced: reducedMotion(), haptic, tick: hapticTick }),
+    V2 && rankMedal3d && h("div", { class: "rank3d-wrap" }, rankMedal3d(player.rank_tier, { reduced: reducedMotion(), haptic, tick: hapticTick }),
       h("div", { class: "small muted" }, "Крути пальцем, тап — глитч")),
     h("div", { class: "card" },
       h("div", { class: "profile-card" },
@@ -1436,6 +1454,7 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false, 
   // файл позиций качается вместе с матчем, а не после него
   const replayP = quiet ? null : fetchReplay(matchId);
   const deepP = quiet ? null : fetchDeep(matchId);
+  const modsP = analysisMods().then(() => true, () => false);
   let match;
   try {
     // ссылка на разбор: матч уже качается со старта (boot), второй раз не просим
@@ -1560,6 +1579,11 @@ async function matchScreen(matchId, slot, accountId, attempt = 0, demo = false, 
   const [pro, bench, matchups, replay] = await Promise.all([
     upTo(proItems(player.hero_id), OPTIONAL_WAIT, {}), upTo(heroBench(player.hero_id), OPTIONAL_WAIT, {}),
     upTo(heroMatchups(player.hero_id), OPTIONAL_WAIT, []), upTo(replayP, OPTIONAL_WAIT, null), extrasReady]);
+  if (stale(seq)) return;
+  if (!(await modsP)) {
+    if (!stale(seq)) errorScreen("Не загрузилась часть приложения. Проверь интернет и попробуй ещё раз.", () => go(matchScreen, matchId, slot, accountId, 0, demo));
+    return;
+  }
   if (stale(seq)) return;
   let a;
   try {
@@ -2410,7 +2434,7 @@ function isPaywall(e) {
 // Экраны через go(); разбор открывается из matchScreen напрямую, поэтому отмечается в analysisScreen
 const SCREEN_EVENTS = { homeScreen: "home", matchScreen: "match", profileScreen: "profile", bonusScreen: "bonus", heroStatsScreen: "hero_stats", draftScreen: "draft" };
 const ERROR_STEPS = [["OpenDota не отвечает", "err_opendota"], ["Такого матча нет", "err_no_match"], ["Реплей так и не", "err_replay"],
-  ["Не смог разобрать", "err_parse"], ["Не удалось загрузить", "err_boot"]];
+  ["Не смог разобрать", "err_parse"], ["Не удалось загрузить", "err_boot"], ["Не загрузилась часть", "err_mods"]];
 const stats = { open: true, events: {}, secs: 0, since: Date.now(), dirty: true, start: Date.now(), path: [], jsError: "" };
 
 function track(name) {
@@ -4742,7 +4766,7 @@ async function boot() {
   const gate = passGate();
   // список каток главной качается вместе со справочниками, а не после них
   const early = startParams().matchId;
-  if (early) { matchEarly = { id: early, p: api(`/matches/${early}`).catch(() => undefined) }; fetchReplay(early); }
+  if (early) { matchEarly = { id: early, p: api(`/matches/${early}`).catch(() => undefined) }; fetchReplay(early); analysisMods().catch(() => {}); }
   else storage.get("account_id").then((acc) => { if (acc) prefetchRecent(acc); }).catch(() => {});
   try {
     // всё одной волной: раньше нормы и сборки грузились по очереди после справочников
@@ -4782,6 +4806,8 @@ async function boot() {
   } else {
     go(homeScreen);
   }
+  // модули разбора — в фоне, когда главная уже на экране: к тапу по матчу они обычно уже в памяти
+  setTimeout(() => analysisMods().catch(() => {}), 2500);
 }
 
 boot();
