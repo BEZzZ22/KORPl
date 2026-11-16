@@ -2467,7 +2467,7 @@ addEventListener("error", (e) => {
 addEventListener("unhandledrejection", (e) => { stats.jsError = String((e && e.reason && e.reason.message) || e.reason || "rejection").slice(0, 120); track("err_js"); });
 
 // Пачкой: через несколько секунд после запуска, когда приложение сворачивают, и раз в 2 минуты.
-// sendBeacon доходит и при закрытии, text/plain — без лишнего предзапроса CORS
+// fetch с keepalive доходит и при закрытии, text/plain — без лишнего предзапроса CORS
 function flushStats() {
   if (!COACH_URL || !tg || !tg.initData) return;
   if (stats.since) { stats.secs += (Date.now() - stats.since) / 1000; stats.since = document.hidden ? 0 : Date.now(); }
@@ -2475,8 +2475,14 @@ function flushStats() {
   const start = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) || "";
   const body = JSON.stringify({ mode: "track", initData: tg.initData, open: stats.open, secs: Math.round(stats.secs), events: stats.events, src: /^l\d/.test(start) ? "steam" : /^m\d+(?:_s\d+)?_r\d+$/.test(start) ? start.replace(/^.*_(r\d+)$/, "$1") : start,
     path: stats.path.join(","), jserr: stats.jsError, ua: tg.platform || "" });
-  const sent = navigator.sendBeacon && navigator.sendBeacon(COACH_URL, new Blob([body], { type: "text/plain" }));
-  if (!sent) fetch(COACH_URL, { method: "POST", headers: { "Content-Type": "text/plain" }, body, keepalive: true }).catch(() => {});
+  // Сначала fetch с keepalive: во WebView Телеграма на iOS sendBeacon отвечает true, а запрос может не уйти,
+  // и айфонов в отчётах не было совсем. Маяк — запасной путь, если fetch не может (очень старый браузер)
+  try {
+    fetch(COACH_URL, { method: "POST", headers: { "Content-Type": "text/plain" }, body, keepalive: true })
+      .catch(() => { if (navigator.sendBeacon) navigator.sendBeacon(COACH_URL, new Blob([body], { type: "text/plain" })); });
+  } catch {
+    if (navigator.sendBeacon) navigator.sendBeacon(COACH_URL, new Blob([body], { type: "text/plain" }));
+  }
   stats.open = false; stats.events = {}; stats.secs = 0; stats.dirty = false;
 }
 
