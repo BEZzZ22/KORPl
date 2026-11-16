@@ -35,6 +35,9 @@ jobs:
           from=$(TZ=Europe/Moscow date -d "-$(( ${DAYS:-7} - 1 )) days" +%Y-%m-%d)
           npx --yes wrangler@4 d1 execute dotacoach --remote --json \
             --command "SELECT k, meta FROM kv WHERE k >= 'act:$from' AND k < 'act:9'" 2>/dev/null > act.json
+          # профили (синхронизация идёт обычным fetch): кто открывал приложение, но не дошёл до счётчиков
+          npx --yes wrangler@4 d1 execute dotacoach --remote --json \
+            --command "SELECT k, json_extract(v, '$.updated') AS u FROM kv WHERE k >= 'user:' AND k < 'user;'" 2>/dev/null > users.json
           python3 - <<'PY'
           import json, re, collections
           owners = set(re.search(r'OWNER_TG_IDS\s*=\s*"([^"]*)"', open("worker/wrangler.toml").read()).group(1).replace(" ", "").split(","))
@@ -62,6 +65,14 @@ jobs:
           for k, v in exits.most_common(15): print(f"  {k}: {v}")
           print("\nТексты ошибок в коде:")
           for k, v in js.most_common(20): print(f"  {v}× {k}")
+          # счётчики не дошли: профиль обновлялся в эти дни, а записей act: нет (sendBeacon на iOS может теряться)
+          import datetime
+          since = datetime.datetime.strptime(rows and min(r["k"].split(":")[1] for r in rows) or "2000-01-01", "%Y-%m-%d").timestamp() * 1000
+          synced = {r["k"].split(":")[1] for r in json.load(open("users.json"))[0]["results"] if (r["u"] or 0) >= since}
+          acted = {r["k"].split(":", 2)[2] for r in rows}
+          print(f"\nПрофиль обновлялся за период: {len(synced - owners)}, из них без счётчиков: {len(synced - acted - owners)}")
+          own = [json.loads(r["meta"] or "{}") for r in rows if r["k"].split(":", 2)[2] in owners]
+          print(f"Владелец: дней со счётчиками {len(own)}, платформы: {', '.join(sorted({a.get('pl') or '?' for a in own})) or '—'}; профиль обновлялся: {'да' if synced & owners else 'нет'}")
           print("\nВсе события (людей-дней):")
           print("  " + ", ".join(f"{k} {v}" for k, v in users_ev.most_common(60)))
           PY
