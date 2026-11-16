@@ -730,7 +730,7 @@ async function homeScreen() {
       api(`/players/${account}/refresh`, { method: "POST" }).catch(() => {});
       return;
     }
-    const fresh = freshMatchCard(matches[0], account);
+    const fresh = freshMatchCard(matches[0], account, matches);
     list.replaceChildren(...[fresh, ...matches.slice(fresh ? 1 : 0, 15).map((m) => matchListItem(m, account))].filter(Boolean));
   } catch {
     step("err_opendota");
@@ -1389,28 +1389,46 @@ function matchEmpty() {
   ));
 }
 
-const FRESH_HOURS = 12;
+const FRESH_HOURS = 12; // свежая катка: сразу просим OpenDota разобрать реплей
+const CARD_HOURS = 72;  // карточка «Последняя катка» сверху списка
 
 // Последняя катка за полдня: большой блок сверху, а разбор реплея заказываем сразу,
 // чтобы к нажатию «Разобрать» он уже был готов
-function freshMatchCard(m, account) {
-  if (!m || Date.now() / 1000 - (m.start_time + (m.duration || 0)) > FRESH_HOURS * 3600) return null;
+function freshMatchCard(m, account, list = []) {
+  const ended = Date.now() / 1000 - (m ? m.start_time + (m.duration || 0) : 0);
+  if (!m || ended > CARD_HOURS * 3600) return null;
   const flag = `req:${m.match_id}`;
-  if (!safeLocal.get(flag)) {
+  if (ended <= FRESH_HOURS * 3600 && !safeLocal.get(flag)) {
     safeLocal.set(flag, "1");
     requestParse(m.match_id);
   }
   const won = (m.player_slot < 128) === m.radiant_win;
-  const ago = Math.max(1, Math.round((Date.now() / 1000 - m.start_time - (m.duration || 0)) / 60));
-  const when = ago < 60 ? `${ago} ${plural(ago, "минуту", "минуты", "минут")} назад` : `${Math.round(ago / 60)} ${plural(Math.round(ago / 60), "час", "часа", "часов")} назад`;
-  return tilt(h("button", { class: `fresh-match ${won ? "win" : "loss"}`, type: "button", onclick: () => { haptic("medium"); go(matchScreen, m.match_id, null, Number(account)); } },
+  const ago = Math.max(1, Math.round(ended / 60)), hours = Math.round(ago / 60), days = Math.floor(ago / 1440);
+  const when = ago < 60 ? `${ago} ${plural(ago, "минуту", "минуты", "минут")} назад`
+    : hours < 24 ? `${hours} ${plural(hours, "час", "часа", "часов")} назад` : days === 1 ? "вчера" : `${days} ${plural(days, "день", "дня", "дней")} назад`;
+  const hook = freshHook(m, list);
+  return tilt(h("button", { class: `fresh-match ${won ? "win" : "loss"}`, type: "button", onclick: () => { haptic("medium"); step(hook ? "fresh_hook" : "fresh_tap"); go(matchScreen, m.match_id, null, Number(account)); } },
     h("div", { class: "fresh-label" }, "Последняя катка"),
     h("div", { class: "row" },
       heroImg(m.hero_id, "hero-img fresh-img"),
       h("div", { class: "grow" },
         h("div", { class: "fresh-hero" }, dictionary.heroName(m.hero_id)),
         h("div", { class: "small muted" }, `${won ? "Победа" : "Поражение"} · ${m.kills}/${m.deaths}/${m.assists} · ${when}`))),
+    hook && h("div", { class: "fresh-hook small" }, hook),
     h("div", { class: "fresh-cta" }, "Разобрать")));
+}
+
+// Зацепка на карточке последней катки: чем она отличается от обычных игр человека (по тому же списку, без запросов).
+// Со списка игр уходили, не открыв ни одной (отчёт 17.11): без причины тапнуть катка выглядит как все
+function freshHook(m, list) {
+  const rest = list.filter((x) => x && x.match_id !== m.match_id && x.game_mode !== TURBO_MODE).slice(0, 20);
+  if (rest.length < 5 || m.game_mode === TURBO_MODE) return null;
+  const avg = (k) => rest.reduce((sum, x) => sum + (Number(x[k]) || 0), 0) / rest.length;
+  const d = avg("deaths"), g = avg("gold_per_min");
+  if (m.deaths >= 4 && m.deaths >= d * 1.4) return `Смертей ${m.deaths}, обычно у тебя ${Math.round(d)}. Покажу, где отдал`;
+  if (g > 0 && m.gold_per_min > 0 && m.gold_per_min <= g * 0.8) return `Фарм ${m.gold_per_min} в минуту при твоих обычных ${Math.round(g)}. Покажу, где потерял`;
+  if (d >= 3 && m.deaths <= d * 0.5) return `Смертей всего ${m.deaths}, обычно ${Math.round(d)}. Глянем, что сработало`;
+  return null;
 }
 
 function matchListItem(m, account) {
@@ -1790,6 +1808,19 @@ function lockedTeaser(a) {
     n > 1 && h("p", { class: "small muted" }, `Остальные ${n - 1}, разбор смертей, карта и сборка — в полном разборе.`));
 }
 
+// Над замком — настоящая вкладка этой катки, размытая: видно, что внутри не заглушка. С замка уходили, не открыв
+// (отчёт 17.11). Только лёгкие вкладки без анимаций и таймеров: карта, графики и реплей живут своими циклами
+const PREVIEW_TABS = new Set(["Ход игры", "Фазы", "Смерти"]);
+function lockedPreview(a, [name, tab]) {
+  if (!PREVIEW_TABS.has(name)) return null;
+  try {
+    const inner = tab(a);
+    return inner ? h("div", { class: "locked-preview", "aria-hidden": "true", inert: "" }, inner) : null;
+  } catch {
+    return null;
+  }
+}
+
 // Закрытая вкладка: что даёт подписка и как открыть этот матч
 function lockedTab(a, onOpen) {
   const w = walletState || {};
@@ -1841,7 +1872,7 @@ function analysisScreen(a) {
   const access = matchAccess(a);
   const shells = [];
   const fill = (shell, i) => {
-    if (a._accessResult && !a._accessResult.full) shell.replaceChildren(lockedTab(a, () => a._unlock()));
+    if (a._accessResult && !a._accessResult.full) shell.replaceChildren(lockedPreview(a, TABS[i]), lockedTab(a, () => a._unlock()));
     else if (a._accessResult) shell.replaceChildren(TABS[i][1](a));
   };
   const build = (i) => {
@@ -4804,8 +4835,9 @@ async function boot() {
   // история и задачи с других устройств: в фоне, экран не ждёт
   storage.get("account_id").then((acc) => acc && syncProfile(acc)).catch(() => {});
   if (matchId) {
-    // кнопка из пуша после катки: считаем, сколько пушей открывают (отчёт владельцу)
-    if (new URLSearchParams(location.search).get("src") === "push") step("from_push");
+    // кнопка из пуша после катки (push) или «матчи открылись» (open): считаем, сколько открывают (отчёт владельцу)
+    const src = new URLSearchParams(location.search).get("src");
+    if (src === "push" || src === "open") step(`from_${src}`);
     navStack.push([homeScreen, []]);
     go(matchScreen, matchId, slot, account);
   } else if (startParams().demo) {

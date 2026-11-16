@@ -158,3 +158,26 @@ test("серия сгорит: вечером тем, у кого вчера б�
   assert.match(sent[0].text, /^Серия 4 дня подряд сгорит/);
   assert.equal(await streakReminders(env, tg, now + 60_000), 0);
 });
+
+test("матчи были скрыты и открылись — бот сам зовёт разобрать, один раз", async () => {
+  const kv = fakeKV(), env = { COACH_KV: kv }, now = Date.UTC(2026, 10, 17, 3);
+  const g = (id) => [{ match_id: id, player_slot: 0, radiant_win: true, hero_id: 1, kills: 5, deaths: 3, assists: 7, duration: 2000, start_time: Math.floor(now / 1000) - 2400 }];
+  const sent = [];
+  const tg = async (m, b) => { sent.push(b); return true; };
+  await relayRun(env, tg, { data: { "/players/42/recentMatches": [] }, users: { 7: 42 } }, now);
+  assert.equal(await kv.get("hid:7"), "1");
+  assert.equal(sent.length, 0);
+  await relayRun(env, tg, { data: { "/players/42/recentMatches": g(300) }, users: { 7: 42 } }, now + 3600_000);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].text, /Матчи в Доте открылись/);
+  assert.match(sent[0].reply_markup.inline_keyboard[0][0].web_app.url, /\?match=300&src=open$/);
+  assert.equal(await kv.get("hid:7"), null);
+  // дальше — обычные правила пуша, повторного «открылись» нет
+  await relayRun(env, tg, { data: { "/players/42/recentMatches": g(300) }, users: { 7: 42 } }, now + 7200_000);
+  assert.equal(sent.length, 1);
+  // у того, чьи матчи и так видны, пустой ответ не вызывает «открылись» потом
+  await kv.put("lastm:8", "500");
+  await relayRun(env, tg, { data: { "/players/43/recentMatches": [] }, users: { 8: 43 } }, now);
+  await relayRun(env, tg, { data: { "/players/43/recentMatches": g(501) }, users: { 8: 43 } }, now + 3600_000);
+  assert.ok(!sent.slice(1).some((b) => /открылись/.test(b.text || "")));
+});

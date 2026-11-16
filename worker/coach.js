@@ -1217,7 +1217,7 @@ const EVENT_LABELS = {
   analysis: "разборов", coach: "с тренером", chat: "вопросов тренеру", compare: "сравнений", replay: "реплеев",
   share: "поделились", link: "привязали аккаунт", profile: "профиль", hero_stats: "статы героя", draft: "драфт",
   blame: "«кто слил»", share_blame: "поделились итогом матча", demo: "смотрели пример", disagree_blame: "не согласны с «кто слил»",
-  design_v2: "включили новый дизайн", design_classic: "вернули классику", paid: "оплатили тренера", paywall: "упёрлись в оплату", lock: "упёрлись в замок вкладок", coach_auto: "тренер сам на 1-м матче", from_push: "открыли из пуша",
+  design_v2: "включили новый дизайн", design_classic: "вернули классику", paid: "оплатили тренера", paywall: "упёрлись в оплату", lock: "упёрлись в замок вкладок", coach_auto: "тренер сам на 1-м матче", from_push: "открыли из пуша", from_open: "открыли после «матчи открылись»",
 };
 const STEP_LABELS = {
   home: "главная", home_list: "список игр", home_empty: "«матчей не видно»", match: "открыл матч", link_bad_empty: "пустой ID", link_bad_vanity: "ссылка с ником", link_bad_url: "не та ссылка", link_bad_num: "не те цифры", link_bad_text: "ввёл ник", link_vanity_ok: "ссылка с ником сработала", link_vanity_none: "ссылка с ником: нет профиля", empty_retry: "жмёт «Проверить снова»", empty_found: "матчи нашлись", match_parsing: "ждёт разбор реплея", match_lite: "быстрый разбор без реплея",
@@ -1225,7 +1225,7 @@ const STEP_LABELS = {
   profile: "профиль", hero_stats: "статы героя", draft: "драфт", coach: "тренер", chat: "вопрос тренеру", compare: "сравнение", buy: "открыл оплату", buy_card: "оплата картой", paywall: "упёрся в оплату", lock: "замок на вкладках",
   replay: "реплей", share: "поделился", blame: "«кто слил»", share_blame: "поделился итогом", demo: "пример разбора", disagree_blame: "не согласен", err_opendota: "ОШИБКА OpenDota", err_no_match: "ОШИБКА нет матча", err_replay: "ОШИБКА реплей",
   err_parse: "ОШИБКА разбора", err_boot: "ОШИБКА загрузки", err_other: "ОШИБКА",
-  design_v2: "новый дизайн", design_classic: "классика", from_push: "открыл из пуша",
+  design_v2: "новый дизайн", design_classic: "классика", from_push: "открыл из пуша", from_open: "открыл после «матчи открылись»",
 };
 const stepName = (x) => STEP_LABELS[x] || x;
 // «главная 0с → привязал аккаунт 40с → «матчей не видно» 45с → ушёл на 4 мин»
@@ -2174,7 +2174,8 @@ export default {
       const okKey = (k) => Boolean(k) && auth === `Bearer ${k}`;
       if (!env.BOT_TOKEN || !env.COACH_KV || !(okKey(env.RELAY_KEY) || okKey(env.BOT_TOKEN))) return new Response("Нельзя.", { status: 403 });
       const json = (x) => new Response(JSON.stringify(x), { headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } });
-      if (request.method === "GET") return json({ ...(await relayTasks(env)), video: await videoPending(env).catch(() => 0) });
+      // video / replays — сколько ждут сборки: выгрузка сама запускает эти workflow, если они не идут
+      if (request.method === "GET") return json({ ...(await relayTasks(env)), video: await videoPending(env).catch(() => 0), replays: (await replayQueue(env).catch(() => [])).length });
       let body;
       try { body = JSON.parse(await request.text()); } catch { return new Response("Не JSON.", { status: 400 }); }
       return json(await relayRun(env, (m, b) => tgCall(env, m, b), body, Date.now(), { checkWatches }));
