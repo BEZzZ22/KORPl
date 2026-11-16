@@ -1,0 +1,67 @@
+# Ошибки и места, где застревают, за последние дни: по счётчикам приложения (ключи act: в D1).
+# Только чтение. Репо публичный: печатаем числа, названия шагов и текст ошибок в коде без длинных чисел (id, матчи).
+name: Ошибки за неделю
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "За сколько дней (1–14)"
+        required: false
+        default: "7"
+
+permissions:
+  contents: read
+
+jobs:
+  errors:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      DAYS: ${{ inputs.days }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: worker/wrangler.toml
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Сводка
+        run: |
+          case "${DAYS:-7}" in [1-9]|1[0-4]) ;; *) echo "days: 1–14"; exit 1 ;; esac
+          from=$(TZ=Europe/Moscow date -d "-$(( ${DAYS:-7} - 1 )) days" +%Y-%m-%d)
+          npx --yes wrangler@4 d1 execute dotacoach --remote --json \
+            --command "SELECT k, meta FROM kv WHERE k >= 'act:$from' AND k < 'act:9'" 2>/dev/null > act.json
+          python3 - <<'PY'
+          import json, re, collections
+          owners = set(re.search(r'OWNER_TG_IDS\s*=\s*"([^"]*)"', open("worker/wrangler.toml").read()).group(1).replace(" ", "").split(","))
+          rows = json.load(open("act.json"))[0]["results"]
+          ev, users_ev, exits, js, plat = collections.Counter(), collections.Counter(), collections.Counter(), collections.Counter(), collections.Counter()
+          people, opens, n = set(), 0, 0
+          for r in rows:
+              _, day, uid = r["k"].split(":", 2)
+              if uid in owners or not r["meta"]: continue
+              a = json.loads(r["meta"]); n += 1; people.add(uid); opens += a.get("o", 0)
+              plat[a.get("pl") or "?"] += 1
+              for k, v in (a.get("e") or {}).items():
+                  ev[k] += v; users_ev[k] += 1
+              p = (a.get("p") or "").split(",")
+              if p[-1]: exits[p[-1].split(":")[0]] += 1
+              if a.get("j"): js[re.sub(r"\d{5,}", "N", re.sub(r"#tgWebAppData\S*", "", a["j"]))] += 1
+          print(f"Дней с заходами: {n}, людей: {len(people)}, открытий: {opens}")
+          print("Платформы:", ", ".join(f"{k} {v}" for k, v in plat.most_common()))
+          print("\nОшибки (событий / людей-дней):")
+          for k, v in sorted(((k, v) for k, v in ev.items() if k.startswith("err_")), key=lambda x: -x[1]): print(f"  {k}: {v} / {users_ev[k]}")
+          print("\nЗастревания (людей-дней):")
+          for k in ["home_empty", "empty_retry", "empty_found", "link_unknown", "link_anyway", "not_yours", "gate", "write_no", "hidden_by_id"]:
+              if users_ev[k]: print(f"  {k}: {users_ev[k]}")
+          print("\nГде закрыли (последний экран):")
+          for k, v in exits.most_common(15): print(f"  {k}: {v}")
+          print("\nТексты ошибок в коде:")
+          for k, v in js.most_common(20): print(f"  {v}× {k}")
+          print("\nВсе события (людей-дней):")
+          print("  " + ", ".join(f"{k} {v}" for k, v in users_ev.most_common(60)))
+          PY
