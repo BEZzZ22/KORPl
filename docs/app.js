@@ -4798,6 +4798,8 @@ async function boot() {
   // история и задачи с других устройств: в фоне, экран не ждёт
   storage.get("account_id").then((acc) => acc && syncProfile(acc)).catch(() => {});
   if (matchId) {
+    // кнопка из пуша после катки: считаем, сколько пушей открывают (отчёт владельцу)
+    if (new URLSearchParams(location.search).get("src") === "push") step("from_push");
     navStack.push([homeScreen, []]);
     go(matchScreen, matchId, slot, account);
   } else if (startParams().demo) {

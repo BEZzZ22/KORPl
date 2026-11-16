@@ -106,12 +106,12 @@ export function matchState(m, heroes = {}) {
 }
 
 // Пуш после катки виджетом. tg(method, body) -> результат Bot API или null. Не вышло — false, тогда шлют обычным текстом
-export async function sendMatchWidget(env, tg, chatId, m, heroes, caption) {
+export async function sendMatchWidget(env, tg, chatId, m, heroes, caption, src = "") {
   if (!widgetsOn(env)) return false;
   const state = matchState(m, heroes);
   const res = await Promise.resolve(tg("sendWidget", {
     chat_id: Number(chatId), html: MATCH_HTML, caption, chat_data: JSON.stringify(state), allow_queries: true,
-    reply_markup: matchButton(m.match_id, "Разобрать катку"),
+    reply_markup: matchButton(m.match_id, "Разобрать катку", src),
   })).catch(() => null);
   if (!res) return false;
   if (res.message_id && env.COACH_KV) await env.COACH_KV.put(wgtKey(chatId, state.m), JSON.stringify({ m: res.message_id, d: state }), { expirationTtl: WIDGET_TTL });
