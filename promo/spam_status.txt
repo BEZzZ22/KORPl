@@ -1,6 +1,6 @@
-2026-11-17T10:22+00:00
-К сожалению, кто-то из пользователей Telegram посчитал Ваши сообщения нежелательными и переслал их на проверку команде модераторов. Модераторы подтвердили, что жалоба была обоснованной.
+2026-11-17T11:22+00:00
+I’m afraid some Telegram users found your messages annoying and forwarded them to our team of moderators for inspection. The moderators have confirmed the report and your account is now limited until 20 Nov 2026, 04:49 UTC.
 
-Ваш аккаунт временно ограничен: Вы не можете писать тем, кто не сохранил Ваш номер в список контактов, а также приглашать таких пользователей в группы или каналы. Если незнакомый пользователь напишет Вам первым, Вы сможете ему ответить.
+While the account is limited, you will not be able to do certain things on Telegram, like writing to strangers who haven’t contacted you first or adding them to groups and channels.
 
-Ограничения будут автоматически сняты 20 Nov 2026, 04:49 UTC (по московскому времени — на три часа позже). Обратите внимание, что если пользователи будут жаловаться на новые нежелательные сообщения от Вас, в следующий раз аккаунт будет ограничен на больший срок. Ограничения, наложенные впервые, снимаются быстрее при наличии действующей подписки Telegram Premium.
+Your account will be automatically released on 20 Nov 2026, 04:49 UTC. Please note that if you repeat what got you limited and users report you again, the limitations will last longer next time. Subscribers of Telegram Premium have reduced times for initial limitations.
