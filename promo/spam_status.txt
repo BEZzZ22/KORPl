@@ -1,2 +1,6 @@
-2026-11-17T04:41+00:00
-Ваш аккаунт свободен от каких-либо ограничений.
+2026-11-17T05:41+00:00
+I’m afraid some Telegram users found your messages annoying and forwarded them to our team of moderators for inspection. The moderators have confirmed the report and your account is now limited until 20 Nov 2026, 04:49 UTC.
+
+While the account is limited, you will not be able to do certain things on Telegram, like writing to strangers who haven’t contacted you first or adding them to groups and channels.
+
+Your account will be automatically released on 20 Nov 2026, 04:49 UTC. Please note that if you repeat what got you limited and users report you again, the limitations will last longer next time. Subscribers of Telegram Premium have reduced times for initial limitations.
