@@ -10,6 +10,7 @@
 
 import { giftCredits, openMatch } from "./pay.js";
 import { CHAT_ID } from "./chatguard.js";
+import { noteMonthWeek } from "./month.js";
 
 export const APP_URL = "https://bezzz22.github.io/KORPl/";
 // Запросы воркера к OpenDota — с User-Agent: fetch из Cloudflare Workers сам его не ставит, а OpenDota стоит за защитой
@@ -256,6 +257,7 @@ export async function weeklyDigest(env, tg, now = Date.now(), fetcher = fetch, b
       const s = weekSummary(matches, now);
       if (!s) continue;
       await noteTop(env, week, id, s).catch(() => {});
+      await noteMonthWeek(env, id, s, now).catch(() => {});
       if (await tg("sendMessage", { chat_id: Number(id), text: digestText(s), reply_markup: { inline_keyboard: [...matchButton(s.worst.match_id, "Разобрать эту катку").inline_keyboard, [{ text: "Видеоразбор", callback_data: `vid:${s.worst.match_id}` }]] } })) sent++;
     }
     if (got.list_complete || !got.cursor) break;
