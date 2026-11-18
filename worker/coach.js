@@ -14,6 +14,7 @@ import { relayTasks, relayRun, kickRelay, ODREQ_PREFIX } from "./relay.js";
 import { requestVideo, resumeVideo, parseVideoCommand, videoPending, videoQueue, videoDone, checkVideo, videoOldest, VIDEO_BUTTON, VIDEO_HELP } from "./video.js";
 import { watchdog } from "./watchdog.js";
 import { handleWidgetQuery, sendShopWidget } from "./widget.js";
+import { noteMonthAnalysis, noteMonthAch, monthView, monthAward } from "./month.js";
 import { matchFromText, matchButton, MATCH_TEXT, accountFromText, linkButton, LINK_TEXT, OD_HEADERS, noteReferral, rewardReferral, referralFromStart, noteStartSource, bumpStreak, growthView, streakReminders, inlineAnswer, noteRefMatch } from "./growth.js";
 import { CHAT_ID, handleChatUpdate, chatChores, chatStatus, releaseIfPending } from "./chatguard.js";
 import { spendUnit, openMatch, spendChat, isOpen, getWallet, walletView, invoiceLink, checkout, grant, thanksText, refund, PACKS, PAYSUPPORT_TEXT, TERMS_TEXT, loginUser, roboLink, roboResult, robokassaOn, payUrl, tokenUser } from "./pay.js";
@@ -1136,7 +1137,8 @@ export async function onRealAnalysis(env, id, now = Date.now()) {
   const tg = (m, b) => tgCall(env, m, b);
   const streak = await bumpStreak(env, tg, id, now).catch((e) => { console.log(`серия: ${e && e.message || e}`); return null; });
   const ref = await rewardReferral(env, tg, id, now).catch((e) => { console.log(`рефералка: ${e && e.message || e}`); return null; });
-  return { streak, ref };
+  const month = await noteMonthAnalysis(env, id, now).catch((e) => { console.log(`игрок месяца: ${e && e.message || e}`); return null; });
+  return { streak, ref, month };
 }
 
 export async function trackUser(env, user, batch, now = Date.now()) {
@@ -1830,6 +1832,8 @@ async function handlePost(request, env, ctx, origin) {
     await trackUser(env, user, raw);
     // настоящий разбор (не демо): серия дней и бонус по приглашению
     if (raw.events && Number(raw.events.match_real) > 0 && !isOwner(env, user.id)) later(onRealAnalysis(env, user.id));
+    // сколько ачивок открыто (считает приложение) — для игрока месяца (month.js)
+    if (raw.ach != null && !isOwner(env, user.id)) later(noteMonthAch(env, String(user.id), raw.ach).catch(() => null));
     return reply(200, { ok: true }, origin);
   }
 
@@ -1931,7 +1935,9 @@ async function handlePost(request, env, ctx, origin) {
     }
     if (mode === "wallet") {
       const grow = await growthView(env, user.id).catch(() => ({}));
-      return reply(200, { ...walletView(await getWallet(env, user.id)), owner: isOwner(env, user.id), cards: robokassaOn(env), ...grow }, origin);
+      // вкладка «Бонусы» просит ещё очки и место в «Игроке месяца»
+      const motm = raw.month === true ? await monthView(env, user.id, Date.now(), (id) => isOwner(env, id)).catch(() => null) : null;
+      return reply(200, { ...walletView(await getWallet(env, user.id)), owner: isOwner(env, user.id), cards: robokassaOn(env), ...grow, ...(motm ? { motm } : {}) }, origin);
     }
     // оплата картой из приложения: страница на сайте, вход уже выполнен (решение Ярика 30.10 — и в боте тоже)
     if (mode === "pay_link") return robokassaOn(env) ? reply(200, { url: await payUrl(env.BOT_TOKEN, user) }, origin) : reply(503, { error: "Оплата картой ещё не подключена." }, origin);
@@ -2285,6 +2291,8 @@ export default {
     if (new Date(now).getUTCMinutes() % 15 < 3) chores.push(kickShorts(env, now).catch((e) => console.log(`пинок Shorts: ${e && e.message || e}`)));
     // сводку недели и пуши шлёт выгрузка из Actions (POST /relay): сам воркер OpenDota не достаёт
     chores.push(streakReminders(env, (m, b) => tgCall(env, m, b), now).catch((e) => console.log(`серия: ${e && e.message || e}`)));
+    chores.push(monthAward(env, (m, b) => tgCall(env, m, b), now, { isOwner: (id) => isOwner(env, id), owners: String(env.OWNER_TG_IDS || "").split(",").map((x) => x.trim()).filter(Boolean) })
+      .catch((e) => console.log(`игрок месяца: ${e && e.message || e}`)));
     chores.push(kickRelay(env, now).catch((e) => console.log(`выгрузка OpenDota: ${e && e.message || e}`)));
     chores.push(chatChores(env, (m, b) => tgCall(env, m, b), now).catch((e) => console.log(`чат: ${e && e.message || e}`)));
     chores.push(broadcastStep(env, (m, b) => tgCall(env, m, b), now, { menu: { markup: menuKeyboard, version: MENU_VERSION } }).catch((e) => console.log(`рассылка: ${e && e.message || e}`)));

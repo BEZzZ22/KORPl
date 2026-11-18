@@ -299,3 +299,69 @@ test("топ недели: после сводки один пост в чат, 
   assert.equal(await postWeeklyTop(env, tg, now), 0);
   assert.equal(topText([]), null);
 });
+
+// ---------- игрок месяца (month.js) ----------
+import { monthScore, noteMonthAnalysis, noteMonthAch, noteMonthWeek, monthView, monthAward, winnerText } from "./month.js";
+
+test("игрок месяца: очки — дни важнее числа разборов, ачивки и мало смертей добавляют", () => {
+  assert.equal(monthScore({ dn: 5, a: 5 }), 60);
+  assert.equal(monthScore({ dn: 1, a: 30 }), 16);                 // разборы в зачёт не больше трёх в день
+  assert.equal(monthScore({ dn: 5, a: 5, a0: 2, ac: 4 }), 90);    // две новые ачивки
+  assert.equal(monthScore({ dn: 5, a: 5, g: 10, w: 6, d: 30 }), 60 + 50 + 10);
+  assert.equal(monthScore({ dn: 5, a: 5, g: 9, w: 9, d: 0 }), 60); // меньше 10 игр — смерти и винрейт не считаем
+});
+
+test("игрок месяца: разборы, ачивки и неделя копятся в месяц по МСК", async () => {
+  const env = env0();
+  await noteMonthAnalysis(env, 7, at("2026-11-03"));
+  await noteMonthAnalysis(env, 7, at("2026-11-03", 20));
+  await noteMonthAnalysis(env, 7, at("2026-11-04"));
+  await noteMonthAch(env, 7, 3, at("2026-11-04"));
+  await noteMonthAch(env, 7, 2, at("2026-11-05"));   // меньше — не трогаем
+  await noteMonthAch(env, 7, 5, at("2026-11-06"));
+  await noteMonthWeek(env, 7, { games: 10, wins: 6, deaths: 3 }, at("2026-11-09"));
+  const r = await env.COACH_KV.get("mon:2026-11:7", "json");
+  assert.deepEqual({ dn: r.dn, a: r.a, a0: r.a0, ac: r.ac, g: r.g, w: r.w, d: r.d }, { dn: 2, a: 3, a0: 3, ac: 5, g: 10, w: 6, d: 30 });
+  // в декабре точка отсчёта ачивок — конец ноября
+  await noteMonthAch(env, 7, 6, at("2026-12-02"));
+  assert.equal((await env.COACH_KV.get("mon:2026-12:7", "json")).a0, 5);
+  // неделя, собранная в понедельник 1 декабря, — ноябрьская
+  await noteMonthWeek(env, 7, { games: 2, wins: 1, deaths: 4 }, at("2026-12-01", 10));
+  assert.equal((await env.COACH_KV.get("mon:2026-11:7", "json")).g, 12);
+});
+
+test("игрок месяца: 1-го числа после 15:00 МСК лучшему — подписка и письмо, один раз, владелец не участвует", async () => {
+  const env = env0();
+  const days = (id, n, extra = 0) => Promise.all([]).then(async () => { for (let i = 1; i <= n; i++) await noteMonthAnalysis(env, id, at(`2026-11-${String(i).padStart(2, "0")}`)); for (let i = 0; i < extra; i++) await noteMonthAnalysis(env, id, at("2026-11-20")); });
+  await days(5, 25);        // владелец
+  await days(7, 10);
+  await days(8, 6, 10);
+  await days(9, 3);         // меньше 5 дней — не участвует
+  await env.COACH_KV.put("seen:7", "1", { metadata: { n: "Ваня Петров" } });
+  const view = await monthView(env, 8, at("2026-11-20"), (id) => id === "5");
+  assert.deepEqual({ place: view.place, total: view.total, need: view.need }, { place: 2, total: 3, need: 0 });
+  assert.equal((await monthView(env, 9, at("2026-11-20"))).need, 2);
+
+  const { sent, tg } = tgLog();
+  const opts = { isOwner: (id) => id === "5", owners: ["5"] };
+  assert.equal(await monthAward(env, tg, at("2026-12-01", 14), opts), null);   // рано
+  assert.equal(await monthAward(env, tg, at("2026-12-02", 16), opts), null);   // не 1-е
+  const res = await monthAward(env, tg, at("2026-12-01", 16), opts);
+  assert.equal(res.winner, "7");
+  assert.ok((await getWallet(env, "7")).until > at("2026-12-30"));
+  assert.match(sent[0].text, /^Ты красавчик! По итогам ноября ты игрок месяца/);
+  assert.equal(sent[0].chat_id, 7);
+  assert.match(sent[1].text, /^Игрок ноября у бота — Ваня\./);
+  assert.equal(sent[2].chat_id, 5);
+  assert.equal(await monthAward(env, tg, at("2026-12-01", 17), opts), null);   // второй раз — нет
+  assert.equal(sent.length, 3);
+});
+
+test("игрок месяца: никто не набрал 5 дней — подарка нет", async () => {
+  const env = env0();
+  await noteMonthAnalysis(env, 7, at("2026-11-03"));
+  const { sent, tg } = tgLog();
+  assert.deepEqual(await monthAward(env, tg, at("2026-12-01", 16)), { month: "2026-11", winner: null });
+  assert.equal(sent.length, 0);
+  assert.match(winnerText("2026-11", { dn: 6, a: 9, a0: 1, ac: 3, g: 12, w: 7, d: 36 }), /6 дней с разборами, 9 каток разобрано, 2 новые ачивки\.\nВ среднем 3 смерти/);
+});

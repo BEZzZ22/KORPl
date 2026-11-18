@@ -2043,7 +2043,10 @@ async function bonusScreen() {
     return;
   }
   loading("Считаю бонусы…");
-  const w = await getWallet(true);
+  // month: true — воркер добавит очки и место в «Игроке месяца» (motm)
+  let w = null;
+  try { const got = await postCoach({ mode: "wallet", initData: tg.initData, month: true }, 10000); if (got && !got.off) w = walletState = got; } catch { w = null; }
+  if (!w) w = await getWallet(true);
   if (stale(seq)) return;
   if (!w || !w.ref_link) {
     errorScreen("Бонусы не загрузились. Проверь интернет.", () => navRoot("bonus", bonusScreen));
@@ -2087,7 +2090,27 @@ async function bonusScreen() {
         : "Разбирай хотя бы одну катку в день.")),
       h("p", { class: "small muted" }, `Подарок — разбор тренера на ${nextPrize}-й день подряд, дальше каждую неделю.`),
       h("button", { type: "button", class: "ghost", onclick: () => { haptic(); goTab("home"); } }, "Разобрать катку")),
+    motmBlock(w.motm),
   );
+}
+
+// Игрок месяца: лучшему за месяц — подписка на месяц (worker/month.js)
+function motmBlock(m) {
+  if (!m) return null;
+  const mine = m.need > 0
+    ? `Ещё ${m.need} ${plural(m.need, "день", "дня", "дней")} с разборами в этом месяце, и ты в борьбе.`
+    : m.place ? `У тебя ${m.pts} ${plural(m.pts, "очко", "очка", "очков")}, ${m.place}-е место из ${m.total}.` : "Разбери катку, чтобы попасть в таблицу.";
+  return [
+    h("h2", {}, "Игрок месяца"),
+    h("div", { class: "card bonus-card" },
+      h("div", { class: "bonus-big" }, String(m.prize_days || 30), h("span", {}, "дней подписки лучшему за месяц")),
+      h("p", { class: "small" }, mine),
+      h("ol", { class: "bonus-steps" },
+        h("li", {}, h("b", {}, "1"), h("span", {}, "Заходи и разбирай катки каждый день: дни дают больше всего очков.")),
+        h("li", {}, h("b", {}, "2"), h("span", {}, "Открывай ачивки в профиле.")),
+        h("li", {}, h("b", {}, "3"), h("span", {}, "Умирай меньше и побеждай чаще: считаю по сводке недели."))),
+      h("p", { class: "small muted" }, `Итоги 1-го числа, победителю бот напишет сам. Участвуют те, у кого за месяц от 5 дней с разборами. Сейчас идёт ${m.month}.`)),
+  ];
 }
 
 function shareLink(a, custom = null) {
@@ -2467,7 +2490,7 @@ function isPaywall(e) {
 const SCREEN_EVENTS = { homeScreen: "home", matchScreen: "match", profileScreen: "profile", bonusScreen: "bonus", heroStatsScreen: "hero_stats", draftScreen: "draft" };
 const ERROR_STEPS = [["OpenDota не отвечает", "err_opendota"], ["Такого матча нет", "err_no_match"], ["Реплей так и не", "err_replay"],
   ["Не смог разобрать", "err_parse"], ["Не удалось загрузить", "err_boot"], ["Не загрузилась часть", "err_mods"]];
-const stats = { open: true, events: {}, secs: 0, since: Date.now(), dirty: true, start: Date.now(), path: [], jsError: "" };
+const stats = { open: true, events: {}, secs: 0, since: Date.now(), dirty: true, start: Date.now(), path: [], jsError: "", ach: null };
 
 function track(name) {
   stats.events[name] = (stats.events[name] || 0) + 1;
@@ -2505,7 +2528,7 @@ function flushStats() {
   if (!stats.dirty && stats.secs < 30) return;
   const start = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) || "";
   const body = JSON.stringify({ mode: "track", initData: tg.initData, open: stats.open, secs: Math.round(stats.secs), events: stats.events, src: /^l\d/.test(start) ? "steam" : /^m\d+(?:_s\d+)?_r\d+$/.test(start) ? start.replace(/^.*_(r\d+)$/, "$1") : start,
-    path: stats.path.join(","), jserr: stats.jsError, ua: tg.platform || "" });
+    path: stats.path.join(","), jserr: stats.jsError, ua: tg.platform || "", ...(stats.ach != null ? { ach: stats.ach } : {}) });
   // Сначала fetch с keepalive: во WebView Телеграма на iOS sendBeacon отвечает true, а запрос может не уйти,
   // и айфонов в отчётах не было совсем. Маяк — запасной путь, если fetch не может (очень старый браузер)
   try {
@@ -2876,6 +2899,7 @@ function trackProgress(a) {
     cur = { text: a.summary.goal, check, match: a.facts.match_id, t };
     safeLocal.set(goalKey(acc), JSON.stringify(cur));
   }
+  noteAchCount(acc);
   return result;
 }
 
@@ -2900,6 +2924,15 @@ function goalBlock(a) {
       h("div", { class: "goal-head" }, h("span", {}, "Задача на следующую катку")),
       h("p", {}, goalText(next)),
       h("p", { class: "small muted" }, "Проверю сам, когда разберёшь следующую игру.")));
+}
+
+// Сколько ачивок открыто — уходит воркеру со счётчиками: «Игрок месяца» (worker/month.js)
+function noteAchCount(acc) {
+  try {
+    const done = localJson(goalHistKey(acc), []).filter((g) => g.status === "done").length;
+    stats.ach = achievements(localJson(progKey(acc), []), done).filter((x) => x.done).length;
+    stats.dirty = true;
+  } catch { /* не посчиталось — не страшно */ }
 }
 
 // Профиль: задачи, ачивки, неделя и что подтянуть до следующего ранга
@@ -2939,6 +2972,7 @@ function progressBlocks(account) {
     !x.done && h("div", { class: "ach-bar" }, h("i", { "data-pct": Math.round((x.have / x.need) * 100) })),
     h("em", {}, x.done ? "Открыто" : `${x.have} из ${x.need}`));
   const opened = ach.filter((x) => x.done).length;
+  if (stats.ach !== opened) { stats.ach = opened; stats.dirty = true; }
   blocks.push(h("h2", {}, `Ачивки · ${opened} из ${ach.length}`));
   blocks.push(h("div", { class: "ach-grid" }, ...shown.map(coin)));
   if (hidden.length) {

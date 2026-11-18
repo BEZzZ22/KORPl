@@ -57,6 +57,11 @@ export async function giftCredits(env, id, n, now = Date.now()) {
   return walletView(await updateWallet(env, String(id), (w) => { w.c += n; }), now);
 }
 
+// Подарить дни подписки (игрок месяца): продлевает текущую или начинает с сегодня
+export async function giftDays(env, id, days, now = Date.now()) {
+  return walletView(await updateWallet(env, String(id), (w) => { w.until = Math.max(Number(w.until) || 0, now) + days * DAY_MS; }), now);
+}
+
 // Видеоразборы на счету: списать один (false — на счету пусто) и вернуть, если ролик не собрался
 export async function spendVideo(env, id) {
   let ok = false;
